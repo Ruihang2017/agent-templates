@@ -1,8 +1,9 @@
 {
   "name": "agent-templates",
   "version": "0.1.0",
-  "private": true,
-  "description": "Catalog of multi-agent development architecture patterns - design write-ups plus drop-in scaffolding. private:true blocks npm publish until the license/name/account decisions in issue #13 land; installs via git specifier (npx github:...) work regardless.",
+  "description": "Catalog of multi-agent development architecture patterns - design write-ups plus drop-in scaffolding (agents, slash commands, workflows, templates).",
+  "license": "MIT",
+  "author": "Horace Hou",
   "type": "module",
   "bin": {
     "agent-templates": "scripts/cli.mjs"

@@ -1,15 +1,17 @@
 # agent-templates
 
+[![npm](https://img.shields.io/npm/v/agent-templates)](https://www.npmjs.com/package/agent-templates)
+
 Catalog of reusable multi-agent development architecture patterns. Each entry is a design write-up plus drop-in scaffolding (subagent definitions, slash commands, CLAUDE.md snippets) so a new project reuses a proven pattern instead of redesigning one.
 
 ## Quickstart — from a bare `PRD.md` to a running pipeline
 
 ```
 cd path\to\my-project        # contains PRD.md; git init + remote done; gh/glab authenticated
-npx github:Ruihang2017/agent-templates adopt three-agent-architect-builder-reviewer .
+npx agent-templates@latest adopt three-agent-architect-builder-reviewer .
 ```
 
-(Public repo — the npx form works for anyone, no credentials. From a checkout instead: `node scripts/adopt.mjs three-agent-architect-builder-reviewer <target-dir>`.)
+(Also works: `npx github:Ruihang2017/agent-templates …` for the unreleased latest, or `node scripts/adopt.mjs …` from a checkout.)
 
 1. Review `CLAUDE.md`: add project facts, keep **Operating mode: `supervised`**; fill the PR template's Constraint check from your non-negotiables.
 2. In Claude Code, inside the project: **`/breakdown-prd`** — the Architect turns `docs/PRD.md` into sub-PRDs + tickets, then stops for your review.
@@ -24,3 +26,7 @@ npx github:Ruihang2017/agent-templates adopt three-agent-architect-builder-revie
 - Operating manual, pattern schema, grounding rules: [CLAUDE.md](CLAUDE.md)
 - Adding a pattern: start from [templates/pattern-README.template.md](templates/pattern-README.template.md), process in [CLAUDE.md](CLAUDE.md) § "Adding a new pattern"
 - E2E testing for the pattern chain: [testbed/README.md](testbed/README.md) — `node testbed/e2e/run-e2e.mjs` is the merge gate for scaffold changes
+
+## License
+
+MIT — see [LICENSE](LICENSE). Carve-out: files installed **into your project** by `adopt.mjs` (the scaffold, templates, and anything generated from them) may be used in your projects without attribution.
