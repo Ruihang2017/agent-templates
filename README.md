@@ -8,3 +8,4 @@ Catalog of reusable multi-agent development architecture patterns. Each entry is
 
 - Operating manual, pattern schema, grounding rules: [CLAUDE.md](CLAUDE.md)
 - Adding a pattern: start from [templates/pattern-README.template.md](templates/pattern-README.template.md), process in [CLAUDE.md](CLAUDE.md) § "Adding a new pattern"
+- E2E testing for the pattern chain: [testbed/README.md](testbed/README.md) — `node testbed/e2e/run-e2e.mjs` is the merge gate for scaffold changes

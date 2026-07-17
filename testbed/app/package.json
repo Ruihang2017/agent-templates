@@ -1,0 +1,10 @@
+{
+  "name": "three-agent-testbed-app",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Tiny target project the three-agent pattern is exercised against (Level-1 live E2E).",
+  "scripts": {
+    "test": "node --test"
+  }
+}

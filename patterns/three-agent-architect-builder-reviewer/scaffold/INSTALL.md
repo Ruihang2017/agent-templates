@@ -5,17 +5,33 @@ Source pattern: `agent-templates/patterns/three-agent-architect-builder-reviewer
 ## Steps
 
 1. Copy `.claude/` **and `templates/`** from this scaffold into the target repo root. If the target already has `.claude/settings.json`, merge the `hooks.PreToolUse` entry instead of overwriting.
-2. The write-guard hook needs Node.js ≥ 18 on PATH. It denies main-session Edit/Write with a dispatch instruction; subagent writes pass. Override switch for human-approved out-of-pipeline edits: create `.claude/allow-main-writes`, delete it afterwards — and add that path to `.gitignore`.
-3. The tracker steps (`publish-tickets.mjs`, the deliver stage, `/verify-delivery`) need the platform CLI installed and authenticated: `gh` (GitHub) or `glab` (GitLab). The publish script autodetects the platform from the origin remote; override with `--platform gh|glab`.
-4. Append the content of `claude-md-snippet.md` to the target repo's `CLAUDE.md`, and set the **Operating mode** line (`supervised` for a fresh adoption; `autonomous` is the target).
-5. Ensure the docs layout the pipeline assumes exists: `docs/PRD.md`, `docs/prd/<module>/README.md` (the sub-PRD — `/start-milestone` hard-requires it), `docs/prd/<module>/tickets/` (author tickets from `templates/ticket.template.md`), `docs/adr/`, and an empty `docs/plans/`.
-6. Check the pattern entry's expiry (README metadata table). If expired, re-verify the model/effort table against current official docs before adopting — do not copy an expired recommendation into a new project.
+2. Copy the platform half of `tracker-templates/`: `github/ISSUE_TEMPLATE/` → the target repo's `.github/ISSUE_TEMPLATE/`, or `gitlab/issue_templates/` → `.gitlab/issue_templates/` — hand-written issues then follow the same format the pipeline's triage can convert mechanically.
+3. The write-guard hook needs Node.js ≥ 18 on PATH. It denies main-session Edit/Write with a dispatch instruction; subagent writes pass. Override switch for human-approved out-of-pipeline edits: create `.claude/allow-main-writes`, delete it afterwards — and add that path to `.gitignore`.
+4. The tracker steps (`publish-tickets.mjs`, the deliver stage, `/verify-delivery`, the nightly sweep) need the platform CLI installed and authenticated: `gh` (GitHub) or `glab` (GitLab). The publish script autodetects the platform from the origin remote; override with `--platform gh|glab` (test doubles / non-PATH binaries: `GH_BIN` / `GLAB_BIN` env overrides).
+5. Append the content of `claude-md-snippet.md` to the target repo's `CLAUDE.md`, and set the **Operating mode** line (`supervised` for a fresh adoption; `autonomous` is the target).
+6. Ensure the docs layout the pipeline assumes exists: `docs/PRD.md`, `docs/prd/<module>/README.md` (the sub-PRD — `/start-milestone` hard-requires it), `docs/prd/<module>/tickets/` (author tickets from `templates/ticket.template.md`), `docs/adr/`, and an empty `docs/plans/`.
+7. Check the pattern entry's expiry (README metadata table). If expired, re-verify the model/effort table against current official docs before adopting — do not copy an expired recommendation into a new project.
 
 ## Usage modes
 
 - **Mode A — one orchestrator session (default):** run `/plan-ticket` → `/build-ticket` → `/review-ticket` → `/verify-delivery` from a single main session. Each stage executes in its own subagent, so stage contexts stay isolated. The orchestrator passes only artifacts between stages — ticket path, plan path, diff ref — never transcripts or agent self-assessments, and it never does stage work itself (see "Orchestrator discipline" in `claude-md-snippet.md`; role leakage is a recorded failure mode).
 - **Mode B — three human-run sessions:** open a fresh Claude Code session per stage. Strongest isolation; use when the orchestrator session itself has grown long or has seen implementation detail.
 - **Milestone mode (the target operating model):** `/start-milestone <module> [supervised|autonomous]` — Gate 1 in one action: verify inputs, publish tickets as issues, then run all tickets through `.claude/workflows/run-milestone.js`. Each stage still runs in its own subagent; ordering, the bounce cap, and merge policy are code, not prompts. The human returns at Gate 2 (smoke test) or on escalation.
+
+## Nightly sweep (unattended)
+
+- **Entry:** `claude -p "/nightly-issues"` — slash commands expand in headless `-p` mode. `[official]`
+- **Permissions:** pre-approve exactly what the pipeline needs in the target repo's `.claude/settings.json` (`permissions.allow`, e.g. `Bash(git:*)`, `Bash(gh:*)` or `Bash(glab:*)`, `Bash(node:*)`, `Bash(npm:*)`), then run with `--permission-mode dontAsk` — the documented CI recommendation: pre-approved tools run, everything else is auto-denied instead of blocking. Subagents run in `acceptEdits` mode (their file edits are auto-approved). Avoid `bypassPermissions` outside isolated containers (documented warning). `[official]`
+- **Scheduling (Windows, primary):** Task Scheduler — runs whenever the machine is on at the trigger time:
+
+  ```
+  schtasks /create /tn "nightly-issues" /sc daily /st 02:00 ^
+    /tr "cmd /c cd /d C:\path\to\repo && claude -p \"/nightly-issues\" --permission-mode dontAsk >> .claude\nightly.log 2>&1"
+  ```
+
+  macOS/Linux: launchd / cron equivalents.
+- **Why not Claude Code's native cron** (`/loop`, Cron tools): documented constraints — the session must stay open, recurring tasks expire after 7 days, and firings jitter up to 30 minutes — the wrong shape for "machine on, no session open". For no-local-machine automation the docs point to Routines (Anthropic infrastructure) or CI schedules. `[official]`
+- **Morning email:** watch the repo / enable tracker notifications. The sweep posts per-issue outcome comments, labels (`triage:invalid` = flagged invalid, never auto-closed · `nightly:escalated` = won't retry until a human clears it · `needs-human`), closes delivered issues, and files a `Nightly report YYYY-MM-DD` issue — the tracker's own notification email is the delivery mechanism, no SMTP to configure.
 
 ## Config-key verification record
 
@@ -34,5 +50,12 @@ Workflow tool + `ultracode` (for the milestone runner), verified **2026-07-17**:
 
 - <https://code.claude.com/docs/en/workflows> — the Workflow tool (deterministic multi-agent scripts: `export const meta`, `agent()` / `parallel()` / `pipeline()`) is publicly documented; `.claude/workflows/` is the documented project location for saved workflow scripts (also <https://code.claude.com/docs/en/claude-directory>).
 - <https://code.claude.com/docs/en/model-config> — "Ultracode is a Claude Code setting rather than a model effort level": it applies `xhigh` effort plus automatic workflow orchestration. Persistable effort levels are `low`–`xhigh`; `max` and `ultracode` are session-only.
+
+Headless + scheduling facts (for the nightly sweep), verified **2026-07-17**:
+
+- <https://code.claude.com/docs/en/headless.md> — `claude -p "<prompt>"`; slash commands expand in `-p`; `--output-format`, `--max-turns`.
+- <https://code.claude.com/docs/en/permission-modes.md> and <https://code.claude.com/docs/en/permissions.md> — `--permission-mode dontAsk` is the documented CI recommendation (pre-approved tools only, rest auto-denied); `acceptEdits`; `bypassPermissions` only for isolated environments; `--allowedTools`; settings `permissions.allow`; subagents run in `acceptEdits`.
+- <https://code.claude.com/docs/en/workflows.md> — workflows are available in headless `claude -p`.
+- <https://code.claude.com/docs/en/scheduled-tasks.md> and <https://code.claude.com/docs/en/routines.md> — native `/loop`/Cron tools require an open session, recurring tasks expire after 7 days, jitter up to 30 min; Routines run on Anthropic infrastructure.
 
 Re-verify these keys when Claude Code major-versions, or when this record is more than 6 months old.

@@ -14,7 +14,7 @@ Input: a ticket and its plan at `docs/plans/<ticket-id>.md`. Read both before wr
 
 Do:
 
-1. Implement exactly the plan's scope. Run the tests; iterate until they pass.
+1. Implement exactly the plan's scope. Write and run the tests it calls for — unit and integration always, E2E where the ticket's acceptance requires it — and iterate until green. Testing is your job, not the human's.
 2. Where reality forces a departure from the plan, depart — and record it in a **Deviations** note (what changed, why).
 3. Finish with: a diff summary, the actual test output (never "should pass"), and the Deviations note.
 

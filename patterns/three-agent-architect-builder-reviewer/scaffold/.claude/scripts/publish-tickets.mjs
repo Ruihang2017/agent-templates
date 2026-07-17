@@ -59,6 +59,15 @@ if (!ticketsDirOk) {
 
 const run = (bin, args, opts = {}) => execFileSync(bin, args, { encoding: 'utf8', ...opts })
 
+// GH_BIN / GLAB_BIN env overrides (precedent: fx-eye-tracking's GLAB_BIN) for
+// non-PATH binaries and test doubles. The value may include leading args, e.g.
+// GH_BIN="node tools/fake-gh.mjs" (no spaces in the path itself).
+const cli = (platform, args, opts = {}) => {
+  const raw = platform === 'gh' ? process.env.GH_BIN || 'gh' : process.env.GLAB_BIN || 'glab'
+  const parts = raw.split(' ')
+  return run(parts[0], [...parts.slice(1), ...args], opts)
+}
+
 let detectedFrom = ''
 if (!PLATFORM) {
   try {
@@ -79,7 +88,7 @@ console.log(`platform: ${PLATFORM}${detectedFrom ? ` (autodetected from ${detect
 
 let cliOk = false
 try {
-  run(PLATFORM, ['auth', 'status'], { stdio: ['ignore', 'ignore', 'ignore'] })
+  cli(PLATFORM, ['auth', 'status'], { stdio: ['ignore', 'ignore', 'ignore'] })
   cliOk = true
 } catch {}
 if (CREATE && !cliOk) {
@@ -96,16 +105,16 @@ const fetchExistingIssues = () => {
   if (!cliOk) return null
   try {
     if (PLATFORM === 'gh') {
-      const out = run('gh', ['issue', 'list', '--state', 'all', '--limit', '1000', '--json', 'number,title'])
+      const out = cli('gh', ['issue', 'list', '--state', 'all', '--limit', '1000', '--json', 'number,title'])
       return JSON.parse(out).map((i) => ({ number: i.number, title: i.title }))
     }
     try {
-      const out = run('glab', ['issue', 'list', '--all', '--output', 'json'])
+      const out = cli('glab', ['issue', 'list', '--all', '--output', 'json'])
       return JSON.parse(out).map((i) => ({ number: i.iid ?? i.id, title: i.title }))
     } catch {
       // older glab without --output json: parse per LINE so the number always
       // belongs to the line whose title matches (never "first #N in the blob")
-      const out = run('glab', ['issue', 'list', '--all'])
+      const out = cli('glab', ['issue', 'list', '--all'])
       return out
         .split('\n')
         .map((l) => l.match(/^#(\d+)\s+(.*)$/))
@@ -150,11 +159,11 @@ const createIssue = (issueTitle, body, labels) => {
     if (PLATFORM === 'gh') {
       const args = ['issue', 'create', '--title', issueTitle, '--body-file', '-']
       if (withLabels) for (const l of labels) args.push('--label', l)
-      return run('gh', args, { input: body }).trim()
+      return cli('gh', args, { input: body }).trim()
     }
     const args = ['issue', 'create', '--title', issueTitle, '--description', body]
     if (withLabels && labels.length) args.push('--label', labels.join(','))
-    return run('glab', args).trim()
+    return cli('glab', args).trim()
   }
   try {
     return attempt(true)

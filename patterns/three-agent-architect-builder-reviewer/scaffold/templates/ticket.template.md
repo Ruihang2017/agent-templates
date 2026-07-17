@@ -50,6 +50,8 @@ Depends on: [MOD-NM — other ticket](MOD-NM-other-ticket.md) <!-- delete this l
        - [ ] `[machine]` <criterion, runnable as a command or test> (cross-ref)
      Tags: [machine] = pure code/logic check · [fixture] = replay of recorded data ·
            [human] = irreducibly human judgment (UX feel, real hardware). Minimize [human].
+     Cover the test pyramid where applicable — unit, integration, E2E — the agents own
+     all three levels (team testing policy); the human only smoke-tests at PRD completion.
      Declare absent classes explicitly: "No [human] criteria — pure logic ticket." -->
 
 - [ ] `[machine]` ...

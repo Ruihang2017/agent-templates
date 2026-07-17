@@ -22,7 +22,7 @@ Review the diff against the ticket and the plan, in priority order:
 
 Method:
 
-- Run the tests yourself via Bash. Never trust reported results.
+- Run the FULL suite yourself via Bash — unit, integration, and E2E where present, not only the tests the diff touches. Never trust reported results.
 - Be adversarial: try to refute the claim that the ticket is done. Default to BOUNCE when uncertain.
 
 Verdict (exactly one):

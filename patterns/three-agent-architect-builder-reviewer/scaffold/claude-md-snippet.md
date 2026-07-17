@@ -15,6 +15,7 @@ Every non-trivial ticket flows through three stages; no agent judges its own wor
 - **`/review-ticket <ticket>`** — Reviewer (`claude-fable-5` @ `max`) in a **fresh context**, deliberately a different model tier from the Builder. Focus: edge cases, concurrency, security-sensitive paths. Verdict **CLEAR** or **BOUNCE**; merge requires CLEAR.
 - **`/verify-delivery <ticket>`** — post-merge Definition-of-Done check: plan on disk · tests green · CLEAR verdict · MR merged into the default branch · **tracker issue closed** · writeback done. Run after **every** merge; tracker auto-close side effects are never trusted blindly.
 - **`/start-milestone <module> [mode]`** — the Gate 1 start signal: verify sub-PRD + tickets, publish tickets as tracker issues (deterministic idempotent script — agents never hand-create issues), then run every ticket through the deterministic `run-milestone` workflow (stage order, bounce cap, merge policy enforced in code).
+- **`/nightly-issues [max]`** — unattended sweep (OS-scheduled, `claude -p`): triage open issues → auto-fix fixable ones through the pipeline → per-issue comments + labels + a `Nightly report <date>` issue for the morning read. Invalid issues are labeled `triage:invalid`, never auto-closed. Setup: scaffold INSTALL.md § Nightly sweep.
 
 Orchestrator discipline (hard rules for the main session):
 
@@ -30,4 +31,5 @@ Rules:
 - Maximum 2 bounce cycles, then escalate to a human.
 - Trivial/mechanical changes may skip the pipeline only with an explicit human OK.
 - Ticket files are the issue-content source of truth. Issues are created only by `.claude/scripts/publish-tickets.mjs` (`[<id>]` title prefix = dedupe key); to change an issue body, edit the ticket file and republish. Issue state (close) moves via the deliver step / `/verify-delivery`, never by hand mid-pipeline.
+- Agents own the whole test pyramid: the Builder writes and runs unit + integration tests (and E2E where the ticket's acceptance calls for it); the Reviewer re-runs the full suite independently; the deliver step re-runs it on the merged default branch. The human tests exactly once — the Gate 2 smoke test after the PRD's tasks are all done.
 - Model/effort per role are pinned in `.claude/agents/*.md`. Change them by updating the pattern entry in agent-templates first (new as-of date + provenance entry), then syncing here — never by editing only this repo.
