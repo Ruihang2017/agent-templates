@@ -18,8 +18,10 @@ const EXPECTED_FILES = [
   '.claude/settings.json',
   '.claude/hooks/guard-main-session-writes.mjs',
   '.claude/scripts/publish-tickets.mjs',
+  '.claude/scripts/milestone-dag.mjs',
   '.claude/workflows/run-milestone.js',
   '.claude/workflows/nightly-issues.js',
+  '.claude/workflows/start-all.js',
   '.claude/agents/architect.md',
   '.claude/agents/builder.md',
   '.claude/agents/reviewer.md',
@@ -29,6 +31,7 @@ const EXPECTED_FILES = [
   '.claude/commands/review-ticket.md',
   '.claude/commands/verify-delivery.md',
   '.claude/commands/start-milestone.md',
+  '.claude/commands/start-all.md',
   '.claude/commands/nightly-issues.md',
   '.claude/commands/breakdown-prd.md',
 ]
@@ -81,7 +84,7 @@ export async function run() {
     check(S, `${file} pins effort ${pins.effort}`, fmField(text, 'effort') === pins.effort)
   }
 
-  for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'start-milestone', 'nightly-issues', 'breakdown-prd']) {
+  for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'start-milestone', 'start-all', 'nightly-issues', 'breakdown-prd']) {
     const path = p(`.claude/commands/${cmd}.md`)
     if (!existsSync(path)) continue
     check(S, `command ${cmd} has description`, fmField(readFileSync(path, 'utf8'), 'description').length > 0)
@@ -95,7 +98,7 @@ export async function run() {
     const pre = settings && settings.hooks && settings.hooks.PreToolUse && settings.hooks.PreToolUse[0]
     check(S, 'settings wires the write-guard matcher', pre && /Edit\|Write/.test(pre.matcher) && /guard-main-session-writes/.test(JSON.stringify(pre.hooks)))
   }
-  for (const [wf, name] of [['run-milestone.js', 'run-milestone'], ['nightly-issues.js', 'nightly-issues']]) {
+  for (const [wf, name] of [['run-milestone.js', 'run-milestone'], ['nightly-issues.js', 'nightly-issues'], ['start-all.js', 'start-all']]) {
     const path = p('.claude/workflows/' + wf)
     if (!existsSync(path)) continue
     const text = readFileSync(path, 'utf8')
@@ -108,8 +111,10 @@ export async function run() {
   const LF_CRITICAL = [
     p('.claude/workflows/run-milestone.js'),
     p('.claude/workflows/nightly-issues.js'),
+    p('.claude/workflows/start-all.js'),
     p('.claude/hooks/guard-main-session-writes.mjs'),
     p('.claude/scripts/publish-tickets.mjs'),
+    p('.claude/scripts/milestone-dag.mjs'),
     REPO_ROOT + '.claude/workflows/run-milestone.js',
     REPO_ROOT + '.claude/workflows/nightly-issues.js',
   ]

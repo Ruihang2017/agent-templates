@@ -52,9 +52,11 @@ patterns/three-agent-architect-builder-reviewer/
         ├── hooks/
         │   └── guard-main-session-writes.mjs
         ├── scripts/
-        │   └── publish-tickets.mjs
+        │   ├── publish-tickets.mjs
+        │   └── milestone-dag.mjs
         ├── workflows/
         │   ├── run-milestone.js
+        │   ├── start-all.js
         │   └── nightly-issues.js
         ├── agents/
         │   ├── architect.md
@@ -68,6 +70,7 @@ patterns/three-agent-architect-builder-reviewer/
             ├── review-ticket.md
             ├── verify-delivery.md
             ├── start-milestone.md
+            ├── start-all.md
             └── nightly-issues.md
 ```
 
