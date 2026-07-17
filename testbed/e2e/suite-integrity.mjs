@@ -87,4 +87,25 @@ export async function run() {
   for (const f of ['id', 'title', 'module', 'size', 'agent', 'status', 'date']) {
     check(S, `ticket template carries frontmatter field '${f}'`, new RegExp(`^${f}\\s*:`, 'm').test(ticketTpl))
   }
+
+  // The catalog repo self-hosts the nightly sweep: its root-level copies must stay
+  // byte-identical to their scaffold sources (change the scaffold first, re-copy).
+  const REPO = fileURLToPath(new URL('../../', import.meta.url))
+  const SELF_HOSTED = {
+    '.claude/agents/architect.md': '.claude/agents/architect.md',
+    '.claude/agents/builder.md': '.claude/agents/builder.md',
+    '.claude/agents/reviewer.md': '.claude/agents/reviewer.md',
+    '.claude/agents/triage.md': '.claude/agents/triage.md',
+    '.claude/workflows/run-milestone.js': '.claude/workflows/run-milestone.js',
+    '.claude/workflows/nightly-issues.js': '.claude/workflows/nightly-issues.js',
+    '.claude/commands/nightly-issues.md': '.claude/commands/nightly-issues.md',
+    '.claude/commands/verify-delivery.md': '.claude/commands/verify-delivery.md',
+    '.github/ISSUE_TEMPLATE/bug-report.md': 'tracker-templates/github/ISSUE_TEMPLATE/bug-report.md',
+    '.github/ISSUE_TEMPLATE/task.md': 'tracker-templates/github/ISSUE_TEMPLATE/task.md',
+  }
+  for (const [repoRel, scaffoldRel] of Object.entries(SELF_HOSTED)) {
+    const repoPath = REPO + repoRel
+    const ok = existsSync(repoPath) && readFileSync(repoPath, 'utf8') === readFileSync(p(scaffoldRel), 'utf8')
+    check(S, `self-hosted copy in sync: ${repoRel}`, ok)
+  }
 }
