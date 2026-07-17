@@ -8,7 +8,15 @@ Check the index in [README.md](README.md), then the pattern's own §1 **When to 
 
 ## 1. Install — one command
 
-From a checkout of this catalog:
+Without cloning the catalog (npm's git-specifier support; private repos ride your existing git credentials):
+
+```
+npx github:Ruihang2017/agent-templates adopt three-agent-architect-builder-reviewer C:\path\to\your-project
+```
+
+Pin a branch or tag for reproducibility: `npx github:Ruihang2017/agent-templates#main …`. Note npx caches git installs — add `--yes --prefer-online` (or clear the npx cache) to pick up catalog updates.
+
+Or from a checkout of this catalog:
 
 ```
 node scripts/adopt.mjs three-agent-architect-builder-reviewer C:\path\to\your-project
@@ -38,7 +46,17 @@ Same `adopt.mjs` run — skip-existing protects your files. The differences:
 - Formalize `docs/PRD.md` for the area you will pipeline first — it can cover a single module; you do not need to spec the whole codebase to start.
 - Retrofit gradually: run one small module through `supervised` mode end to end before trusting `autonomous`. Your existing test suite becomes the Builder/Reviewer suite from day one.
 
-## 4. Day-2 operations
+## 4. Distributing the catalog to your team
+
+Three tiers, in order of effort:
+
+1. **npx from git (now, zero infra):** anyone with read access to this repo runs the `npx github:…` command above — their git credentials authenticate; nothing is published anywhere. Good for a team that already shares the repo.
+2. **GitHub Packages (versioned, still private):** publish scoped releases (`@<org>/agent-templates`) to the org's GitHub npm registry — teammates authenticate with their GitHub tokens and can pin exact versions (`npx @<org>/agent-templates@0.2.0 …`), which pairs well with the catalog's expiry discipline (a version = a verified snapshot of recommendations).
+3. **Public npm** — only if the catalog is meant to leave the company.
+
+Also worth deciding once: this repo currently lives under a personal account (`Ruihang2017`). If the team is the audience, moving it to the org account gives access control, continuity, and org-level tokens for tier 2. Maintainer's call — recorded as an open follow-up in issue #11.
+
+## 5. Day-2 operations
 
 - `/verify-delivery <ticket>` after every merge (automatic in autonomous mode) — delivery is verified, never assumed.
 - Nightly sweep for open issues; hand-written issues follow the installed templates so triage can convert them.

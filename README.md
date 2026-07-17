@@ -2,6 +2,20 @@
 
 Catalog of reusable multi-agent development architecture patterns. Each entry is a design write-up plus drop-in scaffolding (subagent definitions, slash commands, CLAUDE.md snippets) so a new project reuses a proven pattern instead of redesigning one.
 
+## Quickstart — from a bare `PRD.md` to a running pipeline
+
+```
+cd path\to\my-project        # contains PRD.md; git init + remote done; gh/glab authenticated
+npx github:Ruihang2017/agent-templates adopt three-agent-architect-builder-reviewer .
+```
+
+(From a checkout instead: `node scripts/adopt.mjs three-agent-architect-builder-reviewer <target-dir>`.)
+
+1. Review `CLAUDE.md`: add project facts, keep **Operating mode: `supervised`**; fill the PR template's Constraint check from your non-negotiables.
+2. In Claude Code, inside the project: **`/breakdown-prd`** — the Architect turns `docs/PRD.md` into sub-PRDs + tickets, then stops for your review.
+3. **Gate 1** — review the breakdown, then **`/start-milestone docs/prd/00-<module> supervised`**: tickets publish as tracker issues; each ticket runs plan → build → fresh-context review to CLEAR, pausing for your merge.
+4. When it holds, flip to `autonomous` — whole milestones run hands-off. **Gate 2** = your smoke test at the end. Full guide: [ADOPTING.md](ADOPTING.md).
+
 | Pattern | Status | As of | Summary |
 |---|---|---|---|
 | [three-agent-architect-builder-reviewer](patterns/three-agent-architect-builder-reviewer/README.md) | trialed | 2026-07-17 | Architect plans → Builder implements → independent Reviewer (fresh context, different model tier) clears or bounces; `/start-milestone` runs a whole module autonomously |
