@@ -103,6 +103,21 @@ export async function run() {
     check(S, `${wf} has no forbidden runtime APIs`, !/Date\.now\(|Math\.random\(|new Date\(\)|require\(|from 'node:/.test(text))
   }
 
+  // issue #21: workflow/hook/script runtime files must be LF in the working tree —
+  // the Workflow tool rejects \r, and git autocrlf can silently reintroduce it.
+  const LF_CRITICAL = [
+    p('.claude/workflows/run-milestone.js'),
+    p('.claude/workflows/nightly-issues.js'),
+    p('.claude/hooks/guard-main-session-writes.mjs'),
+    p('.claude/scripts/publish-tickets.mjs'),
+    REPO_ROOT + '.claude/workflows/run-milestone.js',
+    REPO_ROOT + '.claude/workflows/nightly-issues.js',
+  ]
+  for (const f of LF_CRITICAL) {
+    if (!existsSync(f)) continue
+    check(S, `LF-only (no \\r): ${f.slice(REPO_ROOT.length)}`, !/\r/.test(readFileSync(f, 'utf8')))
+  }
+
   check(S, 'snippet declares Operating mode', /Operating mode/.test(readFileSync(p('claude-md-snippet.md'), 'utf8')))
   const ticketTpl = readFileSync(REPO_ROOT + 'templates/ticket.template.md', 'utf8')
   for (const f of ['id', 'title', 'module', 'lane', 'size', 'agent', 'status', 'date', 'blocked_by', 'blocks']) {

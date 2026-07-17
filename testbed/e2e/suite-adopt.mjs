@@ -41,6 +41,10 @@ export async function run() {
     ]) {
       check(S, `A1 installs ${f}`, existsSync(join(t1, f)))
     }
+    // issue #21: the Workflow tool rejects scripts containing \r — installs must be LF
+    for (const f of ['.claude/workflows/run-milestone.js', '.claude/workflows/nightly-issues.js', '.claude/hooks/guard-main-session-writes.mjs', '.claude/scripts/publish-tickets.mjs']) {
+      check(S, `A1 LF-only install: ${f}`, !/\r/.test(readFileSync(join(t1, f), 'utf8')))
+    }
     check(S, 'A1 CLAUDE.md declares Operating mode', /Operating mode/.test(readFileSync(join(t1, 'CLAUDE.md'), 'utf8')))
     check(S, 'A1 docs/PRD.md copied from root PRD.md', readFileSync(join(t1, 'docs', 'PRD.md'), 'utf8').includes('# My PRD'))
     check(S, 'A1 root PRD.md kept (copy, not move)', existsSync(join(t1, 'PRD.md')))
