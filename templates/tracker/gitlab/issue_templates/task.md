@@ -1,10 +1,5 @@
----
-name: Task
-about: Request a bounded piece of work. Mirrors the pipeline's ticket format so triage can convert it mechanically.
-title: ''
-labels: ''
-assignees: ''
----
+<!-- GitLab description template ("task"). Mirrors the pipeline's ticket format
+     so triage can convert it mechanically. -->
 
 ## Traceability
 

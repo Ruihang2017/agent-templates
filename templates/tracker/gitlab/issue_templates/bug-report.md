@@ -11,7 +11,7 @@
 
 ## Expected
 
-<!-- What should happen instead, stated checkably. -->
+<!-- What should happen instead, stated checkably. Cite the spec (PRD §/ADR) if you know it. -->
 
 ## Affected area (best guess)
 

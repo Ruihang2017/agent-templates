@@ -17,8 +17,11 @@ This repo ships documentation, scaffolding, and a testbed. The only application 
 ```
 CLAUDE.md                              # this file — the operating manual
 README.md                              # human-facing pattern index
-templates/
+templates/                             # UNIVERSAL — shared by all patterns and by this repo itself
   pattern-README.template.md           # mandatory starting point for every new pattern
+  ticket.template.md                   # the ticket format (field-proven: fx / PIL-15 / FND-9 standard)
+  tracker/                             # tracker-native templates: github/ + gitlab/ — issues (bug-report,
+                                       #   task, decision-record) and the PR/MR template
 patterns/<pattern-name>/               # kebab-case; one directory per pattern
   README.md                            # the write-up — MUST follow the schema below
   scaffold/                            # drop-in files a target repo copies, then adapts
@@ -37,11 +40,6 @@ patterns/three-agent-architect-builder-reviewer/
 └── scaffold/
     ├── INSTALL.md                     # how to drop the scaffold into a target repo
     ├── claude-md-snippet.md           # block to append to the target repo's CLAUDE.md
-    ├── templates/
-    │   └── ticket.template.md
-    ├── tracker-templates/             # native issue templates so hand-written issues match the format
-    │   ├── github/ISSUE_TEMPLATE/     # bug-report.md · task.md
-    │   └── gitlab/issue_templates/    # bug-report.md · task.md
     └── .claude/
         ├── settings.json              # PreToolUse write guard wiring
         ├── hooks/
@@ -104,7 +102,7 @@ Upstream docs convention assumed by patterns (exemplar: `fx-eye-tracking`): `doc
 
 ## How this repo develops itself
 
-1. **Issues are the decision record; commits are only the change record.** Every unit of work starts as a GitHub issue stating what + why. The work lands via a PR referencing it (`Closes #N`) whose body summarizes what changed, why, and what was rejected along the way. **No direct merges to main.** Bootstrap exception: the rounds merged on 2026-07-17 before this rule existed are backfilled as `decision-record` issues #1–#4.
+1. **Issues are the decision record; commits are only the change record.** Every unit of work starts as a GitHub issue stating what + why (use the universal templates — work items follow `task`/`bug-report`, records follow `decision-record`). The work lands via a PR referencing it (`Closes #N`), written against `.github/PULL_REQUEST_TEMPLATE.md` (byte-synced from `templates/tracker/github/`). **No direct merges to main.** Bootstrap exception: the rounds merged on 2026-07-17 before this rule existed are backfilled as `decision-record` issues #1–#4.
 2. **Self-hosted nightly sweep.** This repo runs the pattern's own `/nightly-issues`: other projects file pattern-tweak requests here (templates in `.github/ISSUE_TEMPLATE/`), and the sweep triages — and where fixable, fixes — them overnight. The machinery at `.claude/` (four agents, two workflows, `nightly-issues` + `verify-delivery` commands) is a **byte-synced copy of the scaffold**, enforced by the E2E integrity suite: change the scaffold first, then re-copy.
 3. **This repo's test suite** is `node testbed/e2e/run-e2e.mjs` — the Builder/Reviewer run it exactly like any project's tests.
 4. The scaffold's main-session write guard is **not installed here** — interactive doc-editing with the maintainer is this repo's norm. Revisit if orchestrator role leakage appears in this repo's own pipeline runs.
