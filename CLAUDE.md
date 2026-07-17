@@ -8,6 +8,8 @@ A library/catalog of the multi-agent development architecture patterns this team
 
 This repo ships documentation and scaffolding only — no application code.
 
+**Target operating model** (what patterns are hardened toward): for a project that fits a pattern, humans decide at exactly two gates — upstream (master PRD → sub-PRDs → generated tickets, signed off before the pipeline starts) and downstream (a smoke test of the delivered work). Between those gates the multi-agent workflow runs autonomously. Consequences for this repo: not every project fits every pattern ("when not to use" is a required section, take it seriously), and role boundaries are enforced mechanically wherever possible — hooks and permission config over prose exhortation, because prose alone has already been observed to fail.
+
 ## Layout
 
 ```
@@ -29,6 +31,9 @@ patterns/three-agent-architect-builder-reviewer/
     ├── INSTALL.md                     # how to drop the scaffold into a target repo
     ├── claude-md-snippet.md           # block to append to the target repo's CLAUDE.md
     └── .claude/
+        ├── settings.json              # PreToolUse write guard wiring
+        ├── hooks/
+        │   └── guard-main-session-writes.mjs
         ├── agents/
         │   ├── architect.md
         │   ├── builder.md
@@ -49,7 +54,7 @@ patterns/three-agent-architect-builder-reviewer/
 | 2. Agent roles & boundaries | Per agent: what it does / what it must never do; who judges whom |
 | 3. Model + effort assignment | Table: role · model · effort · reasoning · source label per claim. Heading carries the as-of date |
 | 4. Known failure modes / pitfalls | Symptom · the specific context/harness it was observed in · mitigation · date recorded. "None recorded yet" is a valid honest entry; an invented one is not |
-| 5. Upstream / downstream integration | How work enters (master PRD → sub-PRD → ticket, ADRs) and what leaves (PR, review verdict, docs) |
+| 5. Upstream / downstream integration | How work enters (master PRD → sub-PRD → ticket, ADRs), what leaves (PR, review verdict, docs), and the **human gates** — where humans decide, and where they must not be needed |
 | 6. Scaffold | What is in `scaffold/` and how to install it |
 | 7. Provenance & change log | Dated entries: what changed, on what basis, by whom |
 

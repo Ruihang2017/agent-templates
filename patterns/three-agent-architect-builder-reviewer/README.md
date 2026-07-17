@@ -56,7 +56,7 @@ Figures are transcribed from the team-finalized specification dated 2026-07-17 (
 | **Unbounded bounce loop** — Reviewer ↔ Builder ping-pong without convergence | Process risk | Cap at 2 bounce cycles, then escalate to a human | 2026-07-17 |
 | **Cold-start starvation** — the fresh-context Reviewer (or Builder) lacks context that lived only in the Architect's conversation | Design implication of fresh contexts | Ticket and plan must be self-contained (cold-startable); a plan that needs the planning conversation to be understood is defective | 2026-07-17 |
 | **`max`-effort overthinking / latency at the gate** | Claude Code's own effort-level description: `max` "may use excessive tokens resulting in long response times or overthinking. Use sparingly." — `[official]` product text, observed 2026-07-17 | Accepted at this gate by explicit `[team-policy]`; do not copy `max` to Builder/Architect by default; keep tickets small so review diffs stay bounded | 2026-07-17 |
-| **Orchestrator role leakage** — the main (orchestrator) session absorbs subagent work: plans, implements, or reviews inline instead of dispatching, dissolving the role boundaries the pattern exists for | `[internal]` — observed on fx-eye-tracking's planner/generator/evaluator harness (sibling of this pattern), reported by the maintainer, 2026-07-17. Soft "launch the subagent" prompts alone did not hold. | Hard orchestrator-discipline rules in the target repo's CLAUDE.md (main session never does stage work); every stage command carries a "never absorb the role" line. If leakage recurs, switch to Mode B (separate human-run sessions — no orchestrator exists to leak). | 2026-07-17 |
+| **Orchestrator role leakage** — the main (orchestrator) session absorbs subagent work: plans, implements, or reviews inline instead of dispatching, dissolving the role boundaries the pattern exists for | `[internal]` — observed on fx-eye-tracking's planner/generator/evaluator harness (sibling of this pattern), reported by the maintainer, 2026-07-17. Soft "launch the subagent" prompts alone did not hold. | Mechanically enforced since 2026-07-17: a PreToolUse guard denies main-session Edit/Write while subagent calls pass (`agent_id` is present in hook input only for subagents — see the verification record in `scaffold/INSTALL.md`). Backed by prose rules in the CLAUDE.md snippet and a "never absorb the role" line in every stage command. If leakage still recurs, switch to Mode B (separate human-run sessions — no orchestrator exists to leak). | 2026-07-17 |
 | **Silent delivery drop** — end-of-pipeline bookkeeping relied on side effects that never fired: many MRs merged, **zero** tracker issues closed, and no step verified the transition | `[internal]` — fx-eye-tracking, reported by the maintainer, 2026-07-17. Root cause on that instance not yet diagnosed; typical causes: missing `Closes #N` in the MR description, or merging to a non-default branch (GitLab auto-close fires only on default-branch merges). | Delivery is verified, not assumed: run `/verify-delivery <ticket>` after every merge — it checks the Definition of Done (plan · tests · CLEAR verdict · merged · issue closed · writeback) and repairs gaps only with explicit human OK. Never trust tracker auto-close blindly. | 2026-07-17 |
 | **Harness-specific timeouts/failures** for these exact model+effort combinations | **None recorded yet** (as of 2026-07-17) | When observed: record here with harness name, conditions, and date | — |
 
@@ -75,6 +75,14 @@ Figures are transcribed from the team-finalized specification dated 2026-07-17 (
 - Net output: merged PR, updated docs/ADRs, closed ticket. Merge requires a CLEAR verdict.
 - Delivery is **verified, not assumed**: after every merge, `/verify-delivery <ticket>` checks the Definition of Done — plan on disk · tests green · CLEAR verdict · MR merged into the default branch · tracker issue closed · writeback done. Added 2026-07-17 after the fx-eye-tracking silent-delivery-drop observation (§4).
 
+**Human gates (target operating model):**
+
+- **Gate 1 — upstream sign-off:** a human approves the master PRD → sub-PRDs → generated tickets before the pipeline starts. This is where product judgment enters.
+- **Gate 2 — smoke test:** a human smoke-tests the delivered work at the end of the ticket batch / milestone.
+- **Between the gates the pipeline runs autonomously**: plan → build → review → merge on CLEAR → `/verify-delivery` (including closing the tracker issue) with no per-ticket human approval.
+- **Exception path (the only other way a human appears):** 2 bounce cycles without convergence, or a `/verify-delivery` item that cannot be repaired automatically, escalates to a human.
+- **On-ramp:** a project newly adopting the pattern may start in `supervised` mode (human confirms each merge and each tracker write) and switch to `autonomous` once the pattern holds. The mode is declared in the target repo's CLAUDE.md (see `scaffold/claude-md-snippet.md`).
+
 ## 6. Scaffold
 
 ```
@@ -82,6 +90,9 @@ scaffold/
 ├── INSTALL.md                 # install steps + config-key verification record
 ├── claude-md-snippet.md       # block to append to the target repo's CLAUDE.md
 └── .claude/
+    ├── settings.json          # wires the PreToolUse write guard
+    ├── hooks/
+    │   └── guard-main-session-writes.mjs  # denies main-session Edit/Write; subagents pass
     ├── agents/                # role definitions with pinned model + effort
     │   ├── architect.md       # claude-sonnet-5 @ xhigh; writes the plan, no production code
     │   ├── builder.md         # claude-opus-4-8 @ xhigh; inherits all tools
@@ -101,3 +112,4 @@ Install steps and usage modes: [scaffold/INSTALL.md](scaffold/INSTALL.md). Front
 |---|---|---|---|
 | 2026-07-17 | Initial entry. Roles, boundaries, and the model/effort table adopted as the team standard. | Team-finalized specification, 2026-07-17. Benchmark figures transcribed as recorded there; original source links were not captured — attach them at the first re-verification. Scaffold config keys verified against live Claude Code docs same day (record in `scaffold/INSTALL.md`). | Horace Hou (spec) / Claude Fable 5 (write-up) |
 | 2026-07-17 | Added two `[internal]` failure modes observed on the fx-eye-tracking sibling harness: orchestrator role leakage, and silent delivery drop (MRs merged, issues never closed). Hardened the scaffold accordingly: orchestrator-discipline rules in the CLAUDE.md snippet, "never absorb the role" line in every stage command, new `/verify-delivery` Definition-of-Done command. Model/effort table unchanged. | Maintainer report (Horace Hou), 2026-07-17. | Horace Hou (report) / Claude Fable 5 (write-up) |
+| 2026-07-17 | Documented the target operating model — two human gates (upstream PRD/sub-PRD/ticket sign-off; final smoke test), autonomous pipeline in between, `supervised` on-ramp mode. Orchestrator write-denial is now mechanically enforced: PreToolUse guard denies main-session Edit/Write, subagent calls pass. Model/effort table unchanged. | Maintainer direction (Horace Hou), 2026-07-17. Hook mechanism verified against live Claude Code docs the same day (hooks.md, permissions.md — record in `scaffold/INSTALL.md`). | Horace Hou (direction) / Claude Fable 5 (write-up) |
