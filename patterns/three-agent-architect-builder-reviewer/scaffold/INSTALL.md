@@ -4,8 +4,8 @@ Source pattern: `agent-templates/patterns/three-agent-architect-builder-reviewer
 
 ## Steps
 
-1. Copy `.claude/` **and `templates/`** from this scaffold into the target repo root. If the target already has `.claude/settings.json`, merge the `hooks.PreToolUse` entry instead of overwriting.
-2. Copy the platform half of `tracker-templates/`: `github/ISSUE_TEMPLATE/` → the target repo's `.github/ISSUE_TEMPLATE/`, or `gitlab/issue_templates/` → `.gitlab/issue_templates/` — hand-written issues then follow the same format the pipeline's triage can convert mechanically.
+1. Copy `.claude/` from this scaffold into the target repo root. If the target already has `.claude/settings.json`, merge the `hooks.PreToolUse` entry instead of overwriting.
+2. Install the catalog's **universal templates** (shared by all patterns — source of truth is the catalog root, not this scaffold): `templates/ticket.template.md` → the target repo's `templates/`; the platform half of `templates/tracker/` → `.github/` (ISSUE_TEMPLATE/ + PULL_REQUEST_TEMPLATE.md) or `.gitlab/` (issue_templates/ + merge_request_templates/). Then fill the PR/MR template's **Constraint check** section with the target repo's CLAUDE.md non-negotiables. Hand-written issues and pipeline PRs now share one format that triage can convert and reviewers can verify.
 3. The write-guard hook needs Node.js ≥ 18 on PATH. It denies main-session Edit/Write with a dispatch instruction; subagent writes pass. Override switch for human-approved out-of-pipeline edits: create `.claude/allow-main-writes`, delete it afterwards — and add that path to `.gitignore`.
 4. The tracker steps (`publish-tickets.mjs`, the deliver stage, `/verify-delivery`, the nightly sweep) need the platform CLI installed and authenticated: `gh` (GitHub) or `glab` (GitLab). The publish script autodetects the platform from the origin remote; override with `--platform gh|glab` (test doubles / non-PATH binaries: `GH_BIN` / `GLAB_BIN` env overrides).
 5. Append the content of `claude-md-snippet.md` to the target repo's `CLAUDE.md`, and set the **Operating mode** line (`supervised` for a fresh adoption; `autonomous` is the target).
