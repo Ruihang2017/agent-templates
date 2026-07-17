@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { check, summarize } from './lib.mjs'
 
-const suites = ['suite-integrity.mjs', 'suite-guard.mjs', 'suite-publish.mjs', 'suite-runner.mjs', 'suite-adopt.mjs']
+const suites = ['suite-integrity.mjs', 'suite-guard.mjs', 'suite-publish.mjs', 'suite-runner.mjs', 'suite-adopt.mjs', 'suite-site.mjs']
 
 console.log('three-agent pattern — Level-0 E2E\n')
 

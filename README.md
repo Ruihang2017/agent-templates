@@ -1,6 +1,6 @@
 # agent-templates
 
-[![npm](https://img.shields.io/npm/v/agent-templates)](https://www.npmjs.com/package/agent-templates)
+[![npm](https://img.shields.io/npm/v/agent-templates)](https://www.npmjs.com/package/agent-templates) · **[Catalog site →](https://ruihang2017.github.io/agent-templates/)**
 
 Catalog of reusable multi-agent development architecture patterns. Each entry is a design write-up plus drop-in scaffolding (subagent definitions, slash commands, CLAUDE.md snippets) so a new project reuses a proven pattern instead of redesigning one.
 

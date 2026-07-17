@@ -23,6 +23,7 @@ package.json                           # published npm package `agent-templates`
 scripts/
   cli.mjs                              # npx entry point: list · adopt (dispatches to adopt.mjs)
   adopt.mjs                            # one-command pattern installer (idempotent; E2E-tested)
+  build-site.mjs                       # generates the GitHub Pages catalog page from pattern data (never hand-edit output)
 templates/                             # UNIVERSAL — shared by all patterns and by this repo itself
   pattern-README.template.md           # mandatory starting point for every new pattern
   ticket.template.md                   # the ticket format (field-proven: fx / PIL-15 / FND-9 standard)
