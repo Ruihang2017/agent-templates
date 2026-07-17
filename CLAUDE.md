@@ -25,6 +25,8 @@ patterns/<pattern-name>/               # kebab-case; one directory per pattern
 testbed/                               # E2E for the pattern chain (see testbed/README.md)
   e2e/run-e2e.mjs                      # Level 0: deterministic, zero-token — the merge gate for scaffold changes
   app/                                 # Level 1: tiny real target project for live pipeline rehearsals
+.claude/                               # self-hosted pattern machinery — byte-synced scaffold copies (see "How this repo develops itself")
+.github/ISSUE_TEMPLATE/                # issue templates (from the scaffold) — pattern-tweak requests from other projects land here
 ```
 
 Worked example — `patterns/three-agent-architect-builder-reviewer/` is the canonical entry; **every future pattern must match its format**:
@@ -99,6 +101,14 @@ Upstream docs convention assumed by patterns (exemplar: `fx-eye-tracking`): `doc
 4. Open a PR. Status starts at `proposed`.
 5. Sign-off to merge: the repo maintainer (Horace Hou) approves schema compliance and grounding. Promotion to `adopted` additionally requires the pattern having run on ≥1 real ticket in a real project, named in the provenance log.
 6. Any later change to a model/effort recommendation updates the table **and** the as-of date **and** adds a provenance-log entry — in the same commit.
+
+## How this repo develops itself
+
+1. **Issues are the decision record; commits are only the change record.** Every unit of work starts as a GitHub issue stating what + why. The work lands via a PR referencing it (`Closes #N`) whose body summarizes what changed, why, and what was rejected along the way. **No direct merges to main.** Bootstrap exception: the rounds merged on 2026-07-17 before this rule existed are backfilled as `decision-record` issues #1–#4.
+2. **Self-hosted nightly sweep.** This repo runs the pattern's own `/nightly-issues`: other projects file pattern-tweak requests here (templates in `.github/ISSUE_TEMPLATE/`), and the sweep triages — and where fixable, fixes — them overnight. The machinery at `.claude/` (four agents, two workflows, `nightly-issues` + `verify-delivery` commands) is a **byte-synced copy of the scaffold**, enforced by the E2E integrity suite: change the scaffold first, then re-copy.
+3. **This repo's test suite** is `node testbed/e2e/run-e2e.mjs` — the Builder/Reviewer run it exactly like any project's tests.
+4. The scaffold's main-session write guard is **not installed here** — interactive doc-editing with the maintainer is this repo's norm. Revisit if orchestrator role leakage appears in this repo's own pipeline runs.
+5. Labels in use: `decision-record` · `triage:invalid` · `nightly:escalated` · `needs-human`.
 
 ## Grounding rules — binding on every agent working in this repo, including Claude
 
