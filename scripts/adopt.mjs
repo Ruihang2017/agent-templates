@@ -83,6 +83,12 @@ function* walk(dir) {
   }
 }
 
+// Installed text files are ALWAYS written with LF line endings: the Claude Code
+// Workflow tool rejects scripts containing \r ("control characters that would be
+// hidden in the approval dialog") — observed in the field on a Windows checkout
+// (catalog issue #21). CRLF can sneak in via git autocrlf on the CATALOG checkout,
+// so normalization happens here at install time, regardless of the source state.
+const TEXT_EXT = /\.(md|mjs|js|json|ya?ml|txt)$/i
 const copyFile = (src, dst, label) => {
   if (existsSync(dst) && !FORCE) {
     console.log(`= exists  ${label}`)
@@ -90,7 +96,11 @@ const copyFile = (src, dst, label) => {
     return false
   }
   mkdirSync(dirname(dst), { recursive: true })
-  cpSync(src, dst)
+  if (TEXT_EXT.test(src)) {
+    writeFileSync(dst, readFileSync(src, 'utf8').replace(/\r\n/g, '\n'))
+  } else {
+    cpSync(src, dst)
+  }
   console.log(`+ install ${label}`)
   installed++
   return true
