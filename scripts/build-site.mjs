@@ -139,9 +139,8 @@ const STEPS = [
     'Gate 2 — smoke test', 'Agents own unit/integration/E2E all along; you test once, when the PRD is done. A nightly sweep fixes issues while you sleep.'],
 ]
 
-// Use-when bullets are still parsed upstream of the mock era but intentionally not
-// rendered: the approved mock's pattern card is title + status chip + summary +
-// role chips + links only.
+// Use-when bullets are intentionally gone (parse + render): the approved mock's
+// pattern card is title + status chip + summary + role chips + links only.
 const patternCards = patterns
   .map((p) => {
     const c = STATUS_CHIP[p.status] || STATUS_CHIP.proposed
@@ -346,7 +345,7 @@ const html = `<!doctype html>
   var b=document.getElementById('copy-btn'),q=document.getElementById('qs'),t
   if(!b||!q)return
   b.addEventListener('click',function(){
-    try{navigator.clipboard.writeText(q.textContent)}catch(e){}
+    try{navigator.clipboard.writeText(q.textContent).catch(function(){})}catch(e){}
     b.textContent='Copied!'
     clearTimeout(t)
     t=setTimeout(function(){b.textContent='Copy'},1400)
