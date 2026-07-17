@@ -70,6 +70,30 @@ export async function run() {
     rmSync(t2, { recursive: true, force: true })
   }
 
+  // D: the npx-facing CLI dispatcher (scripts/cli.mjs)
+  const CLI = fileURLToPath(new URL('../../scripts/cli.mjs', import.meta.url))
+  const runCli = (args) => spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8' })
+  {
+    const l = runCli(['list'])
+    eq(S, 'D1 cli list exits 0', l.status, 0)
+    check(S, 'D1 cli list shows the pattern', l.stdout.includes(PATTERN))
+    const bare = runCli([])
+    eq(S, 'D2 bare cli prints usage, exit 0', bare.status, 0)
+    check(S, 'D2 usage names the npx form', /npx github:/.test(bare.stdout))
+    const unk = runCli(['frobnicate'])
+    eq(S, 'D3 unknown command exits 1', unk.status, 1)
+    const t3 = mkdtempSync(join(tmpdir(), 'e2e-adopt-'))
+    try {
+      const a = runCli(['adopt', PATTERN, t3])
+      eq(S, 'D4 cli adopt exits 0', a.status, 0)
+      check(S, 'D4 cli adopt installs the scaffold', existsSync(join(t3, '.claude/agents/architect.md')) && existsSync(join(t3, 'CLAUDE.md')))
+    } finally {
+      rmSync(t3, { recursive: true, force: true })
+    }
+    const aBad = runCli(['adopt'])
+    eq(S, 'D5 cli adopt without args propagates exit 1', aBad.status, 1)
+  }
+
   // C: error paths
   const bad1 = runAdopt(['no-such-pattern', tmpdir()])
   eq(S, 'C1 unknown pattern exits 1', bad1.status, 1)
