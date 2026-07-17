@@ -6,9 +6,11 @@
 
 A library/catalog of the multi-agent development architecture patterns this team reuses across projects. Each pattern is a **self-contained, reusable unit**: a design write-up plus actual working scaffolding (CLAUDE.md snippets, subagent definitions, slash commands) that a new project copies directly instead of redesigning the architecture from scratch.
 
-This repo ships documentation and scaffolding only — no application code.
+This repo ships documentation, scaffolding, and a testbed. The only application code is the testbed's toy target app.
 
 **Target operating model** (what patterns are hardened toward): for a project that fits a pattern, humans decide at exactly two gates — upstream (master PRD → sub-PRDs → generated tickets, signed off before the pipeline starts) and downstream (a smoke test of the delivered work). Between those gates the multi-agent workflow runs autonomously. Consequences for this repo: not every project fits every pattern ("when not to use" is a required section, take it seriously), and role boundaries are enforced mechanically wherever possible — hooks and permission config over prose exhortation, because prose alone has already been observed to fail.
+
+**Testing policy** (`[team-policy]`, 2026-07-17, binding on every pattern): the agents own the whole test pyramid — unit, integration, and E2E — run manually or wired into the pipeline as fits the project. The human's only test duty is the final smoke test once the PRD's tasks are all done (Gate 2).
 
 ## Layout
 
@@ -20,6 +22,9 @@ templates/
 patterns/<pattern-name>/               # kebab-case; one directory per pattern
   README.md                            # the write-up — MUST follow the schema below
   scaffold/                            # drop-in files a target repo copies, then adapts
+testbed/                               # E2E for the pattern chain (see testbed/README.md)
+  e2e/run-e2e.mjs                      # Level 0: deterministic, zero-token — the merge gate for scaffold changes
+  app/                                 # Level 1: tiny real target project for live pipeline rehearsals
 ```
 
 Worked example — `patterns/three-agent-architect-builder-reviewer/` is the canonical entry; **every future pattern must match its format**:
@@ -32,6 +37,9 @@ patterns/three-agent-architect-builder-reviewer/
     ├── claude-md-snippet.md           # block to append to the target repo's CLAUDE.md
     ├── templates/
     │   └── ticket.template.md
+    ├── tracker-templates/             # native issue templates so hand-written issues match the format
+    │   ├── github/ISSUE_TEMPLATE/     # bug-report.md · task.md
+    │   └── gitlab/issue_templates/    # bug-report.md · task.md
     └── .claude/
         ├── settings.json              # PreToolUse write guard wiring
         ├── hooks/
@@ -39,17 +47,20 @@ patterns/three-agent-architect-builder-reviewer/
         ├── scripts/
         │   └── publish-tickets.mjs
         ├── workflows/
-        │   └── run-milestone.js
+        │   ├── run-milestone.js
+        │   └── nightly-issues.js
         ├── agents/
         │   ├── architect.md
         │   ├── builder.md
-        │   └── reviewer.md
+        │   ├── reviewer.md
+        │   └── triage.md
         └── commands/
             ├── plan-ticket.md
             ├── build-ticket.md
             ├── review-ticket.md
             ├── verify-delivery.md
-            └── start-milestone.md
+            ├── start-milestone.md
+            └── nightly-issues.md
 ```
 
 ## Pattern README schema (all sections required, in this order)
@@ -84,9 +95,10 @@ Upstream docs convention assumed by patterns (exemplar: `fx-eye-tracking`): `doc
 
 1. Copy `templates/pattern-README.template.md` → `patterns/<kebab-name>/README.md`. Fill every section; delete none.
 2. Build `scaffold/` with actually-runnable files. Verify every config key (agent/command frontmatter, settings) against current Claude Code docs at write time — not from memory.
-3. Open a PR. Status starts at `proposed`.
-4. Sign-off to merge: the repo maintainer (Horace Hou) approves schema compliance and grounding. Promotion to `adopted` additionally requires the pattern having run on ≥1 real ticket in a real project, named in the provenance log.
-5. Any later change to a model/effort recommendation updates the table **and** the as-of date **and** adds a provenance-log entry — in the same commit.
+3. `node testbed/e2e/run-e2e.mjs` must be green before merging any scaffold change; when you add scaffold surface (new files, new orchestration logic), extend the E2E suites to cover it.
+4. Open a PR. Status starts at `proposed`.
+5. Sign-off to merge: the repo maintainer (Horace Hou) approves schema compliance and grounding. Promotion to `adopted` additionally requires the pattern having run on ≥1 real ticket in a real project, named in the provenance log.
+6. Any later change to a model/effort recommendation updates the table **and** the as-of date **and** adds a provenance-log entry — in the same commit.
 
 ## Grounding rules — binding on every agent working in this repo, including Claude
 

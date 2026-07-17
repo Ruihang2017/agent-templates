@@ -29,7 +29,9 @@
 |---|---|---|
 | **<Role>** | <responsibility> | <hard boundary> |
 
-<Who judges whom; which contexts must stay isolated; which boundaries are hard requirements vs tunable.>
+<Who judges whom; which contexts must stay isolated; which boundaries are hard requirements vs tunable.
+State which agent owns unit / integration / E2E tests — agents own all three levels (repo testing policy);
+the human only smoke-tests at PRD completion.>
 
 ## 3. Model + effort assignment (as of YYYY-MM-DD)
 
