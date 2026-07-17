@@ -30,10 +30,16 @@ patterns/three-agent-architect-builder-reviewer/
 └── scaffold/
     ├── INSTALL.md                     # how to drop the scaffold into a target repo
     ├── claude-md-snippet.md           # block to append to the target repo's CLAUDE.md
+    ├── templates/
+    │   └── ticket.template.md
     └── .claude/
         ├── settings.json              # PreToolUse write guard wiring
         ├── hooks/
         │   └── guard-main-session-writes.mjs
+        ├── scripts/
+        │   └── publish-tickets.mjs
+        ├── workflows/
+        │   └── run-milestone.js
         ├── agents/
         │   ├── architect.md
         │   ├── builder.md
@@ -42,7 +48,8 @@ patterns/three-agent-architect-builder-reviewer/
             ├── plan-ticket.md
             ├── build-ticket.md
             ├── review-ticket.md
-            └── verify-delivery.md
+            ├── verify-delivery.md
+            └── start-milestone.md
 ```
 
 ## Pattern README schema (all sections required, in this order)
@@ -57,6 +64,8 @@ patterns/three-agent-architect-builder-reviewer/
 | 5. Upstream / downstream integration | How work enters (master PRD → sub-PRD → ticket, ADRs), what leaves (PR, review verdict, docs), and the **human gates** — where humans decide, and where they must not be needed |
 | 6. Scaffold | What is in `scaffold/` and how to install it |
 | 7. Provenance & change log | Dated entries: what changed, on what basis, by whom |
+
+Status glossary: `proposed` = drafted, not signed off · `trialed` = signed off as the team standard, awaiting its first real-ticket run · `adopted` = has run ≥ 1 real ticket in a real project, named in the provenance log · `deprecated` = superseded, kept for history.
 
 Upstream docs convention assumed by patterns (exemplar: `fx-eye-tracking`): `docs/PRD.md` (master PRD) → `docs/prd/<module>/README.md` (sub-PRDs) → `docs/prd/<module>/tickets/*.md` (tickets = future issue bodies), plus `docs/adr/` for hard-to-reverse decisions.
 
