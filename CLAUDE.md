@@ -17,6 +17,9 @@ This repo ships documentation, scaffolding, and a testbed. The only application 
 ```
 CLAUDE.md                              # this file — the operating manual
 README.md                              # human-facing pattern index
+ADOPTING.md                            # how users apply a pattern to new/existing projects
+scripts/
+  adopt.mjs                            # one-command pattern installer (idempotent; E2E-tested)
 templates/                             # UNIVERSAL — shared by all patterns and by this repo itself
   pattern-README.template.md           # mandatory starting point for every new pattern
   ticket.template.md                   # the ticket format (field-proven: fx / PIL-15 / FND-9 standard)
@@ -55,6 +58,7 @@ patterns/three-agent-architect-builder-reviewer/
         │   ├── reviewer.md
         │   └── triage.md
         └── commands/
+            ├── breakdown-prd.md
             ├── plan-ticket.md
             ├── build-ticket.md
             ├── review-ticket.md
