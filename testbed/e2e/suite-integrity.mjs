@@ -67,6 +67,12 @@ export async function run() {
     check(S, `exists: ${rel}`, existsSync(REPO_ROOT + rel))
   }
 
+  // publish guards: the catalog is a published npm package (MIT, issue #15)
+  check(S, 'LICENSE exists', existsSync(REPO_ROOT + 'LICENSE'))
+  let manifest = null
+  try { manifest = JSON.parse(readFileSync(REPO_ROOT + 'package.json', 'utf8')) } catch {}
+  check(S, 'package.json declares MIT and is publishable', manifest && manifest.license === 'MIT' && manifest.private !== true)
+
   for (const [file, pins] of Object.entries(AGENT_PINS)) {
     const path = p('.claude/agents/' + file)
     if (!existsSync(path)) { check(S, `${file} readable`, false); continue }

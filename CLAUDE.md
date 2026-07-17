@@ -18,7 +18,8 @@ This repo ships documentation, scaffolding, and a testbed. The only application 
 CLAUDE.md                              # this file — the operating manual
 README.md                              # human-facing pattern index
 ADOPTING.md                            # how users apply a pattern to new/existing projects
-package.json                           # makes the catalog npx-runnable (bin: agent-templates); private:true
+LICENSE                                # MIT (scaffold-output carve-out noted in README § License)
+package.json                           # published npm package `agent-templates` (bin + files whitelist)
 scripts/
   cli.mjs                              # npx entry point: list · adopt (dispatches to adopt.mjs)
   adopt.mjs                            # one-command pattern installer (idempotent; E2E-tested)

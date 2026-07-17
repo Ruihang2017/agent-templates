@@ -8,19 +8,13 @@ Check the index in [README.md](README.md), then the pattern's own §1 **When to 
 
 ## 1. Install — one command
 
-Without cloning the catalog (npm's git-specifier support; the repo is public, so this works for **anyone**, no credentials):
+From the public npm registry (anonymous, works for anyone):
 
 ```
-npx github:Ruihang2017/agent-templates adopt three-agent-architect-builder-reviewer C:\path\to\your-project
+npx agent-templates@latest adopt three-agent-architect-builder-reviewer C:\path\to\your-project
 ```
 
-Pin a branch or tag for reproducibility: `npx github:Ruihang2017/agent-templates#main …`. Note npx caches git installs — add `--yes --prefer-online` (or clear the npx cache) to pick up catalog updates.
-
-Or from a checkout of this catalog:
-
-```
-node scripts/adopt.mjs three-agent-architect-builder-reviewer C:\path\to\your-project
-```
+Pin an exact version for reproducibility (`npx agent-templates@0.1.0 …`) — a published version is a verified snapshot of the catalog's recommendations. Alternatives: `npx github:Ruihang2017/agent-templates …` (tracks the repo, no release needed; npx caches git installs — `--prefer-online` picks up updates), or from a checkout: `node scripts/adopt.mjs three-agent-architect-builder-reviewer <target-dir>`.
 
 Idempotent (re-runs skip what exists; `--force` overwrites). It installs the scaffold `.claude/` (agents with pinned model/effort, stage commands, write guard, workflows, publish script), the universal `templates/ticket.template.md`, the platform tracker templates (`--platform gh|glab`, autodetected from the origin remote) into `.github/` or `.gitlab/`, creates `docs/prd|adr|plans/`, copies a root `PRD.md` to `docs/PRD.md`, and seeds or appends `CLAUDE.md` from the pattern snippet (marker-checked, never duplicated).
 
@@ -51,7 +45,7 @@ Same `adopt.mjs` run — skip-existing protects your files. The differences:
 The repo is public, so distribution has two tiers:
 
 1. **npx from git — works for everyone, today, zero infra.** The `npx github:…` command above needs no credentials and no publishing. Pin `#main` or a tag for reproducibility.
-2. **Public npm — the release tier (recommended next).** Anonymous installs, a short stable name (`npx agent-templates@latest adopt …` — the bare name was unclaimed on the npm registry as of 2026-07-17), semver pinning that pairs with the catalog's expiry discipline (a published version = a verified snapshot of the recommendations), download stats and discoverability, and a natural companion to a future GitHub Pages catalog site. Publishing blockers are deliberate maintainer decisions tracked in issue #13: **license** (the repo currently has none — legally "all rights reserved" despite being public), npm account + final name, and flipping `package.json`'s `private: true`.
+2. **Public npm — the release tier (LIVE).** Published as [`agent-templates`](https://www.npmjs.com/package/agent-templates) (MIT, maintainer decision 2026-07-17, issue #15). Anonymous installs, semver pinning that pairs with the catalog's expiry discipline (a published version = a verified snapshot of the recommendations), and a natural companion to a future GitHub Pages catalog site.
 
 **Why not GitHub Packages:** its npm registry requires an access token **even to install public packages** — "You need an access token to publish, install, and delete private, internal, and public packages" (GitHub docs, *Working with the npm registry*, verified live 2026-07-17) — and it supports scoped names only. That defeats frictionless public sharing; it remains the right choice only for private-org registries, which this catalog no longer needs.
 
