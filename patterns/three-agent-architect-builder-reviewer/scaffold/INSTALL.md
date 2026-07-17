@@ -2,6 +2,10 @@
 
 Source pattern: `agent-templates/patterns/three-agent-architect-builder-reviewer` — read its [README](../README.md) (especially the expiry trigger) before installing.
 
+## Quickstart
+
+From a checkout of the catalog: `node scripts/adopt.mjs three-agent-architect-builder-reviewer <target-dir>` performs steps 1–6 below mechanically (idempotent; `--platform gh|glab`), then prints the next steps. Full walkthrough incl. the bare-PRD.md scenario: the catalog's [ADOPTING.md](../../../ADOPTING.md). The manual steps:
+
 ## Steps
 
 1. Copy `.claude/` from this scaffold into the target repo root. If the target already has `.claude/settings.json`, merge the `hooks.PreToolUse` entry instead of overwriting.

@@ -30,6 +30,7 @@ const EXPECTED_FILES = [
   '.claude/commands/verify-delivery.md',
   '.claude/commands/start-milestone.md',
   '.claude/commands/nightly-issues.md',
+  '.claude/commands/breakdown-prd.md',
 ]
 
 // Universal templates live at the CATALOG root (shared by all patterns + the repo itself)
@@ -74,7 +75,7 @@ export async function run() {
     check(S, `${file} pins effort ${pins.effort}`, fmField(text, 'effort') === pins.effort)
   }
 
-  for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'start-milestone', 'nightly-issues']) {
+  for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'start-milestone', 'nightly-issues', 'breakdown-prd']) {
     const path = p(`.claude/commands/${cmd}.md`)
     if (!existsSync(path)) continue
     check(S, `command ${cmd} has description`, fmField(readFileSync(path, 'utf8'), 'description').length > 0)

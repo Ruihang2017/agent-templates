@@ -1,0 +1,177 @@
+#!/usr/bin/env node
+// adopt.mjs — one-command pattern installer for new and existing projects.
+//
+// Usage (run from a checkout of the agent-templates catalog):
+//   node scripts/adopt.mjs <pattern-name> <target-dir> [--platform gh|glab] [--force]
+//
+// Installs into <target-dir>:
+//   .claude/                 from the pattern's scaffold (per-file; existing files skipped)
+//   templates/ticket.template.md   the universal ticket format
+//   .github/ or .gitlab/     universal tracker templates (issues + PR/MR) for the platform
+//   docs/PRD.md              copied from a root PRD.md if present and docs/PRD.md is absent
+//   docs/prd/ docs/adr/ docs/plans/   the docs skeleton the pipeline assumes
+//   CLAUDE.md                created from the snippet, or snippet appended once (marker-checked)
+//
+// Idempotent: re-running skips everything that exists (--force overwrites files, never
+// re-appends the snippet). Exit 0 = installed/verified; exit 1 = bad invocation.
+
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { basename, dirname, join, relative, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const CATALOG = fileURLToPath(new URL('..', import.meta.url))
+const argv = process.argv.slice(2)
+const FORCE = argv.includes('--force')
+
+const pIx = argv.indexOf('--platform')
+let PLATFORM = pIx !== -1 ? argv[pIx + 1] || '' : ''
+if (pIx !== -1 && (!PLATFORM || PLATFORM.startsWith('--'))) {
+  console.error('missing or invalid --platform value (expected gh or glab)')
+  process.exit(1)
+}
+const positional = argv.filter((a, i) => !a.startsWith('--') && (pIx === -1 || i !== pIx + 1))
+const [pattern, targetArg] = positional
+if (!pattern || !targetArg) {
+  console.error('usage: node scripts/adopt.mjs <pattern-name> <target-dir> [--platform gh|glab] [--force]')
+  process.exit(1)
+}
+
+const scaffold = join(CATALOG, 'patterns', pattern, 'scaffold')
+if (!existsSync(scaffold)) {
+  const available = existsSync(join(CATALOG, 'patterns'))
+    ? readdirSync(join(CATALOG, 'patterns')).filter((d) => existsSync(join(CATALOG, 'patterns', d, 'scaffold')))
+    : []
+  console.error(`unknown pattern: ${pattern}\navailable: ${available.join(', ') || '(none)'}`)
+  process.exit(1)
+}
+const target = resolve(targetArg)
+let targetOk = false
+try { targetOk = statSync(target).isDirectory() } catch {}
+if (!targetOk) {
+  console.error(`target is not a directory: ${target}`)
+  process.exit(1)
+}
+
+if (!PLATFORM) {
+  try {
+    const origin = execFileSync('git', ['-C', target, 'remote', 'get-url', 'origin'], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+    const host = (origin.match(/(?:@|:\/\/)([^/:]+)[/:]/) || [])[1] || ''
+    PLATFORM = host.includes('gitlab') ? 'glab' : 'gh'
+    console.log(`platform: ${PLATFORM} (autodetected from ${host || origin}; override with --platform)`)
+  } catch {
+    PLATFORM = 'gh'
+    console.log('platform: gh (no origin remote detected; override with --platform glab)')
+  }
+}
+if (PLATFORM !== 'gh' && PLATFORM !== 'glab') {
+  console.error(`unknown platform: ${PLATFORM} (expected gh or glab)`)
+  process.exit(1)
+}
+
+let installed = 0
+let skipped = 0
+const note = (line) => console.log(line)
+
+function* walk(dir) {
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const f = join(dir, e.name)
+    if (e.isDirectory()) yield* walk(f)
+    else yield f
+  }
+}
+
+const copyFile = (src, dst, label) => {
+  if (existsSync(dst) && !FORCE) {
+    console.log(`= exists  ${label}`)
+    skipped++
+    return false
+  }
+  mkdirSync(dirname(dst), { recursive: true })
+  cpSync(src, dst)
+  console.log(`+ install ${label}`)
+  installed++
+  return true
+}
+
+// 1. scaffold .claude/ (per-file so re-runs skip; settings.json conflicts get a manual-merge note)
+for (const src of walk(join(scaffold, '.claude'))) {
+  const rel = relative(scaffold, src).replaceAll('\\', '/')
+  const dst = join(target, rel)
+  const existed = existsSync(dst)
+  copyFile(src, dst, rel)
+  if (existed && !FORCE && rel === '.claude/settings.json') {
+    note('  (note) existing .claude/settings.json kept — merge the hooks.PreToolUse entry and permissions.allow from the scaffold manually')
+  }
+}
+
+// 2. universal ticket template
+copyFile(join(CATALOG, 'templates', 'ticket.template.md'), join(target, 'templates', 'ticket.template.md'), 'templates/ticket.template.md')
+
+// 3. platform tracker templates (issues + PR/MR)
+const trackerSrc = join(CATALOG, 'templates', 'tracker', PLATFORM === 'gh' ? 'github' : 'gitlab')
+const trackerDstRoot = join(target, PLATFORM === 'gh' ? '.github' : '.gitlab')
+for (const src of walk(trackerSrc)) {
+  const rel = relative(trackerSrc, src).replaceAll('\\', '/')
+  copyFile(src, join(trackerDstRoot, rel), `${PLATFORM === 'gh' ? '.github' : '.gitlab'}/${rel}`)
+}
+
+// 4. docs skeleton
+for (const d of ['docs/prd', 'docs/adr', 'docs/plans']) {
+  const dir = join(target, d)
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, '.gitkeep'), '')
+    console.log(`+ mkdir   ${d}/`)
+    installed++
+  } else {
+    console.log(`= exists  ${d}/`)
+    skipped++
+  }
+}
+
+// 5. root PRD.md -> docs/PRD.md (copy, never move — the pipeline reads docs/PRD.md)
+const rootPrd = join(target, 'PRD.md')
+const docsPrd = join(target, 'docs', 'PRD.md')
+if (existsSync(rootPrd) && !existsSync(docsPrd)) {
+  cpSync(rootPrd, docsPrd)
+  console.log('+ install docs/PRD.md (copied from root PRD.md — the pipeline reads docs/PRD.md; delete the root copy when ready)')
+  installed++
+} else if (existsSync(docsPrd)) {
+  console.log('= exists  docs/PRD.md')
+  skipped++
+} else {
+  note('  (note) no PRD.md found — write docs/PRD.md before running /breakdown-prd')
+}
+
+// 6. CLAUDE.md: create from the snippet, or append it once (marker-checked, never duplicated)
+const snippet = readFileSync(join(scaffold, 'claude-md-snippet.md'), 'utf8')
+const MARKER = '## Delivery pipeline — three-agent Architect / Builder / Reviewer'
+const claudeMd = join(target, 'CLAUDE.md')
+if (!existsSync(claudeMd)) {
+  const header = `# ${basename(target)} — Project Constitution\n\n> Auto-loaded into every session. Installed by agent-templates adopt.mjs on ${new Date().toISOString().slice(0, 10)}.\n> Add your project facts and non-negotiable constraints above the pipeline section.\n\n`
+  writeFileSync(claudeMd, header + snippet)
+  console.log('+ install CLAUDE.md (seeded from the pattern snippet)')
+  installed++
+} else if (!readFileSync(claudeMd, 'utf8').includes(MARKER)) {
+  writeFileSync(claudeMd, readFileSync(claudeMd, 'utf8').trimEnd() + '\n\n' + snippet)
+  console.log('+ append  CLAUDE.md (pipeline snippet appended)')
+  installed++
+} else {
+  console.log('= exists  CLAUDE.md (pipeline snippet already present)')
+  skipped++
+}
+
+console.log(`\nadopt: ${installed} installed, ${skipped} already present. Pattern: ${pattern}, platform: ${PLATFORM}.`)
+console.log(`
+NEXT STEPS (details: ${join(CATALOG, 'ADOPTING.md')})
+  1. Review CLAUDE.md — set the Operating mode line (start: supervised) and add your
+     project facts; fill the Constraint check section of the PR/MR template.
+  2. Tracker: git remote + authenticated CLI (${PLATFORM} auth login). Node >= 18 on PATH.
+  3. In Claude Code, in the target repo:  /breakdown-prd
+     (Architect decomposes docs/PRD.md into sub-PRDs + tickets, then stops for your review)
+  4. Gate 1 — review the breakdown, then:  /start-milestone docs/prd/00-<module> supervised
+  5. Graduate to autonomous when the pattern holds; optional nightly sweep:
+     see the pattern's INSTALL.md § Nightly sweep.`)

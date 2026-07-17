@@ -10,6 +10,7 @@
 
 Every non-trivial ticket flows through three stages; no agent judges its own work.
 
+- **`/breakdown-prd [notes]`** — pre-Gate-1: the Architect decomposes `docs/PRD.md` into a breakdown plan + sub-PRDs + template-compliant tickets (disjoint file-scopes, dependency DAG), then stops for human review.
 - **`/plan-ticket <ticket>`** — Architect (`claude-sonnet-5` @ `xhigh`) reads the ticket + codebase → implementation plan at `docs/plans/<ticket-id>.md`. Writes no production code.
 - **`/build-ticket <ticket>`** — Builder (`claude-opus-4-8` @ `xhigh`) implements the plan, runs tests until green, records deviations. Never merges or self-clears.
 - **`/review-ticket <ticket>`** — Reviewer (`claude-fable-5` @ `max`) in a **fresh context**, deliberately a different model tier from the Builder. Focus: edge cases, concurrency, security-sensitive paths. Verdict **CLEAR** or **BOUNCE**; merge requires CLEAR.
