@@ -3,6 +3,11 @@
 
 ## Delivery pipeline — three-agent Architect / Builder / Reviewer
 
+**Operating mode: `supervised`** <!-- switch to `autonomous` once the pattern holds on this repo -->
+
+- `supervised` — a human confirms each merge and each tracker write. Use for a fresh adoption.
+- `autonomous` (target) — humans decide at exactly two gates: Gate 1, sign-off of master PRD → sub-PRDs → tickets before the pipeline starts; Gate 2, a smoke test of the delivered milestone. Between them the pipeline self-drives: merge on CLEAR, `/verify-delivery` repairs gaps (including closing the issue) automatically. A human is pulled in only on the exception path — 2 bounce cycles without convergence, or an unrepairable verify-delivery item.
+
 Every non-trivial ticket flows through three stages; no agent judges its own work.
 
 - **`/plan-ticket <ticket>`** — Architect (`claude-sonnet-5` @ `xhigh`) reads the ticket + codebase → implementation plan at `docs/plans/<ticket-id>.md`. Writes no production code.
@@ -14,6 +19,7 @@ Orchestrator discipline (hard rules for the main session):
 
 - The main session **orchestrates only**: it invokes the stage commands and relays artifacts (ticket path, plan path, diff ref). It never plans, implements, or reviews a ticket inline — that work belongs to the stage subagents, whatever the size of the change.
 - If a stage subagent fails or is unavailable, report the failure and stop. **Never absorb its role.**
+- This is **mechanically enforced**: a PreToolUse guard (`.claude/hooks/guard-main-session-writes.mjs`) denies Edit/Write in the main session; subagent calls pass. For a human-approved out-of-pipeline edit, create `.claude/allow-main-writes` (git-ignored) and delete it afterwards.
 - A ticket is done only when `/verify-delivery` passes all items — "the MR is merged" is not done (known failure: MRs merged with issues left open, observed 2026-07-17).
 
 Rules:
