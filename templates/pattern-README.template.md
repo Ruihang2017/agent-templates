@@ -50,6 +50,8 @@
 
 **Downstream (deliverables):** <what leaves — PR, verdict, docs; what gates a merge.>
 
+**Human gates:** <where humans decide (e.g. the start signal), where they must NOT be needed, and the exception path that pulls a human back in.>
+
 ## 6. Scaffold
 
 <List of files under scaffold/ and what each is for. Point to scaffold/INSTALL.md for install steps. Note the date the scaffold's config keys were last verified against Claude Code docs.>
