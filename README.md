@@ -9,7 +9,7 @@ cd path\to\my-project        # contains PRD.md; git init + remote done; gh/glab 
 npx github:Ruihang2017/agent-templates adopt three-agent-architect-builder-reviewer .
 ```
 
-(From a checkout instead: `node scripts/adopt.mjs three-agent-architect-builder-reviewer <target-dir>`.)
+(Public repo — the npx form works for anyone, no credentials. From a checkout instead: `node scripts/adopt.mjs three-agent-architect-builder-reviewer <target-dir>`.)
 
 1. Review `CLAUDE.md`: add project facts, keep **Operating mode: `supervised`**; fill the PR template's Constraint check from your non-negotiables.
 2. In Claude Code, inside the project: **`/breakdown-prd`** — the Architect turns `docs/PRD.md` into sub-PRDs + tickets, then stops for your review.

@@ -2,10 +2,25 @@
   "name": "agent-templates",
   "version": "0.1.0",
   "private": true,
-  "description": "Catalog of multi-agent development architecture patterns - design write-ups plus drop-in scaffolding. private:true blocks accidental npm publish; installs via git specifier (npx github:...) still work.",
+  "description": "Catalog of multi-agent development architecture patterns - design write-ups plus drop-in scaffolding. private:true blocks npm publish until the license/name/account decisions in issue #13 land; installs via git specifier (npx github:...) work regardless.",
   "type": "module",
   "bin": {
     "agent-templates": "scripts/cli.mjs"
+  },
+  "files": [
+    "scripts/",
+    "patterns/",
+    "templates/",
+    "ADOPTING.md",
+    "CLAUDE.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ruihang2017/agent-templates.git"
+  },
+  "homepage": "https://github.com/Ruihang2017/agent-templates#readme",
+  "bugs": {
+    "url": "https://github.com/Ruihang2017/agent-templates/issues"
   },
   "engines": {
     "node": ">=18"

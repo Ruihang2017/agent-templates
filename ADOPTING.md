@@ -8,7 +8,7 @@ Check the index in [README.md](README.md), then the pattern's own §1 **When to 
 
 ## 1. Install — one command
 
-Without cloning the catalog (npm's git-specifier support; private repos ride your existing git credentials):
+Without cloning the catalog (npm's git-specifier support; the repo is public, so this works for **anyone**, no credentials):
 
 ```
 npx github:Ruihang2017/agent-templates adopt three-agent-architect-builder-reviewer C:\path\to\your-project
@@ -46,15 +46,14 @@ Same `adopt.mjs` run — skip-existing protects your files. The differences:
 - Formalize `docs/PRD.md` for the area you will pipeline first — it can cover a single module; you do not need to spec the whole codebase to start.
 - Retrofit gradually: run one small module through `supervised` mode end to end before trusting `autonomous`. Your existing test suite becomes the Builder/Reviewer suite from day one.
 
-## 4. Distributing the catalog to your team
+## 4. Distributing the catalog
 
-Three tiers, in order of effort:
+The repo is public, so distribution has two tiers:
 
-1. **npx from git (now, zero infra):** anyone with read access to this repo runs the `npx github:…` command above — their git credentials authenticate; nothing is published anywhere. Good for a team that already shares the repo.
-2. **GitHub Packages (versioned, still private):** publish scoped releases (`@<org>/agent-templates`) to the org's GitHub npm registry — teammates authenticate with their GitHub tokens and can pin exact versions (`npx @<org>/agent-templates@0.2.0 …`), which pairs well with the catalog's expiry discipline (a version = a verified snapshot of recommendations).
-3. **Public npm** — only if the catalog is meant to leave the company.
+1. **npx from git — works for everyone, today, zero infra.** The `npx github:…` command above needs no credentials and no publishing. Pin `#main` or a tag for reproducibility.
+2. **Public npm — the release tier (recommended next).** Anonymous installs, a short stable name (`npx agent-templates@latest adopt …` — the bare name was unclaimed on the npm registry as of 2026-07-17), semver pinning that pairs with the catalog's expiry discipline (a published version = a verified snapshot of the recommendations), download stats and discoverability, and a natural companion to a future GitHub Pages catalog site. Publishing blockers are deliberate maintainer decisions tracked in issue #13: **license** (the repo currently has none — legally "all rights reserved" despite being public), npm account + final name, and flipping `package.json`'s `private: true`.
 
-Also worth deciding once: this repo currently lives under a personal account (`Ruihang2017`). If the team is the audience, moving it to the org account gives access control, continuity, and org-level tokens for tier 2. Maintainer's call — recorded as an open follow-up in issue #11.
+**Why not GitHub Packages:** its npm registry requires an access token **even to install public packages** — "You need an access token to publish, install, and delete private, internal, and public packages" (GitHub docs, *Working with the npm registry*, verified live 2026-07-17) — and it supports scoped names only. That defeats frictionless public sharing; it remains the right choice only for private-org registries, which this catalog no longer needs.
 
 ## 5. Day-2 operations
 
