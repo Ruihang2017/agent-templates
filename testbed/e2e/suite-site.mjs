@@ -33,6 +33,14 @@ export async function run() {
     check(S, 'live-version fallback from package.json', /data-npm-version>v\d+\.\d+\.\d+/.test(html))
     check(S, 'registry live-fetch present', html.includes('registry.npmjs.org/agent-templates'))
     check(S, 'no unescaped template failure', !html.includes('undefined') && !html.includes('[object Object]'))
+
+    // clay restyle contract (issue #19)
+    check(S, 'loads Baloo 2 + Nunito from Google Fonts', html.includes('fonts.googleapis.com/css2') && html.includes('Baloo+2') && html.includes('Nunito'))
+    check(S, 'Baloo 2 on headings, Nunito on body', /h1\{[^}]*Baloo 2/.test(html.replace(/\n/g, '')) && /body\{[^}]*Nunito/.test(html.replace(/\n/g, '')))
+    check(S, 'mint page background is the default', html.includes('--page:#e0f3e0') && /body\{[^}]*background:var\(--page\)/.test(html.replace(/\n/g, '')))
+    check(S, 'no emoji codepoints (icons are CSS-drawn)', !/[\u{1F000}-\u{1FBFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u.test(html))
+    check(S, 'copy button copies the quickstart and flips to Copied!', html.includes("writeText(q.textContent)") && html.includes("'Copied!'") && html.includes('id="qs"'))
+    check(S, 'hover lift + active press on buttons', html.includes('.btn:hover{transform:translateY(-2px)') && html.includes('.btn:active{transform:translateY(1px)'))
   } finally {
     rmSync(out, { recursive: true, force: true })
   }
