@@ -228,4 +228,20 @@ export async function run() {
     check(S, 'S12 stringified args accepted (issue #23)', !error, error && error.message)
     eq(S, 'S12 statuses', result && result.results.map((r) => r.status), ['delivered', 'delivered'])
   }
+
+  // S13: testCmd is forwarded to the deliver script (issue #26 DoD test run)
+  {
+    const { calls, error } = await runWorkflow({ ...baseArgs, tickets: [tickets2[0]], testCmd: 'npm test' }, ({ label }) => {
+      if (kind(label) === 'plan') return plan(tid(label))
+      if (kind(label) === 'build') return goodBuild(tid(label))
+      if (kind(label) === 'review') return CLEAR
+      if (kind(label) === 'deliver') return goodDelivery
+      return null
+    })
+    check(S, 'S13 no error', !error, error && error.message)
+    const dcall = calls.find((c) => kind(c.label) === 'deliver')
+    check(S, 'S13 deliver prompt carries --test-cmd', !!dcall && dcall.prompt.includes('--test-cmd "npm test"'))
+    const bad = await runWorkflow({ ...baseArgs, testCmd: 'echo "quoted"' }, () => null)
+    check(S, 'S13 testCmd with double quotes rejected', bad.error && /testCmd/.test(bad.error.message))
+  }
 }

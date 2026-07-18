@@ -13,7 +13,9 @@ export const meta = {
 //   defaultBranch: 'main',        // optional, default 'main'
 //   maxBounces: 2,                // optional, default 2
 //   continueOnFailure: false,     // optional; default fail-fast (tickets may depend on earlier ones)
-//   platform: 'gh' | 'glab'       // tracker CLI for the deliver step, default 'gh'
+//   platform: 'gh' | 'glab',      // tracker CLI for the deliver step, default 'gh'
+//   testCmd: 'npm test'           // optional; forwarded to deliver-ticket.mjs --test-cmd so the
+//                                 // deterministic DoD re-runs tests on the merged default branch
 // }
 //
 // Guarantees encoded below (each one exists because prose alone failed before):
@@ -36,9 +38,16 @@ for (const t of cfg.tickets) {
   if (!t || typeof t.id !== 'string' || !t.id || typeof t.path !== 'string' || !t.path) {
     throw new Error('every ticket needs a non-empty string id and path; got: ' + JSON.stringify(t))
   }
+  // the id is composed into branch names and the deliver command — keep it boring
+  if (!/^[A-Za-z0-9._-]+$/.test(t.id)) {
+    throw new Error('ticket id must match [A-Za-z0-9._-]+; got: ' + t.id)
+  }
 }
 if (cfg.mode !== 'supervised' && cfg.mode !== 'autonomous') {
   throw new Error("args.mode must be 'supervised' or 'autonomous'")
+}
+if (cfg.testCmd !== undefined && (typeof cfg.testCmd !== 'string' || !cfg.testCmd || cfg.testCmd.includes('"'))) {
+  throw new Error('args.testCmd must be a non-empty string without double quotes when provided')
 }
 if (!Number.isInteger(cfg.maxBounces) || cfg.maxBounces < 0) {
   throw new Error('args.maxBounces must be an integer >= 0')
@@ -200,7 +209,8 @@ for (const t of cfg.tickets) {
   // CLEAR. The agent below only executes the sanctioned command and relays its
   // machine-readable summary — same discipline as publish-tickets.mjs for issues.
   const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
-    ' --default-branch ' + cfg.defaultBranch + ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '')
+    ' --default-branch ' + cfg.defaultBranch + ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '') +
+    (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : '')
   const delivery = await agent(
     'Delivery step (autonomous mode — pre-authorized by the human Gate 1 start signal). ' +
     'Delivery is DETERMINISTIC: from the repo root, run EXACTLY this command and let it do all git and tracker work: ' +

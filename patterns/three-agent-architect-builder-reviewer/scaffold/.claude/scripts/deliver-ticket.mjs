@@ -52,6 +52,18 @@ if (!ID || !BRANCH) {
   console.error('usage: node deliver-ticket.mjs --id <ticket-id> --branch <branch> [--default-branch main] [--issue <n>] [--platform gh|glab] [--test-cmd "<command>"]')
   process.exit(1)
 }
+if (!/^[A-Za-z0-9._-]+$/.test(ID)) {
+  console.error(`invalid --id (allowed: letters, digits, . _ -): ${ID}`)
+  process.exit(1)
+}
+if (!/^[A-Za-z0-9/._-]+$/.test(BRANCH) || !/^[A-Za-z0-9/._-]+$/.test(DEFAULT_BRANCH)) {
+  console.error('invalid --branch / --default-branch (allowed: letters, digits, / . _ -)')
+  process.exit(1)
+}
+if (BRANCH === DEFAULT_BRANCH) {
+  console.error(`--branch must differ from --default-branch (got ${BRANCH} for both) — nothing to deliver`)
+  process.exit(1)
+}
 if (PLATFORM !== 'gh' && PLATFORM !== 'glab') {
   console.error(`unknown platform: ${PLATFORM} (expected gh or glab)`)
   process.exit(1)
@@ -59,10 +71,12 @@ if (PLATFORM !== 'gh' && PLATFORM !== 'glab') {
 
 const run = (bin, args, opts = {}) => execFileSync(bin, args, { encoding: 'utf8', ...opts })
 const git = (args, opts = {}) => run('git', args, opts)
+const errText = (e) => String((e && (e.stderr || e.stdout || e.message)) || e).trim()
+const firstLine = (s) => String(s).trim().split('\n')[0]
+const lastLine = (s) => String(s).trim().split('\n').filter(Boolean).pop() || ''
 const tryGit = (args) => {
-  try { return { ok: true, out: git(args, { stdio: ['ignore', 'pipe', 'pipe'] }) } } catch (e) { return { ok: false, out: firstLine(e) } }
+  try { return { ok: true, out: git(args, { stdio: ['ignore', 'pipe', 'pipe'] }) } } catch (e) { return { ok: false, out: errText(e) } }
 }
-const firstLine = (e) => String((e && (e.stderr || e.stdout || e.message)) || e).trim().split('\n')[0]
 
 // GH_BIN / GLAB_BIN env overrides (same mechanism as publish-tickets.mjs) for
 // non-PATH binaries and test doubles, e.g. GH_BIN="node tools/fake-gh.mjs".
@@ -89,6 +103,9 @@ const finish = (code) => {
 }
 
 try {
+  // 0. operate from the repo root regardless of cwd (plan path + command shape)
+  process.chdir(git(['rev-parse', '--show-toplevel']).trim())
+
   // 1. clean tree — merging over uncommitted work is never sanctioned
   if (git(['status', '--porcelain']).trim()) {
     note('working tree not clean — refusing to merge')
@@ -116,7 +133,7 @@ try {
       console.log(`+ merged  ${BRANCH} -> ${DEFAULT_BRANCH} (--no-ff)`)
     } else {
       tryGit(['merge', '--abort'])
-      note(`merge failed (aborted, tree left clean): ${m.out}`)
+      note(`merge failed (aborted, tree left clean): ${firstLine(m.out)}`)
     }
   }
 
@@ -128,52 +145,61 @@ try {
       checks.pushed = true
       console.log(`+ pushed  ${DEFAULT_BRANCH} -> origin`)
     } else {
-      note(`push failed: ${p.out}`)
+      note(`push failed: ${lastLine(p.out)}`)
     }
   }
 
-  // 5. close the tracker issue and verify the transition (never assume auto-close)
+  // 5. close the tracker issue and verify the transition (never assume auto-close).
+  // ONLY after the work actually landed: a closed issue is what resume filtering
+  // treats as "delivered by an earlier run", so closing on a failed merge/push
+  // would silently drop the ticket from every future run.
+  const landed = checks.merged && (!checks.pushRequired || checks.pushed)
   let issueNum = ISSUE_ARG ? Number(ISSUE_ARG) : null
   if (issueNum !== null && (!Number.isInteger(issueNum) || issueNum < 1)) {
     note(`invalid --issue value: ${ISSUE_ARG}`)
     issueNum = null
   }
-  if (!issueNum) {
-    // fall back to the "[<id>]" title-prefix convention (publish-tickets.mjs key)
-    try {
-      if (PLATFORM === 'gh') {
-        const list = JSON.parse(cli(['issue', 'list', '--state', 'all', '--limit', '1000', '--json', 'number,title']))
-        const hit = list.find((i) => String(i.title).startsWith(`[${ID}]`))
-        if (hit) issueNum = hit.number
-      } else {
-        const text = cli(['issue', 'list', '--all'])
-        const line = text.split('\n').find((l) => l.includes(`[${ID}]`))
-        const m = line && line.match(/#(\d+)/)
-        if (m) issueNum = Number(m[1])
-      }
-    } catch (e) {
-      note(`issue lookup failed: ${firstLine(e)}`)
-    }
-  }
-  if (!issueNum) {
-    note(`no tracker issue found for [${ID}]`)
+  if (!landed) {
+    note('skipping tracker close — merge/push did not complete, ticket is NOT delivered')
   } else {
-    try {
-      cli(['issue', 'close', String(issueNum), ...(PLATFORM === 'gh' ? ['--comment', `Delivered: ${BRANCH} merged to ${DEFAULT_BRANCH} (run-milestone, CLEAR verdict).`] : [])])
-    } catch (e) {
-      note(`issue close command failed: ${firstLine(e)}`) // verification below still decides
-    }
-    try {
-      if (PLATFORM === 'gh') {
-        const view = JSON.parse(cli(['issue', 'view', String(issueNum), '--json', 'state']))
-        checks.issueClosed = String(view.state).toUpperCase() === 'CLOSED'
-      } else {
-        checks.issueClosed = /closed/i.test(cli(['issue', 'view', String(issueNum)]))
+    if (!issueNum) {
+      // fall back to the "[<id>]" title-prefix convention (publish-tickets.mjs key)
+      try {
+        if (PLATFORM === 'gh') {
+          const list = JSON.parse(cli(['issue', 'list', '--state', 'all', '--limit', '1000', '--json', 'number,title']))
+          const hit = list.find((i) => String(i.title).startsWith(`[${ID}]`))
+          if (hit) issueNum = hit.number
+        } else {
+          const text = cli(['issue', 'list', '--all'])
+          const line = text.split('\n').find((l) => l.includes(`[${ID}]`))
+          const m = line && line.match(/#(\d+)\b/)
+          if (m) issueNum = Number(m[1])
+        }
+      } catch (e) {
+        note(`issue lookup failed: ${firstLine(errText(e))}`)
       }
-      console.log((checks.issueClosed ? '+ closed  ' : '  (note) NOT closed: ') + `issue #${issueNum}`)
-      if (!checks.issueClosed) notes.push(`issue #${issueNum} still open after close attempt`)
-    } catch (e) {
-      note(`issue state verification failed: ${firstLine(e)}`)
+    }
+    if (!issueNum) {
+      note(`no tracker issue found for [${ID}]`)
+    } else {
+      try {
+        cli(['issue', 'close', String(issueNum), ...(PLATFORM === 'gh' ? ['--comment', `Delivered: ${BRANCH} merged to ${DEFAULT_BRANCH} (run-milestone, CLEAR verdict).`] : [])])
+      } catch (e) {
+        note(`issue close command failed: ${firstLine(errText(e))}`) // verification below still decides
+      }
+      try {
+        if (PLATFORM === 'gh') {
+          const view = JSON.parse(cli(['issue', 'view', String(issueNum), '--json', 'state']))
+          checks.issueClosed = String(view.state).toUpperCase() === 'CLOSED'
+        } else {
+          // text scrape (older glab has no JSON): only trust a "closed" in the header lines
+          checks.issueClosed = cli(['issue', 'view', String(issueNum)]).split('\n').slice(0, 5).some((l) => /\bclosed\b/i.test(l))
+        }
+        console.log((checks.issueClosed ? '+ closed  ' : '  (note) NOT closed: ') + `issue #${issueNum}`)
+        if (!checks.issueClosed) notes.push(`issue #${issueNum} still open after close attempt`)
+      } catch (e) {
+        note(`issue state verification failed: ${firstLine(errText(e))}`)
+      }
     }
   }
 
@@ -188,6 +214,6 @@ try {
 
   finish(0)
 } catch (e) {
-  note(`unexpected error: ${firstLine(e)}`)
+  note(`unexpected error: ${firstLine(errText(e))}`)
   finish(1)
 }
