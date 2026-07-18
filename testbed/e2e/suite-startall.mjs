@@ -137,4 +137,14 @@ export async function run() {
     check(S, 'SA8 stringified args accepted (issue #23)', !error, error && error.message)
     eq(S, 'SA8 module completed', result && result.results[0].state, 'completed')
   }
+
+  // SA9: testCmd passes through to run-milestone children (issue #26)
+  {
+    const args = { modules: [mod('00-f', [], ['F-1'])], mode: 'autonomous', testCmd: 'npm test' }
+    const { children, error } = await runStartAll(args, delivered)
+    check(S, 'SA9 no error', !error, error && error.message)
+    eq(S, 'SA9 child receives testCmd', children[0] && children[0].args.testCmd, 'npm test')
+    const without = await runStartAll({ modules: [mod('00-f', [], ['F-1'])], mode: 'autonomous' }, delivered)
+    check(S, 'SA9 absent testCmd stays absent on the child', without.children[0] && !('testCmd' in without.children[0].args))
+  }
 }

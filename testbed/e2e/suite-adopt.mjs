@@ -42,7 +42,7 @@ export async function run() {
       check(S, `A1 installs ${f}`, existsSync(join(t1, f)))
     }
     // issue #21: the Workflow tool rejects scripts containing \r — installs must be LF
-    for (const f of ['.claude/workflows/run-milestone.js', '.claude/workflows/nightly-issues.js', '.claude/hooks/guard-main-session-writes.mjs', '.claude/scripts/publish-tickets.mjs']) {
+    for (const f of ['.claude/workflows/run-milestone.js', '.claude/workflows/nightly-issues.js', '.claude/hooks/guard-main-session-writes.mjs', '.claude/scripts/publish-tickets.mjs', '.claude/scripts/deliver-ticket.mjs']) {
       check(S, `A1 LF-only install: ${f}`, !/\r/.test(readFileSync(join(t1, f), 'utf8')))
     }
     // issue #23: LF must SURVIVE later git checkouts on Windows — adopt pins runtime files

@@ -1,4 +1,11 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(node .claude/scripts/milestone-dag.mjs:*)",
+      "Bash(node .claude/scripts/publish-tickets.mjs:*)",
+      "Bash(node .claude/scripts/deliver-ticket.mjs:*)"
+    ]
+  },
   "hooks": {
     "PreToolUse": [
       {

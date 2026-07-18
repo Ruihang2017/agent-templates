@@ -48,12 +48,13 @@ patterns/three-agent-architect-builder-reviewer/
     ├── INSTALL.md                     # how to drop the scaffold into a target repo
     ├── claude-md-snippet.md           # block to append to the target repo's CLAUDE.md
     └── .claude/
-        ├── settings.json              # PreToolUse write guard wiring
+        ├── settings.json              # PreToolUse write guard + deterministic-script allowlist
         ├── hooks/
         │   └── guard-main-session-writes.mjs
         ├── scripts/
         │   ├── publish-tickets.mjs
-        │   └── milestone-dag.mjs
+        │   ├── milestone-dag.mjs
+        │   └── deliver-ticket.mjs
         ├── workflows/
         │   ├── run-milestone.js
         │   ├── start-all.js

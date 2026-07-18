@@ -13,7 +13,8 @@ export const meta = {
 //     // so an [] tickets list means "module already complete" (resume semantics)
 //   mode: 'supervised' | 'autonomous',
 //   defaultBranch: 'main',      // optional
-//   platform: 'gh' | 'glab'     // optional, default 'gh'
+//   platform: 'gh' | 'glab',    // optional, default 'gh'
+//   testCmd: 'npm test'         // optional; passed through to run-milestone (deliver DoD test run)
 // }
 //
 // Failure policy (maintainer decisions, catalog issue #20, 2026-07-18):
@@ -38,6 +39,9 @@ if (cfg.mode !== 'supervised' && cfg.mode !== 'autonomous') {
   throw new Error("args.mode must be 'supervised' or 'autonomous'")
 }
 if (cfg.platform !== 'gh' && cfg.platform !== 'glab') throw new Error("args.platform must be 'gh' or 'glab'")
+if (cfg.testCmd !== undefined && (typeof cfg.testCmd !== 'string' || !cfg.testCmd || cfg.testCmd.includes('"'))) {
+  throw new Error('args.testCmd must be a non-empty string without double quotes when provided')
+}
 
 const state = {} // name -> 'completed' | 'failed' | 'skipped' | 'paused'
 const results = []
@@ -75,6 +79,7 @@ for (const m of cfg.modules) {
       mode: cfg.mode,
       defaultBranch: cfg.defaultBranch,
       platform: cfg.platform,
+      ...(cfg.testCmd ? { testCmd: cfg.testCmd } : {}),
     })
   } catch (e) {
     err = e && e.message ? e.message : String(e)
