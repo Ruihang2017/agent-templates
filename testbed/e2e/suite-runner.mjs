@@ -68,6 +68,9 @@ export async function run() {
     eq(S, 'S1 statuses', result && result.results.map((r) => r.status), ['delivered', 'delivered'])
     eq(S, 'S1 notStarted', result && result.notStarted, 0)
     eq(S, 'S1 per-ticket call sequence', calls.slice(0, 4).map((c) => kind(c.label)), ['plan', 'build', 'review', 'deliver'])
+    // issue #26: delivery is a deterministic script; the agent only executes it
+    const dcall = calls.find((c) => kind(c.label) === 'deliver')
+    check(S, 'S1 deliver prompt invokes deliver-ticket.mjs with exact args', !!dcall && dcall.prompt.includes('node .claude/scripts/deliver-ticket.mjs --id T-01 --branch ticket/T-01 --default-branch main --platform gh --issue 1'))
   }
 
   // S2: bounce once, then clear; fix prompt carries findings + no-merge guard

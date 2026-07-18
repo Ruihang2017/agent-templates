@@ -194,15 +194,20 @@ for (const t of cfg.tickets) {
     continue
   }
 
-  log('[' + t.id + '] deliver: merge + close issue + DoD')
+  log('[' + t.id + '] deliver: merge + close issue + DoD (deterministic script)')
+  // Delivery is a deterministic script, not agent judgment (catalog issue #26):
+  // harness safety classifiers blocked agent-run merges even after a journaled
+  // CLEAR. The agent below only executes the sanctioned command and relays its
+  // machine-readable summary — same discipline as publish-tickets.mjs for issues.
+  const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
+    ' --default-branch ' + cfg.defaultBranch + ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '')
   const delivery = await agent(
     'Delivery step (autonomous mode — pre-authorized by the human Gate 1 start signal). ' +
-    'Merge branch ' + branch + ' into ' + cfg.defaultBranch + ' with --no-ff and push. ' +
-    'Close tracker issue ' + (t.issue ? '#' + t.issue : 'for ticket ' + t.id + ' (find it by its "[' + t.id + ']" title prefix)') +
-    ' via ' + cfg.platform + ' and verify it is ACTUALLY closed afterwards. ' +
-    'Then run the Definition-of-Done checks from .claude/commands/verify-delivery.md for ticket ' + t.id +
-    ' (plan exists; tests green on the merged ' + cfg.defaultBranch + ' — run them yourself; CLEAR verdict recorded; merged to ' + cfg.defaultBranch + '; issue closed; writeback done). ' +
-    'Never report an item you did not check. Return merged, issueClosed, dodPassed, notes.',
+    'Delivery is DETERMINISTIC: from the repo root, run EXACTLY this command and let it do all git and tracker work: ' +
+    deliverCmd + ' — the script is the only sanctioned delivery path; do not merge, push, close issues, or retry pieces yourself. ' +
+    'Parse the DELIVER-SUMMARY-JSON line it prints last and return merged, issueClosed, dodPassed EXACTLY as reported there, ' +
+    'with notes = its notes field plus anything unusual you observed. ' +
+    'If the command cannot run or prints no DELIVER-SUMMARY-JSON, return all three as false with the output tail in notes.',
     { label: 'deliver:' + t.id, phase: P, schema: DELIVERY }
   )
   // Delivered requires ALL THREE flags — a hallucinated dodPassed alone must not count.

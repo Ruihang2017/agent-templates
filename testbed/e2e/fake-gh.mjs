@@ -36,5 +36,30 @@ if (joined.startsWith('issue create')) {
   process.exit(0)
 }
 
+// deliver-ticket.mjs surface: close records the number; view reports state.
+//   FAKE_GH_CLOSED_STATE  path to a file accumulating closed issue numbers
+//   FAKE_GH_FAIL_CLOSE    "1" -> `issue close` fails
+if (joined.startsWith('issue close')) {
+  if (process.env.FAKE_GH_FAIL_CLOSE === '1') {
+    console.error('failed to close issue')
+    process.exit(1)
+  }
+  const st = process.env.FAKE_GH_CLOSED_STATE
+  if (st) writeFileSync(st, (existsSync(st) ? readFileSync(st, 'utf8') : '') + args[2] + '\n')
+  console.log(`Closed issue #${args[2]}`)
+  process.exit(0)
+}
+
+if (joined.startsWith('issue view')) {
+  const st = process.env.FAKE_GH_CLOSED_STATE
+  const closed = st && existsSync(st) && readFileSync(st, 'utf8').split('\n').includes(args[2])
+  if (args.includes('--json')) {
+    console.log(JSON.stringify({ state: closed ? 'CLOSED' : 'OPEN' }))
+  } else {
+    console.log(closed ? 'state:\tclosed' : 'state:\topen')
+  }
+  process.exit(0)
+}
+
 console.error(`fake-gh: unhandled args: ${joined}`)
 process.exit(1)

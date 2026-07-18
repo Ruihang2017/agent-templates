@@ -19,6 +19,7 @@ const EXPECTED_FILES = [
   '.claude/hooks/guard-main-session-writes.mjs',
   '.claude/scripts/publish-tickets.mjs',
   '.claude/scripts/milestone-dag.mjs',
+  '.claude/scripts/deliver-ticket.mjs',
   '.claude/workflows/run-milestone.js',
   '.claude/workflows/nightly-issues.js',
   '.claude/workflows/start-all.js',

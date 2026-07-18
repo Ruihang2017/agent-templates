@@ -23,5 +23,23 @@ if (joined.startsWith('issue create')) {
   process.exit(0)
 }
 
+// deliver-ticket.mjs surface: close records the number; view reports state.
+//   FAKE_GLAB_CLOSED_STATE  path to a file accumulating closed issue numbers
+if (joined.startsWith('issue close')) {
+  const { readFileSync, writeFileSync, existsSync } = await import('node:fs')
+  const st = process.env.FAKE_GLAB_CLOSED_STATE
+  if (st) writeFileSync(st, (existsSync(st) ? readFileSync(st, 'utf8') : '') + args[2] + '\n')
+  console.log(`Closed issue #${args[2]}`)
+  process.exit(0)
+}
+
+if (joined.startsWith('issue view')) {
+  const { readFileSync, existsSync } = await import('node:fs')
+  const st = process.env.FAKE_GLAB_CLOSED_STATE
+  const closed = st && existsSync(st) && readFileSync(st, 'utf8').split('\n').includes(args[2])
+  console.log(closed ? `#${args[2]}: closed` : `#${args[2]}: open`)
+  process.exit(0)
+}
+
 console.error(`fake-glab: unhandled args: ${joined}`)
 process.exit(1)
