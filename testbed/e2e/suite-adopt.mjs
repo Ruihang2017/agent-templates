@@ -45,6 +45,9 @@ export async function run() {
     for (const f of ['.claude/workflows/run-milestone.js', '.claude/workflows/nightly-issues.js', '.claude/hooks/guard-main-session-writes.mjs', '.claude/scripts/publish-tickets.mjs']) {
       check(S, `A1 LF-only install: ${f}`, !/\r/.test(readFileSync(join(t1, f), 'utf8')))
     }
+    // issue #23: LF must SURVIVE later git checkouts on Windows — adopt pins runtime files
+    const ga1 = readFileSync(join(t1, '.gitattributes'), 'utf8')
+    check(S, 'A1 .gitattributes pins workflows + scripts to LF', ga1.includes('.claude/workflows/*.js text eol=lf') && ga1.includes('.claude/scripts/*.mjs text eol=lf'))
     check(S, 'A1 CLAUDE.md declares Operating mode', /Operating mode/.test(readFileSync(join(t1, 'CLAUDE.md'), 'utf8')))
     check(S, 'A1 docs/PRD.md copied from root PRD.md', readFileSync(join(t1, 'docs', 'PRD.md'), 'utf8').includes('# My PRD'))
     check(S, 'A1 root PRD.md kept (copy, not move)', existsSync(join(t1, 'PRD.md')))
@@ -55,6 +58,7 @@ export async function run() {
     check(S, 'A2 re-run installs nothing', /adopt: 0 installed/.test(r2.stdout), r2.stdout.split('\n').pop())
     const cm = readFileSync(join(t1, 'CLAUDE.md'), 'utf8')
     eq(S, 'A2 snippet present exactly once', (cm.match(/Delivery pipeline — three-agent/g) || []).length, 1)
+    eq(S, 'A2 .gitattributes rules present exactly once', (readFileSync(join(t1, '.gitattributes'), 'utf8').match(/Workflow tool rejects CRLF/g) || []).length, 1)
   } finally {
     rmSync(t1, { recursive: true, force: true })
   }
@@ -63,12 +67,15 @@ export async function run() {
   const t2 = mkdtempSync(join(tmpdir(), 'e2e-adopt-'))
   try {
     writeFileSync(join(t2, 'CLAUDE.md'), '# Existing constitution\n\nMy rules.\n')
+    writeFileSync(join(t2, '.gitattributes'), '*.png binary\n')
     const r = runAdopt([PATTERN, t2, '--platform', 'glab'])
     eq(S, 'B1 exit 0', r.status, 0)
     check(S, 'B1 gitlab templates installed', existsSync(join(t2, '.gitlab/issue_templates/task.md')) && existsSync(join(t2, '.gitlab/merge_request_templates/default.md')))
     check(S, 'B1 no .github created for glab', !existsSync(join(t2, '.github')))
     const cm = readFileSync(join(t2, 'CLAUDE.md'), 'utf8')
     check(S, 'B1 snippet appended after existing content', cm.startsWith('# Existing constitution') && cm.includes('Delivery pipeline — three-agent'))
+    const ga2 = readFileSync(join(t2, '.gitattributes'), 'utf8')
+    check(S, 'B1 .gitattributes appended, existing rules kept', ga2.startsWith('*.png binary') && ga2.includes('.claude/workflows/*.js text eol=lf'))
     check(S, 'B1 missing-PRD note printed', /no PRD\.md found/.test(r.stdout))
   } finally {
     rmSync(t2, { recursive: true, force: true })

@@ -23,9 +23,11 @@ export const meta = {
 // - supervised mode STOPS the run after each CLEAR (later tickets may depend on the merge);
 //   re-running /start-milestone continues — already-closed issues are filtered out upstream
 
+// args may arrive as a JSON string depending on the harness (catalog issue #23)
+const parsedArgs = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const cfg = Object.assign(
   { maxBounces: 2, continueOnFailure: false, defaultBranch: 'main', platform: 'gh' },
-  args
+  parsedArgs
 )
 if (!Array.isArray(cfg.tickets) || cfg.tickets.length === 0) {
   throw new Error('args.tickets must be a non-empty array of {id, path, issue}')
