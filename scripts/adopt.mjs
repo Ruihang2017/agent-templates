@@ -11,6 +11,7 @@
 //   docs/PRD.md              copied from a root PRD.md if present and docs/PRD.md is absent
 //   docs/prd/ docs/adr/ docs/plans/   the docs skeleton the pipeline assumes
 //   CLAUDE.md                created from the snippet, or snippet appended once (marker-checked)
+//   .gitattributes           eol=lf rules for scaffold runtime files, appended once (marker-checked)
 //
 // Idempotent: re-running skips everything that exists (--force overwrites files, never
 // re-appends the snippet). Exit 0 = installed/verified; exit 1 = bad invocation.
