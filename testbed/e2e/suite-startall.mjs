@@ -129,4 +129,12 @@ export async function run() {
     const badMode = await runStartAll({ modules: [mod('00-f', [], ['F-1'])], mode: 'yolo' }, delivered)
     check(S, 'SA7 bad mode throws', badMode.error && /mode/.test(badMode.error.message))
   }
+
+  // SA8: args delivered as a JSON string (issue #23) — parsed, run completes
+  {
+    const args = { modules: [mod('00-f', [], ['F-1'])], mode: 'autonomous' }
+    const { result, error } = await runStartAll(JSON.stringify(args), delivered)
+    check(S, 'SA8 stringified args accepted (issue #23)', !error, error && error.message)
+    eq(S, 'SA8 module completed', result && result.results[0].state, 'completed')
+  }
 }

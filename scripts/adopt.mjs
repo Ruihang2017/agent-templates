@@ -174,6 +174,25 @@ if (!existsSync(claudeMd)) {
   skipped++
 }
 
+// 7. .gitattributes: pin scaffold runtime files to LF. Install-time normalization
+// (above) is not enough on Windows — a later `git checkout` with autocrlf re-CRLFs
+// them and the Workflow tool rejects the script content (catalog issue #23).
+const GA_MARKER = '# agent-templates: Workflow tool rejects CRLF scripts (keep LF)'
+const GA_RULES = `${GA_MARKER}\n.claude/workflows/*.js text eol=lf\n.claude/scripts/*.mjs text eol=lf\n`
+const gaPath = join(target, '.gitattributes')
+if (!existsSync(gaPath)) {
+  writeFileSync(gaPath, GA_RULES)
+  console.log('+ install .gitattributes (eol=lf for scaffold runtime files)')
+  installed++
+} else if (!readFileSync(gaPath, 'utf8').includes(GA_MARKER)) {
+  writeFileSync(gaPath, readFileSync(gaPath, 'utf8').trimEnd() + '\n\n' + GA_RULES)
+  console.log('+ append  .gitattributes (eol=lf rules for scaffold runtime files)')
+  installed++
+} else {
+  console.log('= exists  .gitattributes (eol=lf rules already present)')
+  skipped++
+}
+
 console.log(`\nadopt: ${installed} installed, ${skipped} already present. Pattern: ${pattern}, platform: ${PLATFORM}.`)
 console.log(`
 NEXT STEPS (details: ${join(CATALOG, 'ADOPTING.md')})

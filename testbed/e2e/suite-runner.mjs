@@ -212,4 +212,17 @@ export async function run() {
     eq(S, 'S11 escalated at bounce-fix-build', r0 && [r0.status, r0.stage], ['escalated', 'bounce-fix-build'])
     check(S, 'S11 detail carries the failing test output', r0 && /SENTINEL_FIX_FAILURE/.test(r0.detail))
   }
+
+  // S12: args delivered as a JSON string (issue #23) — parsed, run completes
+  {
+    const { result, error } = await runWorkflow(JSON.stringify(baseArgs), ({ label }) => {
+      if (kind(label) === 'plan') return plan(tid(label))
+      if (kind(label) === 'build') return goodBuild(tid(label))
+      if (kind(label) === 'review') return CLEAR
+      if (kind(label) === 'deliver') return goodDelivery
+      return null
+    })
+    check(S, 'S12 stringified args accepted (issue #23)', !error, error && error.message)
+    eq(S, 'S12 statuses', result && result.results.map((r) => r.status), ['delivered', 'delivered'])
+  }
 }

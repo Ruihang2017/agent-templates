@@ -22,7 +22,9 @@ export const meta = {
 // end — comments, labels, and the "Nightly report <date>" issue the human reads
 // over morning email (tracker notifications).
 
-const cfg = Object.assign({ maxIssues: 5, defaultBranch: 'main', platform: 'gh' }, args)
+// args may arrive as a JSON string depending on the harness (catalog issue #23)
+const parsedArgs = typeof args === 'string' ? JSON.parse(args) : (args || {})
+const cfg = Object.assign({ maxIssues: 5, defaultBranch: 'main', platform: 'gh' }, parsedArgs)
 if (!Array.isArray(cfg.issues)) throw new Error('args.issues must be an array (may be empty)')
 if (typeof cfg.reportDate !== 'string' || !cfg.reportDate) throw new Error('args.reportDate is required (the caller stamps the date)')
 if (!Number.isInteger(cfg.maxIssues) || cfg.maxIssues < 1) throw new Error('args.maxIssues must be an integer >= 1')
