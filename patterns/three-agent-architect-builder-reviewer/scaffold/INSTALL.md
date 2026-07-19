@@ -25,7 +25,7 @@ From a checkout of the catalog: `node scripts/adopt.mjs three-agent-architect-bu
 ## Nightly sweep (unattended)
 
 - **Entry:** `claude -p "/nightly-issues"` — slash commands expand in headless `-p` mode. `[official]`
-- **Permissions:** pre-approve exactly what the pipeline needs in the target repo's `.claude/settings.json` (`permissions.allow`, e.g. `Bash(git:*)`, `Bash(gh:*)` or `Bash(glab:*)`, `Bash(node:*)`, `Bash(npm:*)`), then run with `--permission-mode dontAsk` — the documented CI recommendation: pre-approved tools run, everything else is auto-denied instead of blocking. Subagents run in `acceptEdits` mode (their file edits are auto-approved). Avoid `bypassPermissions` outside isolated containers (documented warning). `[official]`
+- **Permissions:** the scaffold's `settings.json` already enumerates the pipeline's whole tool surface in `permissions.allow` (see step 4 — deterministic scripts, git branch/commit/push set, test commands, `gh`/`glab` issue commands; catalog issue #30). Do NOT widen it to bare wildcards like `Bash(git:*)` or `Bash(gh:*)` — that would re-allow the role-discipline-forbidden surface (`git merge`, `gh pr …`) the enumeration deliberately excludes. Add only your project-specific test-command rule, then run with `--permission-mode dontAsk` — the documented CI recommendation: pre-approved tools run, everything else is auto-denied instead of blocking. Subagents run in `acceptEdits` mode (their file edits are auto-approved). Avoid `bypassPermissions` outside isolated containers (documented warning). `[official]`
 - **Scheduling (Windows, primary):** Task Scheduler — runs whenever the machine is on at the trigger time:
 
   ```
