@@ -98,6 +98,29 @@ export async function run() {
     check(S, 'settings.json parses', settings !== null)
     const pre = settings && settings.hooks && settings.hooks.PreToolUse && settings.hooks.PreToolUse[0]
     check(S, 'settings wires the write-guard matcher', pre && /Edit\|Write/.test(pre.matcher) && /guard-main-session-writes/.test(JSON.stringify(pre.hooks)))
+
+    // issue #30: the pipeline's tool surface is explicitly pre-allowed, and the
+    // role-discipline-forbidden surface is NOT — drift in either direction fails here.
+    const allow = (settings && settings.permissions && settings.permissions.allow) || []
+    const MUST_ALLOW = [
+      'Bash(node .claude/scripts/milestone-dag.mjs:*)',
+      'Bash(node .claude/scripts/publish-tickets.mjs:*)',
+      'Bash(node .claude/scripts/deliver-ticket.mjs:*)',
+      'Bash(git checkout:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git push:*)',
+      'Bash(git status:*)', 'Bash(git diff:*)', 'Bash(git fetch:*)',
+      'Bash(npm test:*)', 'Bash(node --test:*)',
+      'Bash(gh issue list:*)', 'Bash(gh issue view:*)', 'Bash(gh issue comment:*)',
+      'Bash(gh issue edit:*)', 'Bash(gh issue close:*)', 'Bash(gh issue create:*)',
+      'Bash(glab issue list:*)', 'Bash(glab issue note:*)', 'Bash(glab issue close:*)',
+    ]
+    for (const rule of MUST_ALLOW) {
+      check(S, `settings pre-allows ${rule}`, allow.includes(rule))
+    }
+    // note: [ :] (not \b) so the allowed `git merge-base` does not trip the `git merge` ban
+    const FORBIDDEN = [/^Bash\(git merge[ :]/, /^Bash\(git rebase[ :]/, /^Bash\(git reset[ :]/, /^Bash\(git clean[ :]/, /^Bash\(gh pr[ :]/, /^Bash\(git:\*\)$/, /^Bash\(gh:\*\)$/, /^Bash\(glab:\*\)$/]
+    for (const re of FORBIDDEN) {
+      check(S, `settings does NOT pre-allow ${re.source}`, !allow.some((r) => re.test(r)))
+    }
   }
   for (const [wf, name] of [['run-milestone.js', 'run-milestone'], ['nightly-issues.js', 'nightly-issues'], ['start-all.js', 'start-all']]) {
     const path = p('.claude/workflows/' + wf)
