@@ -69,18 +69,45 @@ if (errors.length) {
   process.exit(1)
 }
 
-// Kahn topological sort; deterministic tiebreak by module name (numeric prefixes sort naturally)
-const order = []
-const remaining = new Set(Object.keys(modules))
-while (remaining.size) {
-  const ready = [...remaining].filter((m) => [...modules[m].dependsOn].every((d) => !remaining.has(d))).sort()
-  if (!ready.length) {
-    console.error(`x dependency cycle among: ${[...remaining].sort().join(', ')}`)
+// Kahn topological sort over `nodes`; `depsOf(n)` returns the nodes that must come
+// before n (deps outside `nodes` are ignored by the caller). Deterministic tiebreak
+// by string order — module names and ticket ids both sort with numeric prefixes
+// naturally. Returns { order } or { cycle } (the nodes left when nothing is ready).
+const topoSort = (nodes, depsOf) => {
+  const remaining = new Set(nodes)
+  const order = []
+  while (remaining.size) {
+    const ready = [...remaining].filter((n) => depsOf(n).every((d) => !remaining.has(d))).sort()
+    if (!ready.length) return { cycle: [...remaining].sort() }
+    order.push(ready[0])
+    remaining.delete(ready[0])
+  }
+  return { order }
+}
+
+// module order: a module depends on another via cross-module blocked_by edges
+const modSort = topoSort(Object.keys(modules), (m) => [...modules[m].dependsOn])
+if (modSort.cycle) {
+  console.error(`x dependency cycle among: ${modSort.cycle.join(', ')}`)
+  process.exit(1)
+}
+const order = modSort.order
+
+// tickets WITHIN a module: order by intra-module blocked_by edges (cross-module edges
+// are already satisfied by module ordering above), ID order only as tiebreak. Emitting
+// bare ID order here dispatches a ticket before a sibling it is blocked_by whenever the
+// declared order deviates from ID order — the run-milestone builder then stops at its
+// precondition gate and the whole module fails (catalog issue #31).
+const ticketOrder = {}
+for (const m of order) {
+  const ids = new Set(modules[m].tickets.map((t) => t.id))
+  const blockedByOf = Object.fromEntries(modules[m].tickets.map((t) => [t.id, t.blockedBy.filter((d) => ids.has(d))]))
+  const sorted = topoSort([...ids], (id) => blockedByOf[id])
+  if (sorted.cycle) {
+    console.error(`x intra-module dependency cycle in ${m} among: ${sorted.cycle.join(', ')}`)
     process.exit(1)
   }
-  const next = ready[0]
-  order.push(next)
-  remaining.delete(next)
+  ticketOrder[m] = sorted.order
 }
 
 for (const m of order) {
@@ -89,6 +116,6 @@ for (const m of order) {
 }
 const json = {
   order,
-  modules: Object.fromEntries(order.map((m) => [m, { tickets: modules[m].tickets.map((t) => t.id), dependsOn: [...modules[m].dependsOn].sort() }])),
+  modules: Object.fromEntries(order.map((m) => [m, { tickets: ticketOrder[m], dependsOn: [...modules[m].dependsOn].sort() }])),
 }
 console.log('DAG-JSON: ' + JSON.stringify(json))

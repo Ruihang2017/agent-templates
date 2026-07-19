@@ -88,4 +88,45 @@ export async function run() {
   } finally {
     rmSync(t5, { recursive: true, force: true })
   }
+
+  // D6: tickets are topologically ordered by intra-module blocked_by, NOT ID order
+  // (catalog issue #31 — Groundwork2 05-jobs-fit: 0502 blocked_by 0503, ID order inverts it).
+  // Cross-module deps (GW2-0304) must be ignored for intra-module ordering.
+  const t6 = makeTree({
+    '04-x': [['GW2-0304', []]],
+    '05-jobs-fit': [
+      ['GW2-0501', []],
+      ['GW2-0502', ['GW2-0304', 'GW2-0501', 'GW2-0503']],
+      ['GW2-0503', ['GW2-0501']],
+      ['GW2-0504', ['GW2-0502']],
+    ],
+  })
+  try {
+    const r = runDag(join(t6, 'prd'))
+    eq(S, 'D6 exit 0', r.status, 0)
+    eq(S, 'D6 tickets topo-ordered by intra-module blocked_by', r.dag && r.dag.modules['05-jobs-fit'].tickets, ['GW2-0501', 'GW2-0503', 'GW2-0502', 'GW2-0504'])
+    eq(S, 'D6 cross-module dep derived as a module edge', r.dag && r.dag.modules['05-jobs-fit'].dependsOn, ['04-x'])
+    eq(S, 'D6 module order puts the dependency first', r.dag && r.dag.order, ['04-x', '05-jobs-fit'])
+  } finally {
+    rmSync(t6, { recursive: true, force: true })
+  }
+
+  // D7: intra-module dependency cycle fails loudly (zero-silence), names the members
+  const t7 = makeTree({ '00-loop': [['L-1', ['L-2']], ['L-2', ['L-1']]] })
+  try {
+    const r = runDag(join(t7, 'prd'))
+    eq(S, 'D7 intra-module cycle exits 1', r.status, 1)
+    check(S, 'D7 names the module and members', /intra-module dependency cycle in 00-loop/.test(r.stderr) && r.stderr.includes('L-1') && r.stderr.includes('L-2'))
+  } finally {
+    rmSync(t7, { recursive: true, force: true })
+  }
+
+  // D8: ID order is the tiebreak when tickets are independent
+  const t8 = makeTree({ '00-indep': [['Z-9', []], ['A-1', []], ['M-5', []]] })
+  try {
+    const r = runDag(join(t8, 'prd'))
+    eq(S, 'D8 independent tickets fall back to ID order', r.dag && r.dag.modules['00-indep'].tickets, ['A-1', 'M-5', 'Z-9'])
+  } finally {
+    rmSync(t8, { recursive: true, force: true })
+  }
 }
