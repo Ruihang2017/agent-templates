@@ -46,7 +46,7 @@ if (uIx !== -1 && argv[uIx + 1] && !argv[uIx + 1].startsWith('--')) UPSTREAM_REP
 
 // positional args = everything that isn't a flag or a flag's consumed value
 const consumed = new Set()
-for (const [flag, ix] of [['--platform', pIx], ['--upstream', uIx]]) {
+for (const ix of [pIx, uIx]) {
   if (ix !== -1 && argv[ix + 1] && !argv[ix + 1].startsWith('--')) consumed.add(ix + 1)
 }
 const positional = argv.filter((a, i) => !a.startsWith('--') && !consumed.has(i))
@@ -213,7 +213,11 @@ if (existsSync(rootPrd) && !existsSync(docsPrd)) {
 // 6. CLAUDE.md: create from the snippet, or append it once (marker-checked, never duplicated).
 // The snippet defaults its Tracker line to `gh`; rewrite it to the resolved platform so the
 // pipeline reads the correct tracker from CLAUDE.md instead of re-guessing each run (issue #34).
+// Normalize CRLF up front: the marker/Tracker matching below needs literal \n, and a
+// catalog checkout under git autocrlf can carry \r\n — don't let that silently no-op the
+// strip and leak the block (same posture as copyFile; catalog issues #21/#23/#40).
 let snippet = readFileSync(join(scaffold, 'claude-md-snippet.md'), 'utf8')
+  .replace(/\r\n/g, '\n')
   .replace('**Tracker: `gh`**', `**Tracker: \`${PLATFORM}\`**`)
 // Upstream-escalation bullet is opt-in (issue #40): keep it only with --upstream (pointing
 // at the chosen catalog repo), otherwise strip the whole marked block so no catalog repo
