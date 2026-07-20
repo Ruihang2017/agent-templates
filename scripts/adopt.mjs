@@ -54,18 +54,25 @@ if (!targetOk) {
   process.exit(1)
 }
 
+// Platform detection (deterministic, offline). Signals in order:
+//   1. origin host contains 'gitlab' / 'github'      (covers *.gitlab.com, gitlab.corp, github.com)
+//   2. repo-local signal: .gitlab-ci.yml -> glab; existing .github/ -> gh
+//      (this is what catches a self-hosted GitLab on a custom domain like git.company.com)
+//   3. default gh, with a LOUD ambiguity note naming --platform
 if (!PLATFORM) {
+  let host = ''
   try {
     const origin = execFileSync('git', ['-C', target, 'remote', 'get-url', 'origin'], {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
     }).trim()
-    const host = (origin.match(/(?:@|:\/\/)([^/:]+)[/:]/) || [])[1] || ''
-    PLATFORM = host.includes('gitlab') ? 'glab' : 'gh'
-    console.log(`platform: ${PLATFORM} (autodetected from ${host || origin}; override with --platform)`)
-  } catch {
-    PLATFORM = 'gh'
-    console.log('platform: gh (no origin remote detected; override with --platform glab)')
-  }
+    host = (origin.match(/(?:@|:\/\/)([^/:]+)[/:]/) || [])[1] || origin
+  } catch {}
+  const inconclusive = host ? `; origin host '${host}' was inconclusive` : ''
+  if (/gitlab/i.test(host)) { PLATFORM = 'glab'; console.log(`platform: glab (from origin host '${host}'; override with --platform)`) }
+  else if (/github/i.test(host)) { PLATFORM = 'gh'; console.log(`platform: gh (from origin host '${host}'; override with --platform)`) }
+  else if (existsSync(join(target, '.gitlab-ci.yml'))) { PLATFORM = 'glab'; console.log(`platform: glab (from .gitlab-ci.yml${inconclusive}; override with --platform)`) }
+  else if (existsSync(join(target, '.github'))) { PLATFORM = 'gh'; console.log(`platform: gh (from existing .github/${inconclusive}; override with --platform)`) }
+  else { PLATFORM = 'gh'; console.log(`platform: gh (default — ${host ? `could not classify origin host '${host}'` : 'no origin remote'}; pass --platform glab if this is a self-hosted GitLab)`) }
 }
 if (PLATFORM !== 'gh' && PLATFORM !== 'glab') {
   console.error(`unknown platform: ${PLATFORM} (expected gh or glab)`)
@@ -157,8 +164,11 @@ if (existsSync(rootPrd) && !existsSync(docsPrd)) {
   note('  (note) no PRD.md found — write docs/PRD.md before running /breakdown-prd')
 }
 
-// 6. CLAUDE.md: create from the snippet, or append it once (marker-checked, never duplicated)
+// 6. CLAUDE.md: create from the snippet, or append it once (marker-checked, never duplicated).
+// The snippet defaults its Tracker line to `gh`; rewrite it to the resolved platform so the
+// pipeline reads the correct tracker from CLAUDE.md instead of re-guessing each run (issue #34).
 const snippet = readFileSync(join(scaffold, 'claude-md-snippet.md'), 'utf8')
+  .replace('**Tracker: `gh`**', `**Tracker: \`${PLATFORM}\`**`)
 const MARKER = '## Delivery pipeline — three-agent Architect / Builder / Reviewer'
 const claudeMd = join(target, 'CLAUDE.md')
 if (!existsSync(claudeMd)) {
