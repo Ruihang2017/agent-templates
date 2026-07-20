@@ -3,14 +3,43 @@
 // status, and the quickstart, all parsed from the repo's own files.
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { check, eq } from './lib.mjs'
 
 const S = 'site'
-const SCRIPT = fileURLToPath(new URL('../../scripts/build-site.mjs', import.meta.url))
+const REPO = fileURLToPath(new URL('../../', import.meta.url))
+const SCRIPT = join(REPO, 'scripts', 'build-site.mjs')
+
+// Every shipped slash command must surface in BOTH the generated site and the npm
+// README — otherwise a command ships undiscoverable, the way /start-all once did
+// (catalog issue #35). The command frontmatter is the single source of truth; this
+// gate reads it directly so adding a command without documenting it fails the build.
+function commandCoverage(html, readme) {
+  const patternsDir = join(REPO, 'patterns')
+  const fmField = (fm, name) => ((fm.match(new RegExp(`^${name}\\s*:\\s*(.+)$`, 'm')) || [])[1] || '').trim()
+  let commandCount = 0
+  for (const pat of readdirSync(patternsDir, { withFileTypes: true }).filter((d) => d.isDirectory())) {
+    const cdir = join(patternsDir, pat.name, 'scaffold', '.claude', 'commands')
+    if (!existsSync(cdir)) continue
+    for (const f of readdirSync(cdir).filter((n) => n.endsWith('.md'))) {
+      const name = '/' + f.replace(/\.md$/, '')
+      const fm = (readFileSync(join(cdir, f), 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
+      const desc = fmField(fm, 'description')
+      commandCount++
+      check(S, `command ${name} has a non-empty description`, desc.length > 0)
+      check(S, `command ${name} surfaces on the generated site`, html.includes(name))
+      check(S, `command ${name} surfaces in README.md`, readme.includes(name))
+      check(S, `command ${name} description surfaces on the site`, !desc || html.includes(desc.slice(0, 40)))
+    }
+  }
+  check(S, 'coverage gate saw at least one command', commandCount > 0)
+  // guard the guard: a name that is NOT a command must be absent — proves the
+  // includes() checks discriminate rather than passing vacuously.
+  check(S, 'coverage gate is non-vacuous (sentinel absent)', !html.includes('/definitely-not-a-real-command') && !readme.includes('/definitely-not-a-real-command'))
+}
 
 export async function run() {
   const out = mkdtempSync(join(tmpdir(), 'e2e-site-'))
@@ -41,6 +70,10 @@ export async function run() {
     check(S, 'no emoji codepoints (icons are CSS-drawn)', !/[\u{1F000}-\u{1FBFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u.test(html))
     check(S, 'copy button copies the quickstart and flips to Copied!', html.includes("writeText(q.textContent)") && html.includes("'Copied!'") && html.includes('id="qs"'))
     check(S, 'hover lift + active press on buttons', html.includes('.btn:hover{transform:translateY(-2px)') && html.includes('.btn:active{transform:translateY(1px)'))
+
+    // doc/site command coverage gate (issue #35)
+    check(S, 'site renders a Commands section', html.includes('class="cmds"') && html.includes('>Commands<'))
+    commandCoverage(html, readFileSync(join(REPO, 'README.md'), 'utf8'))
   } finally {
     rmSync(out, { recursive: true, force: true })
   }
