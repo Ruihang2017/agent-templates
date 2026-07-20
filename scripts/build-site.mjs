@@ -61,7 +61,25 @@ function parsePattern(dir) {
     }
   }
 
-  return { dir, title, status, asOf, summary, roles }
+  return { dir, title, status, asOf, summary, roles, commands: parseCommands(dir) }
+}
+
+// Slash commands are the pattern's user-facing surface; the frontmatter of each
+// scaffold/.claude/commands/*.md is the single source of truth. Rendering them here
+// (and gating on them in E2E) is what keeps the site from silently omitting a shipped
+// command the way /start-all was once missing (catalog issue #35).
+function parseCommands(dir) {
+  const cdir = join(ROOT, 'patterns', dir, 'scaffold', '.claude', 'commands')
+  if (!existsSync(cdir)) return []
+  const fmField = (fm, name) => ((fm.match(new RegExp(`^${name}\\s*:\\s*(.+)$`, 'm')) || [])[1] || '').trim()
+  return readdirSync(cdir)
+    .filter((f) => f.endsWith('.md'))
+    .sort()
+    .map((f) => {
+      const md = readFileSync(join(cdir, f), 'utf8')
+      const fm = (md.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
+      return { name: '/' + f.replace(/\.md$/, ''), hint: fmField(fm, 'argument-hint'), description: fmField(fm, 'description') }
+    })
 }
 
 const patterns = readdirSync(join(ROOT, 'patterns'), { withFileTypes: true })
@@ -155,6 +173,10 @@ const patternCards = patterns
         <div class="roles">
           ${p.roles.map((r) => { const [dot, dotInk] = roleDot(r.role); return `<span class="role"><span class="dot" style="background:${dot};box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px ${dotInk}"></span><b>${esc(r.role)}</b><span class="sep">·</span><code>${esc(r.model)} <span class="eff">@${esc(r.effort)}</span></code></span>` }).join('\n          ')}
         </div>
+        ${p.commands.length ? `<div class="cmds">
+          <div class="cmds-label">Commands</div>
+          ${p.commands.map((cmd) => `<div class="cmd"><code class="cmd-name">${esc(cmd.name)}</code>${cmd.hint ? `<code class="cmd-hint">${esc(cmd.hint)}</code>` : ''}<span class="cmd-desc">${esc(cmd.description)}</span></div>`).join('\n          ')}
+        </div>` : ''}
         <div class="links">
           <a class="btn btn-green" href="${GITHUB}/tree/main/patterns/${esc(p.dir)}">Pattern write-up</a>
           <a class="btn btn-purple" href="${GITHUB}/tree/main/patterns/${esc(p.dir)}/scaffold">Scaffold</a>
@@ -270,6 +292,15 @@ const html = `<!doctype html>
   .role code{font-family:var(--mono);font-size:11px;font-weight:700;color:#8a5fd0}
   .role .eff{color:#e7548c}
   .links{display:flex;gap:12px;margin-top:17px}
+
+  .cmds{margin-top:16px;border-radius:16px;background:var(--pill);padding:14px 16px 12px;
+    box-shadow:inset 0 3px 6px rgba(var(--flt),0.14),inset 0 -2px 2px rgba(255,255,255,0.7)}
+  .cmds-label{font-family:'Baloo 2',cursive;font-weight:700;font-size:13px;color:var(--ink);margin-bottom:9px}
+  .cmd{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;padding:5px 0;border-top:1px solid rgba(var(--flt),0.1)}
+  .cmd:first-of-type{border-top:0}
+  .cmd-name{font-family:var(--mono);font-size:12px;font-weight:700;color:#8a5fd0;white-space:nowrap}
+  .cmd-hint{font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--mut);white-space:nowrap}
+  .cmd-desc{font-size:11.5px;font-weight:700;color:var(--sub);line-height:1.5;flex:1;min-width:180px}
 
   .steps{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
   .step{border-radius:20px;background:var(--card);padding:15px 14px 17px;
