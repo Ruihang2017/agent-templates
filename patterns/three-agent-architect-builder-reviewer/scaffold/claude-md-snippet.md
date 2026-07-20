@@ -35,5 +35,7 @@ Rules:
 - Trivial/mechanical changes may skip the pipeline only with an explicit human OK.
 - Ticket files are the issue-content source of truth. Issues are created only by `.claude/scripts/publish-tickets.mjs` (`[<id>]` title prefix = dedupe key); to change an issue body, edit the ticket file and republish. Issue state (close) moves via the deliver step / `/verify-delivery`, never by hand mid-pipeline.
 - Agents own the whole test pyramid: the Builder writes and runs unit + integration tests (and E2E where the ticket's acceptance calls for it); the Reviewer re-runs the full suite independently; the deliver step re-runs it on the merged default branch. The human tests exactly once — the Gate 2 smoke test after the PRD's tasks are all done.
+<!-- upstream-escalation:start -->
 - **Pattern-level problems go upstream, not here.** If the pipeline itself misbehaves (a role boundary misfits, a model/effort pin looks stale, an orchestration bug), file an issue against the pattern catalog — `gh issue create --repo Ruihang2017/agent-templates` using its issue templates — so the catalog's own nightly sweep triages it. Project bugs stay in this repo's tracker.
-- Model/effort per role are pinned in `.claude/agents/*.md`. Change them by updating the pattern entry in agent-templates first (new as-of date + provenance entry), then syncing here — never by editing only this repo.
+<!-- upstream-escalation:end -->
+- Model/effort per role are pinned in `.claude/agents/*.md`. Change them by updating the pattern entry in the upstream pattern catalog first (new as-of date + provenance entry), then syncing here — never by editing only this repo.

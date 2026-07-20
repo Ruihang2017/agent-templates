@@ -32,10 +32,27 @@ if (pIx !== -1 && (!PLATFORM || PLATFORM.startsWith('--'))) {
   console.error('missing or invalid --platform value (expected gh or glab)')
   process.exit(1)
 }
-const positional = argv.filter((a, i) => !a.startsWith('--') && (pIx === -1 || i !== pIx + 1))
+
+// --upstream [owner/repo]: opt IN to the "file pattern-level problems against the
+// catalog" bullet in CLAUDE.md (off by default — the bullet names a specific repo and
+// tells agents to file issues there, which commercial/private adopters do not want, and
+// the repo slug should never land in a CLAUDE.md unasked; issue #40). Bare --upstream
+// targets the catalog this pattern came from; --upstream <repo> points elsewhere.
+const CATALOG_REPO = 'Ruihang2017/agent-templates'
+const uIx = argv.indexOf('--upstream')
+const UPSTREAM = uIx !== -1
+let UPSTREAM_REPO = CATALOG_REPO
+if (uIx !== -1 && argv[uIx + 1] && !argv[uIx + 1].startsWith('--')) UPSTREAM_REPO = argv[uIx + 1]
+
+// positional args = everything that isn't a flag or a flag's consumed value
+const consumed = new Set()
+for (const [flag, ix] of [['--platform', pIx], ['--upstream', uIx]]) {
+  if (ix !== -1 && argv[ix + 1] && !argv[ix + 1].startsWith('--')) consumed.add(ix + 1)
+}
+const positional = argv.filter((a, i) => !a.startsWith('--') && !consumed.has(i))
 const [pattern, targetArg] = positional
 if (!pattern || !targetArg) {
-  console.error('usage: node scripts/adopt.mjs <pattern-name> <target-dir> [--platform gh|glab] [--force]')
+  console.error('usage: node scripts/adopt.mjs <pattern-name> <target-dir> [--platform gh|glab] [--upstream [owner/repo]] [--force]')
   process.exit(1)
 }
 
@@ -196,8 +213,19 @@ if (existsSync(rootPrd) && !existsSync(docsPrd)) {
 // 6. CLAUDE.md: create from the snippet, or append it once (marker-checked, never duplicated).
 // The snippet defaults its Tracker line to `gh`; rewrite it to the resolved platform so the
 // pipeline reads the correct tracker from CLAUDE.md instead of re-guessing each run (issue #34).
-const snippet = readFileSync(join(scaffold, 'claude-md-snippet.md'), 'utf8')
+let snippet = readFileSync(join(scaffold, 'claude-md-snippet.md'), 'utf8')
   .replace('**Tracker: `gh`**', `**Tracker: \`${PLATFORM}\`**`)
+// Upstream-escalation bullet is opt-in (issue #40): keep it only with --upstream (pointing
+// at the chosen catalog repo), otherwise strip the whole marked block so no catalog repo
+// slug or "file issues upstream" instruction lands in the adopted CLAUDE.md.
+const UP_RE = /\n<!-- upstream-escalation:start -->\n([\s\S]*?)\n<!-- upstream-escalation:end -->/
+if (UPSTREAM) {
+  snippet = snippet.replace(UP_RE, (_, bullet) => '\n' + bullet.split(CATALOG_REPO).join(UPSTREAM_REPO))
+  console.log(`upstream escalation: on (issues -> ${UPSTREAM_REPO})`)
+} else {
+  snippet = snippet.replace(UP_RE, '')
+  console.log('upstream escalation: off (enable with --upstream [owner/repo])')
+}
 const MARKER = '## Delivery pipeline — three-agent Architect / Builder / Reviewer'
 const claudeMd = join(target, 'CLAUDE.md')
 if (!existsSync(claudeMd)) {

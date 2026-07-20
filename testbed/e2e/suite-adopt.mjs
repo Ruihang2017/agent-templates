@@ -52,6 +52,11 @@ export async function run() {
     check(S, 'A1 CLAUDE.md declares Operating mode', /Operating mode/.test(readFileSync(join(t1, 'CLAUDE.md'), 'utf8')))
     // issue #34: the resolved platform is recorded in CLAUDE.md
     check(S, 'A1 CLAUDE.md records Tracker: gh', /\*\*Tracker: `gh`\*\*/.test(readFileSync(join(t1, 'CLAUDE.md'), 'utf8')))
+    // issue #40: upstream escalation is OFF by default — no catalog repo slug, no marker, no leak
+    {
+      const cm1 = readFileSync(join(t1, 'CLAUDE.md'), 'utf8')
+      check(S, 'A1 no upstream escalation by default', !cm1.includes('Ruihang2017/agent-templates') && !cm1.includes('upstream-escalation') && !/Pattern-level problems go upstream/.test(cm1))
+    }
     check(S, 'A1 docs/PRD.md copied from root PRD.md', readFileSync(join(t1, 'docs', 'PRD.md'), 'utf8').includes('# My PRD'))
     check(S, 'A1 root PRD.md kept (copy, not move)', existsSync(join(t1, 'PRD.md')))
 
@@ -150,5 +155,32 @@ export async function run() {
     check(S, 'E2 resolved glab from the signal', /platform: glab/.test(r2.stdout) && existsSync(join(t5, '.gitlab/issue_templates/task.md')))
   } finally {
     rmSync(t5, { recursive: true, force: true })
+  }
+
+  // F: issue #40 — upstream escalation is opt-in via --upstream [owner/repo]
+  const t6 = mkdtempSync(join(tmpdir(), 'e2e-adopt-'))
+  try {
+    // bare --upstream targets the catalog this pattern came from
+    const r = runAdopt([PATTERN, t6, '--platform', 'gh', '--upstream'])
+    eq(S, 'F1 exit 0', r.status, 0)
+    const cm = readFileSync(join(t6, 'CLAUDE.md'), 'utf8')
+    check(S, 'F1 escalation bullet present, pointed at the catalog', /Pattern-level problems go upstream/.test(cm) && cm.includes('gh issue create --repo Ruihang2017/agent-templates'))
+    check(S, 'F1 no marker comments leak into CLAUDE.md', !cm.includes('upstream-escalation'))
+    check(S, 'F1 note reports escalation on', /upstream escalation: on/.test(r.stdout))
+  } finally {
+    rmSync(t6, { recursive: true, force: true })
+  }
+  const t7 = mkdtempSync(join(tmpdir(), 'e2e-adopt-'))
+  try {
+    // --upstream <repo> retargets it (own fork / internal catalog), no maintainer slug
+    const r = runAdopt([PATTERN, t7, '--platform', 'gh', '--upstream', 'acme/agent-catalog'])
+    eq(S, 'F2 exit 0', r.status, 0)
+    const cm = readFileSync(join(t7, 'CLAUDE.md'), 'utf8')
+    check(S, 'F2 retargeted to the given repo', cm.includes('gh issue create --repo acme/agent-catalog'))
+    check(S, 'F2 catalog default slug absent', !cm.includes('Ruihang2017/agent-templates'))
+    // custom repo arg must not be mistaken for a positional (pattern/target still parse)
+    check(S, 'F2 scaffold still installed (arg parsed as flag value)', existsSync(join(t7, '.claude/agents/architect.md')))
+  } finally {
+    rmSync(t7, { recursive: true, force: true })
   }
 }
