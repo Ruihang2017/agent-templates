@@ -18,6 +18,7 @@
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { createInterface } from 'node:readline/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -72,7 +73,35 @@ if (!PLATFORM) {
   else if (/github/i.test(host)) { PLATFORM = 'gh'; console.log(`platform: gh (from origin host '${host}'; override with --platform)`) }
   else if (existsSync(join(target, '.gitlab-ci.yml'))) { PLATFORM = 'glab'; console.log(`platform: glab (from .gitlab-ci.yml${inconclusive}; override with --platform)`) }
   else if (existsSync(join(target, '.github'))) { PLATFORM = 'gh'; console.log(`platform: gh (from existing .github/${inconclusive}; override with --platform)`) }
-  else { PLATFORM = 'gh'; console.log(`platform: gh (default — ${host ? `could not classify origin host '${host}'` : 'no origin remote'}; pass --platform glab if this is a self-hosted GitLab)`) }
+  else {
+    // No signal: never guess — a wrong guess installs the wrong tracker config and a
+    // wrong Tracker line (issue #38). Ask when interactive; otherwise stop and install
+    // nothing so the agent/CI can re-run with an explicit --platform.
+    const reason = host ? `could not classify origin host '${host}'` : 'no git remote, and no .gitlab-ci.yml or .github/ to infer from'
+    if (process.stdin.isTTY) {
+      const rl = createInterface({ input: process.stdin, output: process.stdout })
+      // Ctrl+D / closed stdin before an answer: abort cleanly (nothing installed)
+      // instead of leaving the top-level await unsettled.
+      rl.on('close', () => {
+        if (!PLATFORM) {
+          console.error('\nplatform: undetermined (input closed). Re-run with --platform gh|glab (nothing was installed).')
+          process.exit(1)
+        }
+      })
+      try {
+        console.log(`Cannot determine the tracker platform (${reason}).`)
+        for (;;) {
+          const a = (await rl.question('Which tracker is this repo on? [gh/glab] ')).trim().toLowerCase()
+          if (a === 'gh' || a === 'github') { PLATFORM = 'gh'; break }
+          if (a === 'glab' || a === 'gitlab') { PLATFORM = 'glab'; break }
+          console.log("please answer 'gh' or 'glab'")
+        }
+      } finally { rl.close() }
+    } else {
+      console.error(`platform: undetermined — ${reason}. Re-run with --platform gh|glab (nothing was installed).`)
+      process.exit(1)
+    }
+  }
 }
 if (PLATFORM !== 'gh' && PLATFORM !== 'glab') {
   console.error(`unknown platform: ${PLATFORM} (expected gh or glab)`)

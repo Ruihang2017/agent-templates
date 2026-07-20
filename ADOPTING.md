@@ -16,7 +16,9 @@ npx agent-templates@latest adopt three-agent-architect-builder-reviewer C:\path\
 
 Pin an exact version for reproducibility (`npx agent-templates@0.1.0 …`) — a published version is a verified snapshot of the catalog's recommendations. Alternatives: `npx github:Ruihang2017/agent-templates …` (tracks the repo, no release needed; npx caches git installs — `--prefer-online` picks up updates), or from a checkout: `node scripts/adopt.mjs three-agent-architect-builder-reviewer <target-dir>`.
 
-Idempotent (re-runs skip what exists; `--force` overwrites). It installs the scaffold `.claude/` (agents with pinned model/effort, stage commands, write guard, workflows, publish script), the universal `templates/ticket.template.md`, the platform tracker templates (`--platform gh|glab`, autodetected from the origin remote) into `.github/` or `.gitlab/`, creates `docs/prd|adr|plans/`, copies a root `PRD.md` to `docs/PRD.md`, and seeds or appends `CLAUDE.md` from the pattern snippet (marker-checked, never duplicated).
+Idempotent (re-runs skip what exists; `--force` overwrites). It installs the scaffold `.claude/` (agents with pinned model/effort, stage commands, write guard, workflows, publish script), the universal `templates/ticket.template.md`, the platform tracker templates into `.github/` or `.gitlab/`, creates `docs/prd|adr|plans/`, copies a root `PRD.md` to `docs/PRD.md`, and seeds or appends `CLAUDE.md` from the pattern snippet (marker-checked, never duplicated).
+
+**Platform (GitHub vs GitLab)** is resolved before anything is installed — from the origin remote host, else a repo-local signal (`.gitlab-ci.yml` → GitLab, existing `.github/` → GitHub). If neither is present (e.g. a fresh repo with only a `PRD.md`), adopt **does not guess**: run interactively it asks; run non-interactively (an agent or CI) it exits without installing and asks you to pass `--platform gh|glab`. So on a bare repo, either set the remote first or pass `--platform`. The resolved value is written to the `Tracker:` line in `CLAUDE.md`, which the pipeline reads.
 
 ## 2. New project from a bare PRD.md — end to end
 
