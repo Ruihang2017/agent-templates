@@ -4,6 +4,7 @@
 ## Delivery pipeline — three-agent Architect / Builder / Reviewer
 
 **Operating mode: `supervised`** <!-- switch to `autonomous` once the pattern holds on this repo -->
+**Tracker: `gh`** <!-- gh (GitHub) or glab (GitLab); set by adopt.mjs from the origin remote. Commands and workflows read the platform from THIS line — correct it if adopt guessed wrong. -->
 
 - `supervised` — a human confirms each merge and each tracker close; issue **creation** is authorized by the `/start-milestone` sign-off itself. The milestone runner stops after each CLEAR verdict for the human merge — re-run `/start-milestone` to continue (closed issues are skipped). Use for a fresh adoption.
 - `autonomous` (target) — humans decide at exactly two gates: Gate 1, sign-off of master PRD → sub-PRDs → tickets before the pipeline starts; Gate 2, a smoke test of the delivered milestone. Between them the pipeline self-drives: merge on CLEAR, `/verify-delivery` repairs gaps (including closing the issue) automatically. A human is pulled in only on the exception path — 2 bounce cycles without convergence, a failed build, or an unrepairable verify-delivery item.

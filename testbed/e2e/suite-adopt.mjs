@@ -49,6 +49,9 @@ export async function run() {
     const ga1 = readFileSync(join(t1, '.gitattributes'), 'utf8')
     check(S, 'A1 .gitattributes pins workflows + scripts to LF', ga1.includes('.claude/workflows/*.js text eol=lf') && ga1.includes('.claude/scripts/*.mjs text eol=lf'))
     check(S, 'A1 CLAUDE.md declares Operating mode', /Operating mode/.test(readFileSync(join(t1, 'CLAUDE.md'), 'utf8')))
+    // issue #34: the resolved platform is recorded in CLAUDE.md (no remote -> default gh)
+    check(S, 'A1 CLAUDE.md records Tracker: gh', /\*\*Tracker: `gh`\*\*/.test(readFileSync(join(t1, 'CLAUDE.md'), 'utf8')))
+    check(S, 'A1 default-platform note names --platform', /--platform/.test(r1.stdout))
     check(S, 'A1 docs/PRD.md copied from root PRD.md', readFileSync(join(t1, 'docs', 'PRD.md'), 'utf8').includes('# My PRD'))
     check(S, 'A1 root PRD.md kept (copy, not move)', existsSync(join(t1, 'PRD.md')))
 
@@ -74,11 +77,26 @@ export async function run() {
     check(S, 'B1 no .github created for glab', !existsSync(join(t2, '.github')))
     const cm = readFileSync(join(t2, 'CLAUDE.md'), 'utf8')
     check(S, 'B1 snippet appended after existing content', cm.startsWith('# Existing constitution') && cm.includes('Delivery pipeline — three-agent'))
+    check(S, 'B1 CLAUDE.md records Tracker: glab (matches --platform)', /\*\*Tracker: `glab`\*\*/.test(cm) && !/\*\*Tracker: `gh`\*\*/.test(cm))
     const ga2 = readFileSync(join(t2, '.gitattributes'), 'utf8')
     check(S, 'B1 .gitattributes appended, existing rules kept', ga2.startsWith('*.png binary') && ga2.includes('.claude/workflows/*.js text eol=lf'))
     check(S, 'B1 missing-PRD note printed', /no PRD\.md found/.test(r.stdout))
   } finally {
     rmSync(t2, { recursive: true, force: true })
+  }
+
+  // C: self-hosted GitLab on a custom domain — detected via .gitlab-ci.yml, NOT a hostname
+  // substring (issue #34). No --platform passed; no git remote either.
+  const t3g = mkdtempSync(join(tmpdir(), 'e2e-adopt-'))
+  try {
+    writeFileSync(join(t3g, '.gitlab-ci.yml'), 'stages: [test]\n')
+    const r = runAdopt([PATTERN, t3g])
+    eq(S, 'C1 exit 0', r.status, 0)
+    check(S, 'C1 detected glab from .gitlab-ci.yml', /platform: glab \(from \.gitlab-ci\.yml/.test(r.stdout))
+    check(S, 'C1 installed .gitlab/, not .github/', existsSync(join(t3g, '.gitlab/issue_templates/task.md')) && !existsSync(join(t3g, '.github')))
+    check(S, 'C1 CLAUDE.md records Tracker: glab', /\*\*Tracker: `glab`\*\*/.test(readFileSync(join(t3g, 'CLAUDE.md'), 'utf8')))
+  } finally {
+    rmSync(t3g, { recursive: true, force: true })
   }
 
   // D: the npx-facing CLI dispatcher (scripts/cli.mjs)
