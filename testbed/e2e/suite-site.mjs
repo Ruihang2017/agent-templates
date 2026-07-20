@@ -20,6 +20,8 @@ const SCRIPT = join(REPO, 'scripts', 'build-site.mjs')
 function commandCoverage(html, readme) {
   const patternsDir = join(REPO, 'patterns')
   const fmField = (fm, name) => ((fm.match(new RegExp(`^${name}\\s*:\\s*(.+)$`, 'm')) || [])[1] || '').trim()
+  // match the site's own escaping so a description with & < > " does not false-fail
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   let commandCount = 0
   for (const pat of readdirSync(patternsDir, { withFileTypes: true }).filter((d) => d.isDirectory())) {
     const cdir = join(patternsDir, pat.name, 'scaffold', '.claude', 'commands')
@@ -30,9 +32,10 @@ function commandCoverage(html, readme) {
       const desc = fmField(fm, 'description')
       commandCount++
       check(S, `command ${name} has a non-empty description`, desc.length > 0)
-      check(S, `command ${name} surfaces on the generated site`, html.includes(name))
-      check(S, `command ${name} surfaces in README.md`, readme.includes(name))
-      check(S, `command ${name} description surfaces on the site`, !desc || html.includes(desc.slice(0, 40)))
+      // delimited matches so a future /start-all-fast can't substring-satisfy /start-all
+      check(S, `command ${name} surfaces on the generated site`, html.includes('>' + esc(name) + '<'))
+      check(S, `command ${name} surfaces in README.md`, readme.includes('`' + name + '`'))
+      check(S, `command ${name} description surfaces on the site`, !desc || html.includes(esc(desc.slice(0, 40))))
     }
   }
   check(S, 'coverage gate saw at least one command', commandCount > 0)
