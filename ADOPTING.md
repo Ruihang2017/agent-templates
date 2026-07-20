@@ -20,6 +20,8 @@ Idempotent (re-runs skip what exists; `--force` overwrites). It installs the sca
 
 **Platform (GitHub vs GitLab)** is resolved before anything is installed — from the origin remote host, else a repo-local signal (`.gitlab-ci.yml` → GitLab, existing `.github/` → GitHub). If neither is present (e.g. a fresh repo with only a `PRD.md`), adopt **does not guess**: run interactively it asks; run non-interactively (an agent or CI) it exits without installing and asks you to pass `--platform gh|glab`. So on a bare repo, either set the remote first or pass `--platform`. The resolved value is written to the `Tracker:` line in `CLAUDE.md`, which the pipeline reads.
 
+**Upstream issue escalation is opt-in.** By default the installed `CLAUDE.md` carries **no** instruction to file pattern-level problems against any catalog — no external repo slug is written into your repo (safe for commercial and private projects). Pass `--upstream` to include the bullet pointing at the catalog you adopted from, or `--upstream <owner/repo>` to point it at your own fork or internal catalog.
+
 ## 2. New project from a bare PRD.md — end to end
 
 Preconditions: git repo + remote, authenticated tracker CLI (`gh auth login` / `glab auth login`), Node ≥ 18, Claude Code.
