@@ -15,11 +15,12 @@ const PATTERN = 'three-agent-architect-builder-reviewer'
 const runAdopt = (args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' })
 
 export async function run() {
-  // A: bare-PRD new project, default platform (no git remote -> gh)
+  // A: bare-PRD new project. No signal to detect from, so platform is explicit
+  // (issue #38: adopt refuses to guess — the no-signal paths are covered in E below).
   const t1 = mkdtempSync(join(tmpdir(), 'e2e-adopt-'))
   try {
     writeFileSync(join(t1, 'PRD.md'), '# My PRD\n\nGoal: demo.\n')
-    const r1 = runAdopt([PATTERN, t1])
+    const r1 = runAdopt([PATTERN, t1, '--platform', 'gh'])
     eq(S, 'A1 exit 0', r1.status, 0)
     for (const f of [
       '.claude/agents/architect.md',
@@ -49,9 +50,8 @@ export async function run() {
     const ga1 = readFileSync(join(t1, '.gitattributes'), 'utf8')
     check(S, 'A1 .gitattributes pins workflows + scripts to LF', ga1.includes('.claude/workflows/*.js text eol=lf') && ga1.includes('.claude/scripts/*.mjs text eol=lf'))
     check(S, 'A1 CLAUDE.md declares Operating mode', /Operating mode/.test(readFileSync(join(t1, 'CLAUDE.md'), 'utf8')))
-    // issue #34: the resolved platform is recorded in CLAUDE.md (no remote -> default gh)
+    // issue #34: the resolved platform is recorded in CLAUDE.md
     check(S, 'A1 CLAUDE.md records Tracker: gh', /\*\*Tracker: `gh`\*\*/.test(readFileSync(join(t1, 'CLAUDE.md'), 'utf8')))
-    check(S, 'A1 default-platform note names --platform', /--platform/.test(r1.stdout))
     check(S, 'A1 docs/PRD.md copied from root PRD.md', readFileSync(join(t1, 'docs', 'PRD.md'), 'utf8').includes('# My PRD'))
     check(S, 'A1 root PRD.md kept (copy, not move)', existsSync(join(t1, 'PRD.md')))
 
@@ -113,7 +113,7 @@ export async function run() {
     eq(S, 'D3 unknown command exits 1', unk.status, 1)
     const t3 = mkdtempSync(join(tmpdir(), 'e2e-adopt-'))
     try {
-      const a = runCli(['adopt', PATTERN, t3])
+      const a = runCli(['adopt', PATTERN, t3, '--platform', 'gh'])
       eq(S, 'D4 cli adopt exits 0', a.status, 0)
       check(S, 'D4 cli adopt installs the scaffold', existsSync(join(t3, '.claude/agents/architect.md')) && existsSync(join(t3, 'CLAUDE.md')))
     } finally {
@@ -133,4 +133,22 @@ export async function run() {
   eq(S, 'C3 no args exits 1 with usage', bad3.status, 1)
   const bad4 = runAdopt([PATTERN, tmpdir(), '--platform'])
   eq(S, 'C4 dangling --platform exits 1', bad4.status, 1)
+
+  // E: issue #38 — no platform signal + non-interactive (spawnSync has no TTY): adopt
+  // must NOT guess. It exits 1, names --platform, and installs nothing.
+  const t5 = mkdtempSync(join(tmpdir(), 'e2e-adopt-'))
+  try {
+    writeFileSync(join(t5, 'PRD.md'), '# My PRD\n')
+    const r = runAdopt([PATTERN, t5])
+    eq(S, 'E1 no-signal non-TTY exits 1', r.status, 1)
+    check(S, 'E1 error names --platform gh|glab', /--platform gh\|glab/.test(r.stderr))
+    check(S, 'E1 installed nothing (no .claude / .github / CLAUDE.md)', !existsSync(join(t5, '.claude')) && !existsSync(join(t5, '.github')) && !existsSync(join(t5, 'CLAUDE.md')))
+    // a repo-local signal still auto-resolves without --platform (no prompt, exit 0)
+    writeFileSync(join(t5, '.gitlab-ci.yml'), 'stages: [test]\n')
+    const r2 = runAdopt([PATTERN, t5])
+    eq(S, 'E2 signal present -> resolves without --platform', r2.status, 0)
+    check(S, 'E2 resolved glab from the signal', /platform: glab/.test(r2.stdout) && existsSync(join(t5, '.gitlab/issue_templates/task.md')))
+  } finally {
+    rmSync(t5, { recursive: true, force: true })
+  }
 }
