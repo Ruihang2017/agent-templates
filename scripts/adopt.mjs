@@ -80,6 +80,14 @@ if (!PLATFORM) {
     const reason = host ? `could not classify origin host '${host}'` : 'no git remote, and no .gitlab-ci.yml or .github/ to infer from'
     if (process.stdin.isTTY) {
       const rl = createInterface({ input: process.stdin, output: process.stdout })
+      // Ctrl+D / closed stdin before an answer: abort cleanly (nothing installed)
+      // instead of leaving the top-level await unsettled.
+      rl.on('close', () => {
+        if (!PLATFORM) {
+          console.error('\nplatform: undetermined (input closed). Re-run with --platform gh|glab (nothing was installed).')
+          process.exit(1)
+        }
+      })
       try {
         console.log(`Cannot determine the tracker platform (${reason}).`)
         for (;;) {

@@ -142,7 +142,7 @@ export async function run() {
     const r = runAdopt([PATTERN, t5])
     eq(S, 'E1 no-signal non-TTY exits 1', r.status, 1)
     check(S, 'E1 error names --platform gh|glab', /--platform gh\|glab/.test(r.stderr))
-    check(S, 'E1 installed nothing (no .claude / .github / CLAUDE.md)', !existsSync(join(t5, '.claude')) && !existsSync(join(t5, '.github')) && !existsSync(join(t5, 'CLAUDE.md')))
+    check(S, 'E1 installed nothing at all', ['.claude', '.github', '.gitlab', 'CLAUDE.md', 'docs', 'templates', '.gitattributes'].every((p) => !existsSync(join(t5, p))))
     // a repo-local signal still auto-resolves without --platform (no prompt, exit 0)
     writeFileSync(join(t5, '.gitlab-ci.yml'), 'stages: [test]\n')
     const r2 = runAdopt([PATTERN, t5])
