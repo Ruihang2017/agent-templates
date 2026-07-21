@@ -86,16 +86,19 @@ export async function run() {
   }
 
   // Prose can drift from the frontmatter: the README's scaffold-tree diagram carries
-  // hand-written `# claude-<model> @ <effort>;` pins that a model/effort change must keep
-  // in step (they silently went stale in PR #43's first pass). Every such line must match
-  // a real AGENT_PINS combo, so a stale hand-written pin fails the gate.
+  // hand-written `<agent>.md  # claude-<model> @ <effort>;` pins that a model/effort change
+  // must keep in step (they silently went stale in PR #43's first pass). Key each diagram
+  // line to ITS OWN agent file — matching against the whole valid-combo set would miss a
+  // stale pin that happens to collide with another role's combo (e.g. architect wrongly
+  // showing Triage's sonnet-5 @ xhigh).
   {
-    const validCombos = new Set(Object.values(AGENT_PINS).map((v) => `${v.model} @ ${v.effort}`))
     const readme = readFileSync(REPO_ROOT + SCAFFOLD.replace('scaffold/', 'README.md'), 'utf8')
-    const pinLines = [...readme.matchAll(/(claude-[\w.-]+)\s*@\s*(\w+)\s*;/g)]
-    check(S, 'README scaffold-tree pins present to check', pinLines.length >= 3)
-    for (const m of pinLines) {
-      check(S, `README pin '${m[1]} @ ${m[2]}' matches a real agent pin`, validCombos.has(`${m[1]} @ ${m[2]}`))
+    const pinLines = [...readme.matchAll(/(\w+\.md)\s+#\s*(claude-[\w.-]+)\s*@\s*(\w+)\s*;/g)]
+      .filter((m) => AGENT_PINS[m[1]])
+    check(S, 'README scaffold-tree agent pins present to check', pinLines.length >= 3)
+    for (const [, file, model, effort] of pinLines) {
+      const pin = AGENT_PINS[file]
+      check(S, `README diagram pin for ${file} matches its frontmatter`, model === pin.model && effort === pin.effort)
     }
   }
 
