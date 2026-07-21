@@ -54,9 +54,9 @@ const UNIVERSAL_TEMPLATES = [
 
 // model/effort pins must match pattern README §3 exactly
 const AGENT_PINS = {
-  'architect.md': { model: 'claude-sonnet-5', effort: 'xhigh' },
+  'architect.md': { model: 'claude-opus-4-8', effort: 'max' },
   'builder.md': { model: 'claude-opus-4-8', effort: 'xhigh' },
-  'reviewer.md': { model: 'claude-fable-5', effort: 'max' },
+  'reviewer.md': { model: 'claude-fable-5', effort: 'xhigh' },
   'triage.md': { model: 'claude-sonnet-5', effort: 'xhigh' },
 }
 
@@ -83,6 +83,23 @@ export async function run() {
     const text = readFileSync(path, 'utf8')
     check(S, `${file} pins model ${pins.model}`, fmField(text, 'model') === pins.model)
     check(S, `${file} pins effort ${pins.effort}`, fmField(text, 'effort') === pins.effort)
+  }
+
+  // Prose can drift from the frontmatter: the README's scaffold-tree diagram carries
+  // hand-written `<agent>.md  # claude-<model> @ <effort>;` pins that a model/effort change
+  // must keep in step (they silently went stale in PR #43's first pass). Key each diagram
+  // line to ITS OWN agent file — matching against the whole valid-combo set would miss a
+  // stale pin that happens to collide with another role's combo (e.g. architect wrongly
+  // showing Triage's sonnet-5 @ xhigh).
+  {
+    const readme = readFileSync(REPO_ROOT + SCAFFOLD.replace('scaffold/', 'README.md'), 'utf8')
+    const pinLines = [...readme.matchAll(/(\w+\.md)\s+#\s*(claude-[\w.-]+)\s*@\s*(\w+)\s*;/g)]
+      .filter((m) => AGENT_PINS[m[1]])
+    check(S, 'README scaffold-tree agent pins present to check', pinLines.length >= 3)
+    for (const [, file, model, effort] of pinLines) {
+      const pin = AGENT_PINS[file]
+      check(S, `README diagram pin for ${file} matches its frontmatter`, model === pin.model && effort === pin.effort)
+    }
   }
 
   for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'start-milestone', 'start-all', 'nightly-issues', 'breakdown-prd']) {
