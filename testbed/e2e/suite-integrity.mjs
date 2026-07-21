@@ -85,6 +85,20 @@ export async function run() {
     check(S, `${file} pins effort ${pins.effort}`, fmField(text, 'effort') === pins.effort)
   }
 
+  // Prose can drift from the frontmatter: the README's scaffold-tree diagram carries
+  // hand-written `# claude-<model> @ <effort>;` pins that a model/effort change must keep
+  // in step (they silently went stale in PR #43's first pass). Every such line must match
+  // a real AGENT_PINS combo, so a stale hand-written pin fails the gate.
+  {
+    const validCombos = new Set(Object.values(AGENT_PINS).map((v) => `${v.model} @ ${v.effort}`))
+    const readme = readFileSync(REPO_ROOT + SCAFFOLD.replace('scaffold/', 'README.md'), 'utf8')
+    const pinLines = [...readme.matchAll(/(claude-[\w.-]+)\s*@\s*(\w+)\s*;/g)]
+    check(S, 'README scaffold-tree pins present to check', pinLines.length >= 3)
+    for (const m of pinLines) {
+      check(S, `README pin '${m[1]} @ ${m[2]}' matches a real agent pin`, validCombos.has(`${m[1]} @ ${m[2]}`))
+    }
+  }
+
   for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'start-milestone', 'start-all', 'nightly-issues', 'breakdown-prd']) {
     const path = p(`.claude/commands/${cmd}.md`)
     if (!existsSync(path)) continue

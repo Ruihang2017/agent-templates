@@ -4,8 +4,8 @@
 |---|---|
 | **Pattern name** | `three-agent-architect-builder-reviewer` |
 | **Status** | `trialed` — signed off as the team standard 2026-07-17; promotes to `adopted` after its first real-ticket run (CLAUDE.md promotion rule) |
-| **As-of date** | 2026-07-17 |
-| **Expiry trigger** | First successor release to any listed model, or 2027-01-17 (+6 months), whichever comes first |
+| **As-of date** | 2026-07-21 (model/effort revised; §7) |
+| **Expiry trigger** | First successor release to any listed model, or 2027-01-21 (+6 months), whichever comes first |
 | **Sign-off** | Horace Hou (repo maintainer), 2026-07-17 |
 
 One ticket flows through three agents in sequence: **Architect** plans → **Builder** implements → **Reviewer** (fresh context, different model tier) clears or bounces. No agent judges its own work.
@@ -120,9 +120,9 @@ scaffold/
     │   ├── start-all.js       # whole-PRD driver: composes run-milestone per module in DAG order
     │   └── nightly-issues.js  # nightly sweep: triage → pipeline → report (Workflow script)
     ├── agents/                # role definitions with pinned model + effort
-    │   ├── architect.md       # claude-sonnet-5 @ xhigh; writes the plan, no production code
+    │   ├── architect.md       # claude-opus-4-8 @ max; writes the plan, no production code
     │   ├── builder.md         # claude-opus-4-8 @ xhigh; inherits all tools
-    │   ├── reviewer.md        # claude-fable-5 @ max; read/run-only (no Write/Edit)
+    │   ├── reviewer.md        # claude-fable-5 @ xhigh; read/run-only (no Write/Edit)
     │   └── triage.md          # claude-sonnet-5 @ xhigh; nightly classification + ticket synthesis
     └── commands/
         ├── breakdown-prd.md   # /breakdown-prd [notes]    → pre-Gate-1: PRD → sub-PRDs + tickets
