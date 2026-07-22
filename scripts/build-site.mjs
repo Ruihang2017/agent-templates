@@ -24,6 +24,7 @@ const OUT = outIx !== -1 && argv[outIx + 1] ? argv[outIx + 1] : join(ROOT, 'site
 const GITHUB = 'https://github.com/Ruihang2017/agent-templates'
 const NPM = 'https://www.npmjs.com/package/agent-templates'
 const QUICKSTART = 'npx agent-templates@latest adopt three-agent-architect-builder-reviewer .'
+const UPDATE = QUICKSTART + ' --force'
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 const strip = (s) => String(s).replace(/\*\*/g, '').replace(/`/g, '').trim()
@@ -243,6 +244,8 @@ const html = `<!doctype html>
   .quick{margin-top:20px;border-radius:16px;background:var(--pill);padding:14px 16px 12px;
     box-shadow:inset 0 3px 6px rgba(var(--flt),0.2),inset 0 -2px 2px rgba(255,255,255,0.8)}
   .quick code{display:block;font-family:var(--mono);font-size:12px;font-weight:700;color:var(--code);line-height:1.55;word-break:break-all}
+  .update-note{margin:12px 0 0;font-size:11.5px;font-weight:700;line-height:1.5;color:var(--hero-body)}
+  .update-note code{font-family:var(--mono);font-size:11px;color:var(--hero-title);word-break:break-all}
   .copy{display:inline-flex;margin-top:10px;padding:6px 16px;border-radius:13px;border:0;
     background:linear-gradient(180deg,#f9d66e,#f0c14a);cursor:pointer;font-family:'Nunito',sans-serif;
     font-size:12px;font-weight:900;color:#6b4a15;transition:transform .15s ease;
@@ -340,6 +343,7 @@ const html = `<!doctype html>
         <code id="qs">${esc(QUICKSTART)}</code>
         <button class="copy" id="copy-btn" type="button">Copy</button>
       </div>
+      <p class="update-note">Already installed? Update to the latest catalog version: <code>${esc(UPDATE)}</code> (commit first — <code>--force</code> overwrites).</p>
     </div>
     <div class="hero-side">
       ${FACTS.map(([tile, glyph, copy]) => `<div class="fact"><span class="fact-ico" style="${tile}">${glyph}</span><p>${copy}</p></div>`).join('\n      ')}
