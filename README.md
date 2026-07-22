@@ -1,6 +1,6 @@
 # agent-templates
 
-[![npm](https://img.shields.io/npm/v/agent-templates)](https://www.npmjs.com/package/agent-templates) · **[Catalog site →](https://ruihang2017.github.io/agent-templates/)**
+[![npm](https://img.shields.io/npm/v/agent-templates)](https://www.npmjs.com/package/agent-templates) · [![test](https://github.com/Ruihang2017/agent-templates/actions/workflows/test.yml/badge.svg)](https://github.com/Ruihang2017/agent-templates/actions/workflows/test.yml) · **[Catalog site →](https://ruihang2017.github.io/agent-templates/)**
 
 Catalog of reusable multi-agent development architecture patterns. Each entry is a design write-up plus drop-in scaffolding (subagent definitions, slash commands, CLAUDE.md snippets) so a new project reuses a proven pattern instead of redesigning one.
 
@@ -53,6 +53,18 @@ Installed into your project by `adopt`; run them in Claude Code. Full list is ge
 - Operating manual, pattern schema, grounding rules: [CLAUDE.md](CLAUDE.md)
 - Adding a pattern: start from [templates/pattern-README.template.md](templates/pattern-README.template.md), process in [CLAUDE.md](CLAUDE.md) § "Adding a new pattern"
 - E2E testing for the pattern chain: [testbed/README.md](testbed/README.md) — `node testbed/e2e/run-e2e.mjs` is the merge gate for scaffold changes
+
+## CI & releasing
+
+CI ([`.github/workflows/test.yml`](.github/workflows/test.yml)) runs the E2E suite on every PR and push to `main`, across ubuntu + windows × Node 18/20 — the merge gate is enforced server-side and cross-platform.
+
+Releases publish from a version tag ([`.github/workflows/publish.yml`](.github/workflows/publish.yml)): bump `package.json`, then
+
+```
+git tag v0.4.8 && git push origin v0.4.8
+```
+
+CI re-runs the E2E gate, checks the tag matches `package.json`, and publishes to npm. **One-time setup:** add an `NPM_TOKEN` repo secret (Settings → Secrets and variables → Actions).
 
 ## License
 

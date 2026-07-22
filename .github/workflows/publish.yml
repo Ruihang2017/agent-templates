@@ -1,0 +1,38 @@
+name: publish
+
+# Release = push a version tag. On a v* tag: re-run the full E2E gate in a clean
+# environment, verify the tag matches package.json version (no accidental mismatched
+# publish), then publish to npm. Requires an NPM_TOKEN repo secret (maintainer adds it;
+# the automation cannot). Removes the manual npm-publish + auth step.
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+      - name: E2E gate
+        run: npm test
+      - name: Tag must match package.json version
+        shell: bash
+        run: |
+          pkg="v$(node -p "require('./package.json').version")"
+          tag="${GITHUB_REF_NAME}"
+          echo "tag=$tag pkg=$pkg"
+          if [ "$tag" != "$pkg" ]; then
+            echo "::error::tag $tag does not match package.json $pkg — bump the version and re-tag"
+            exit 1
+          fi
+      - name: Publish to npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
