@@ -76,7 +76,16 @@ export async function run() {
 
     // doc/site command coverage gate (issue #35)
     check(S, 'site renders a Commands section', html.includes('class="cmds"') && html.includes('>Commands<'))
-    commandCoverage(html, readFileSync(join(REPO, 'README.md'), 'utf8'))
+    const readme = readFileSync(join(REPO, 'README.md'), 'utf8')
+    commandCoverage(html, readme)
+
+    // update-command coverage (issue #44): the "update an existing install" command must
+    // surface in BOTH the README and the site so it can't silently drop.
+    const UPDATE = 'npx agent-templates@latest adopt three-agent-architect-builder-reviewer . --force'
+    check(S, 'README documents the --force update command', readme.includes(UPDATE))
+    check(S, 'ADOPTING documents the --force update command', readFileSync(join(REPO, 'ADOPTING.md'), 'utf8').includes(UPDATE))
+    check(S, 'site surfaces the --force update command', html.includes(UPDATE))
+    check(S, 'site renders the update note', html.includes('class="update-note"'))
   } finally {
     rmSync(out, { recursive: true, force: true })
   }

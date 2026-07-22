@@ -39,6 +39,17 @@ Preconditions: git repo + remote, authenticated tracker CLI (`gh auth login` / `
 
 Same `adopt.mjs` run — skip-existing protects your files. The differences:
 
+**Updating to a newer catalog version:** a plain re-run only adds files that don't exist yet; it will not update a file the previous version already installed. To pull the latest, re-run with `--force` (it overwrites, including `.claude/settings.json`), so commit first and review the diff to re-apply local customizations:
+
+```
+git add -A && git commit -m "checkpoint before agent-templates update"
+npx agent-templates@latest adopt three-agent-architect-builder-reviewer . --force
+git diff
+```
+
+`--force` refreshes the scaffold and tracker/settings files, but not the `CLAUDE.md` pipeline section or `.gitattributes` (both marker-guarded) — re-apply any pipeline-rule changes from a release by hand.
+
+
 - `CLAUDE.md` gets the snippet **appended**: read the merged result once and resolve contradictions with your existing rules (the pipeline rules assume no agent judges its own work).
 - An existing `.claude/settings.json` is kept; merge the scaffold's `hooks.PreToolUse` (write guard) and `permissions.allow` entries by hand.
 - Formalize `docs/PRD.md` for the area you will pipeline first — it can cover a single module; you do not need to spec the whole codebase to start.
