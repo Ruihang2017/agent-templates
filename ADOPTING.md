@@ -47,6 +47,8 @@ npx agent-templates@latest adopt three-agent-architect-builder-reviewer . --forc
 git diff
 ```
 
+`--force` refreshes the scaffold and tracker/settings files, but not the `CLAUDE.md` pipeline section or `.gitattributes` (both marker-guarded) — re-apply any pipeline-rule changes from a release by hand.
+
 
 - `CLAUDE.md` gets the snippet **appended**: read the merged result once and resolve contradictions with your existing rules (the pipeline rules assume no agent judges its own work).
 - An existing `.claude/settings.json` is kept; merge the scaffold's `hooks.PreToolUse` (write guard) and `permissions.allow` entries by hand.

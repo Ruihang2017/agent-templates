@@ -28,6 +28,8 @@ npx agent-templates@latest adopt three-agent-architect-builder-reviewer . --forc
 git diff        # re-apply your customizations (esp. .claude/settings.json)
 ```
 
+`--force` refreshes the scaffold and tracker/settings files. It does **not** rewrite the `CLAUDE.md` pipeline section or `.gitattributes` (both marker-guarded, so a re-run reports them as already present) — if a release changes the pipeline rules in the snippet, re-apply those by hand.
+
 | Pattern | Status | As of | Summary |
 |---|---|---|---|
 | [three-agent-architect-builder-reviewer](patterns/three-agent-architect-builder-reviewer/README.md) | trialed | 2026-07-17 | Architect plans → Builder implements → independent Reviewer (fresh context, different model tier) clears or bounces; `/start-milestone` runs a whole module autonomously |

@@ -83,6 +83,7 @@ export async function run() {
     // surface in BOTH the README and the site so it can't silently drop.
     const UPDATE = 'npx agent-templates@latest adopt three-agent-architect-builder-reviewer . --force'
     check(S, 'README documents the --force update command', readme.includes(UPDATE))
+    check(S, 'ADOPTING documents the --force update command', readFileSync(join(REPO, 'ADOPTING.md'), 'utf8').includes(UPDATE))
     check(S, 'site surfaces the --force update command', html.includes(UPDATE))
     check(S, 'site renders the update note', html.includes('class="update-note"'))
   } finally {
