@@ -1,6 +1,6 @@
 {
   "name": "agent-templates",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "Catalog of multi-agent development architecture patterns - design write-ups plus drop-in scaffolding (agents, slash commands, workflows, templates).",
   "license": "MIT",
   "author": "Horace Hou",

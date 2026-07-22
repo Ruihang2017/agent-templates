@@ -1,0 +1,28 @@
+name: test
+
+# The E2E suite (node testbed/e2e/run-e2e.mjs) is this repo's merge gate. Run it
+# server-side on every PR and every push to main, cross-platform — the catalog has
+# had Windows-only bugs (CRLF, #21/#23); the ubuntu leg guards the inverse. Zero
+# runtime deps, so no install step is needed.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  e2e:
+    name: e2e (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: [18, 20]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: E2E (Level-0 + testbed app)
+        run: npm test
