@@ -54,7 +54,7 @@ const UNIVERSAL_TEMPLATES = [
 
 // model/effort pins must match pattern README §3 exactly
 const AGENT_PINS = {
-  'architect.md': { model: 'claude-opus-4-8', effort: 'max' },
+  'architect.md': { model: 'claude-fable-5', effort: 'max' },
   'builder.md': { model: 'claude-opus-4-8', effort: 'xhigh' },
   'reviewer.md': { model: 'claude-fable-5', effort: 'xhigh' },
   'triage.md': { model: 'claude-sonnet-5', effort: 'xhigh' },
