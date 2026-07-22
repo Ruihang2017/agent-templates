@@ -61,7 +61,7 @@ CI ([`.github/workflows/test.yml`](.github/workflows/test.yml)) runs the E2E sui
 Releases publish from a version tag ([`.github/workflows/publish.yml`](.github/workflows/publish.yml)): bump `package.json`, then
 
 ```
-git tag v0.4.8 && git push origin v0.4.8
+git tag vX.Y.Z && git push origin vX.Y.Z   # X.Y.Z = the version in package.json
 ```
 
 CI re-runs the E2E gate, checks the tag matches `package.json`, and publishes to npm. **One-time setup:** add an `NPM_TOKEN` repo secret (Settings → Secrets and variables → Actions).
