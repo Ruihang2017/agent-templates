@@ -8,7 +8,7 @@
 // `gh pr` / `glab mr` calls below live HERE and not on the agent's Bash surface —
 // settings.json deliberately does NOT allow `gh pr`, issue #30).
 //
-// Two delivery modes (#50 — the pattern produced 0 PRs / 0 remote branches before):
+// Delivery modes (#50, #56 — the pattern produced 0 PRs / 0 remote branches before #50):
 //   pr     : push the branch, open a PR/MR carrying the plan + Closes #<n>, post the
 //            Reviewer's CLEAR verdict as a PR/MR COMMENT (the durable review trail),
 //            then merge THROUGH the forge (`gh pr merge` / `glab mr merge` — respects
@@ -17,16 +17,24 @@
 //            the merged remote, close + verify the issue, run the DoD test-cmd.
 //   direct : the legacy local `--no-ff` merge + push (for repos with no remote or no
 //            forge CLI). Kept intact so no-forge repos still deliver.
-//   auto   : pr when an origin remote AND an authenticated forge CLI both exist,
-//            else direct. (default)
+//   pushmr : GitLab only, for orgs whose token has the Issues API but a 403 MR API AND a
+//            protected default branch (catalog issue #56) — where neither pr (needs MR API)
+//            nor direct (needs to push protected main) works. Opens the MR over SSH via
+//            `git push -o merge_request.*` (no MR API); the single-line description carries
+//            Closes #N (git forbids newlines in push options), and the CLEAR verdict is
+//            posted as an ISSUE comment via the working Issues API. Stops for a human web
+//            merge; a resume run detects the landed merge and closes/verifies via Issues API.
+//   auto   : pr when the MR/PR API is usable; else on glab, pushmr when the MR API is
+//            403/denied; else direct. (default)
 //
-// --no-merge (pr mode only): push + open PR/MR + post the verdict comment, then STOP
-// without merging — this is how supervised mode hands the human an open, evidenced PR.
+// --no-merge (pr mode): push + open PR/MR + post the verdict comment, then STOP without
+// merging — how supervised mode hands the human an open, evidenced PR. (pushmr always
+// stops for a human web merge, so --no-merge is implicit there.)
 //
 // Usage:
 //   node .claude/scripts/deliver-ticket.mjs --id <ticket-id> --branch <branch>
 //        [--default-branch main] [--issue <n>] [--platform gh|glab]
-//        [--delivery pr|direct|auto] [--no-merge] [--verdict-file <path>]
+//        [--delivery pr|direct|pushmr|auto] [--no-merge] [--verdict-file <path>]
 //        [--test-cmd "<command>"]
 //
 // Last line of stdout is machine-readable for run-milestone:
@@ -79,8 +87,8 @@ if (PLATFORM !== 'gh' && PLATFORM !== 'glab') {
   console.error(`unknown platform: ${PLATFORM} (expected gh or glab)`)
   process.exit(1)
 }
-if (!['pr', 'direct', 'auto'].includes(DELIVERY)) {
-  console.error(`unknown --delivery: ${DELIVERY} (expected pr, direct, or auto)`)
+if (!['pr', 'direct', 'pushmr', 'auto'].includes(DELIVERY)) {
+  console.error(`unknown --delivery: ${DELIVERY} (expected pr, direct, pushmr, or auto)`)
   process.exit(1)
 }
 if (VERDICT_FILE && !existsSync(VERDICT_FILE)) {
@@ -182,6 +190,24 @@ const closeIssue = () => {
   }
 }
 
+// the PR/MR title and structured body — shared by the pr (API) and pushmr paths.
+// withVerdict inlines the CLEAR verdict into the body; the pr path posts it as a
+// comment instead, but pushmr has no MR-comment API (issue #56) so it goes in the body.
+const prTitle = () => {
+  const subject = (tryGit(['log', '-1', '--format=%s', BRANCH]).out || BRANCH).trim().slice(0, 100)
+  return `[${ID}] ${subject}`.slice(0, 120)
+}
+const buildBody = () => {
+  const closes = ISSUE_ARG && Number(ISSUE_ARG) > 0 ? `Closes #${Number(ISSUE_ARG)}` : `(ticket ${ID} — issue looked up by \`[${ID}]\` title prefix)`
+  return `## Summary\nDelivered by the three-agent pipeline for ticket [${ID}].\n\n` +
+    `## Related issue / ticket\n${closes} — ticket \`${ID}\`\n\n` +
+    `## Pipeline evidence\n` +
+    `- Plan: \`docs/plans/${ID}.md\`\n` +
+    `- Builder branch: \`${BRANCH}\` -> \`${DEFAULT_BRANCH}\`\n` +
+    `- Reviewer verdict: **CLEAR** (full text posted as a comment below)\n` +
+    `- Delivered deterministically by \`run-milestone\` / \`deliver-ticket.mjs\`\n`
+}
+
 // find an existing PR/MR for the branch; returns { number, url } or null
 const findPr = () => {
   try {
@@ -216,11 +242,23 @@ try {
   // 3. resolve delivery mode
   checks.pushRequired = tryGit(['remote', 'get-url', 'origin']).ok
   const cliAuthed = tryCli(['auth', 'status'], { stdio: ['ignore', 'ignore', 'ignore'] }).ok
+  // Cheap MR/PR-API probe: a token can have a working Issues API but a 403 MR API
+  // (org policy — catalog issue #56). On glab that routes delivery to push-option MR.
+  const mrApiOk = () => (PLATFORM === 'gh'
+    ? tryCli(['pr', 'list', '--limit', '1', '--json', 'number'], { stdio: ['ignore', 'pipe', 'ignore'] }).ok
+    : tryCli(['mr', 'list', '--per-page', '1'], { stdio: ['ignore', 'pipe', 'ignore'] }).ok)
   if (DELIVERY === 'direct') deliveryMode = 'direct'
-  else if (DELIVERY === 'pr') {
+  else if (DELIVERY === 'pushmr') {
+    if (PLATFORM !== 'glab') { note('--delivery pushmr is GitLab-only (a GitHub push cannot open a PR); use pr or direct'); finish(0) }
+    if (!checks.pushRequired) { note('--delivery pushmr requires an origin remote'); finish(0) }
+    deliveryMode = 'pushmr'
+  } else if (DELIVERY === 'pr') {
     if (!checks.pushRequired || !cliAuthed) { note(`--delivery pr requires an origin remote and an authenticated ${PLATFORM}; falling back is not allowed under an explicit flag`); finish(0) }
     deliveryMode = 'pr'
-  } else deliveryMode = (checks.pushRequired && cliAuthed) ? 'pr' : 'direct'
+  } else if (!checks.pushRequired || !cliAuthed) deliveryMode = 'direct'
+  else if (mrApiOk()) deliveryMode = 'pr'
+  else if (PLATFORM === 'glab') { deliveryMode = 'pushmr'; note('MR API unavailable (403/denied) — using GitLab push-option MR (issue #56)') }
+  else deliveryMode = 'direct' // GitHub with no PR API: falls back; a protected default branch would then block the push (note it)
   console.log(`delivery mode: ${deliveryMode}`)
 
   // supervised (--no-merge) with no forge: there is no PR to open — leave the local
@@ -247,6 +285,46 @@ try {
       if (p.ok) { checks.pushed = true; console.log(`+ pushed  ${DEFAULT_BRANCH} -> origin`) }
       else note(`push failed: ${lastLine(p.out)}`)
     }
+  } else if (deliveryMode === 'pushmr') {
+    // ---- GitLab push-option MR path (no MR API; issue #56) ----
+    // Resume: a prior run opened the MR and a human merged it on the web -> the branch is
+    // now on origin/<base>. Detect that and fall through to close + DoD (Issues-API only).
+    tryGit(['fetch', 'origin', DEFAULT_BRANCH])
+    if (tryGit(['merge-base', '--is-ancestor', BRANCH, `origin/${DEFAULT_BRANCH}`]).ok) {
+      checks.alreadyMerged = true; checks.merged = true; checks.pushed = true; checks.branchPushed = true
+      console.log(`= merged  ${BRANCH} already on origin/${DEFAULT_BRANCH} (MR merged on the web)`)
+      git(['checkout', DEFAULT_BRANCH], { stdio: ['ignore', 'pipe', 'pipe'] })
+      const ff = tryGit(['merge', '--ff-only', `origin/${DEFAULT_BRANCH}`])
+      if (!ff.ok) note(`local fast-forward failed: ${firstLine(ff.out)}`)
+    } else {
+      // open/update the MR over SSH via push options — no MR API. git forbids newlines in
+      // a push-option value, so the description is a single line carrying Closes #N (issue
+      // auto-closes on merge) + pointers; the full CLEAR verdict is posted as an ISSUE
+      // comment via the WORKING Issues API. Re-running on a branch that already has an open
+      // MR returns the existing MR URL (no duplicate). spawnSync so GitLab's "remote:"
+      // stderr lines (the MR URL) are captured even on a successful push.
+      const closes = ISSUE_ARG && Number(ISSUE_ARG) > 0 ? `Closes #${Number(ISSUE_ARG)}. ` : ''
+      const desc = `${closes}Delivered by the three-agent pipeline (ticket ${ID}); plan docs/plans/${ID}.md; Reviewer verdict CLEAR — posted as a comment on the issue.`
+      const pushArgs = ['push', '-o', 'merge_request.create', '-o', `merge_request.target=${DEFAULT_BRANCH}`,
+        '-o', `merge_request.title=${prTitle()}`, '-o', `merge_request.description=${desc}`, '-u', 'origin', BRANCH]
+      const res = spawnSync('git', pushArgs, { encoding: 'utf8' })
+      const out = (res.stdout || '') + '\n' + (res.stderr || '')
+      if (res.status !== 0 && !/merge_requests\//.test(out)) { note(`push-option MR failed: ${lastLine(out)}`); finish(0) }
+      checks.branchPushed = true
+      const m = out.match(/https?:\/\/\S*\/-\/merge_requests\/\d+/) || out.match(/merge_requests\/(\d+)/)
+      if (m) { prUrl = m[0].startsWith('http') ? m[0] : ('/-/merge_requests/' + m[1]); checks.prCreated = true; console.log(`+ mr      ${prUrl}`) }
+      else { checks.prCreated = true; note('MR opened via push option, but no MR URL appeared in the remote output') }
+      // verdict as an ISSUE comment via the Issues API (works even when the MR API is 403)
+      const vnum = ISSUE_ARG && Number(ISSUE_ARG) > 0 ? Number(ISSUE_ARG) : null
+      if (VERDICT_FILE && vnum) {
+        const vr = tryCli(['issue', 'note', String(vnum), '--message', readFileSync(VERDICT_FILE, 'utf8')])
+        if (vr.ok) { checks.verdictPosted = true; console.log(`+ comment CLEAR verdict posted to issue #${vnum}`) }
+        else note(`verdict issue-comment failed: ${firstLine(vr.out)}`)
+      } else if (VERDICT_FILE) note('verdict not posted — no --issue number to comment on')
+      awaitingMerge = true
+      console.log('= awaiting human merge on the web — no MR API to merge programmatically (issue #56)')
+      finish(0)
+    }
   } else {
     // ---- pr path ----
     // 3a. push the ticket branch so the forge has it (AC2: branch exists on remote)
@@ -258,17 +336,8 @@ try {
     let pr = findPr()
     if (pr) { checks.prExists = true; prUrl = pr.url; console.log(`= pr      exists for ${BRANCH} (#${pr.number})`) }
     else {
-      const subject = (tryGit(['log', '-1', '--format=%s', BRANCH]).out || BRANCH).trim().slice(0, 100)
-      const title = `[${ID}] ${subject}`.slice(0, 120)
-      const closes = ISSUE_ARG && Number(ISSUE_ARG) > 0 ? `Closes #${Number(ISSUE_ARG)}` : `(ticket ${ID} — issue looked up by \`[${ID}]\` title prefix)`
-      const body =
-        `## Summary\nDelivered by the three-agent pipeline for ticket [${ID}].\n\n` +
-        `## Related issue / ticket\n${closes} — ticket \`${ID}\`\n\n` +
-        `## Pipeline evidence\n` +
-        `- Plan: \`docs/plans/${ID}.md\`\n` +
-        `- Builder branch: \`${BRANCH}\` -> \`${DEFAULT_BRANCH}\`\n` +
-        `- Reviewer verdict: **CLEAR** (full text posted as a comment below)\n` +
-        `- Delivered deterministically by \`run-milestone\` / \`deliver-ticket.mjs\`\n`
+      const title = prTitle()
+      const body = buildBody() // pr mode posts the verdict as a comment, not in the body
       const tmp = mkdtempSync(join(tmpdir(), 'deliver-'))
       const bodyFile = join(tmp, 'body.md')
       writeFileSync(bodyFile, body)

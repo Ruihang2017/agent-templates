@@ -30,6 +30,13 @@ const logBody = (label, body) => {
 
 if (joined.startsWith('auth status')) process.exit(0)
 
+// simulate an org whose token has Issues API but a 403 MR API (catalog issue #56):
+// every `glab mr *` is denied, Issues verbs keep working.
+if (process.env.FAKE_GLAB_MR_API_DENIED === '1' && joined.startsWith('mr ')) {
+  console.error('403 Forbidden: insufficient scope for the merge requests API')
+  process.exit(1)
+}
+
 if (joined.startsWith('issue list')) {
   if (args.includes('--output')) { console.error('unknown flag: --output'); process.exit(1) }
   process.stdout.write(process.env.FAKE_GLAB_LIST || '')
@@ -53,6 +60,8 @@ if (joined.startsWith('issue view')) {
   console.log(closed ? `#${args[2]}: closed` : `#${args[2]}: open`)
   process.exit(0)
 }
+
+if (joined.startsWith('issue note')) { console.log(`https://gitlab.example.com/acme/repo/-/issues/${args[2]}#note_1`); process.exit(0) }
 
 // ---- MR surface ----
 if (joined.startsWith('mr list')) {
