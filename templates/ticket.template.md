@@ -1,4 +1,9 @@
-<!-- Universal ticket template — all patterns, plus the catalog repo itself.
+<!-- THIS TICKET IS THE EXECUTABLE SOURCE OF TRUTH (WHAT). Implementation plans
+     (docs/plans/<id>.md) are HOW only and must never carry spec this ticket lacks.
+     To change the spec, change THIS file (a docs PR), then re-publish the issue
+     (publish-tickets.mjs --sync) so the ticket and its issue stay identical. (issue #53)
+
+     Universal ticket template — all patterns, plus the catalog repo itself.
      Format distilled 2026-07-17 from the team's field-proven tickets: fx-eye-tracking
      discipline, realtime-pilot PIL-15, MeritAI FND-9.
      Copy to docs/prd/<NN-module>/tickets/<ID>-<slug>.md and fill every section.
