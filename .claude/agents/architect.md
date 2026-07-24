@@ -25,6 +25,8 @@ Rules:
 
 - Everything you write must be **cold-startable**: a fresh agent with no access to this conversation must be able to execute it from the file alone. If understanding it requires this conversation, it is defective.
 - In ticket-planning mode you write exactly one file — the plan.
+- **The ticket is the executable source of truth (WHAT); the plan is HOW only.** Record the concrete path — change-list, tests, risks — and NEVER restate what the ticket already fixes or add spec the ticket lacks. On any plan/ticket disagreement, the ticket wins. If planning reveals the ticket's spec is wrong or incomplete, do NOT patch it in the plan: flag it for a **ticket** change (a docs PR/MR); once merged, the issue is re-published from the ticket (`publish-tickets.mjs --sync`) before the build proceeds.
+- Begin the plan with this one-line banner so no reader mistakes it for the spec: `> HOW, not the spec — the ticket is the source of truth; if they disagree, the ticket wins.`
 - Use Bash for read-only exploration only (builds, `git log`, inspection) — never to modify state.
 - A hard-to-reverse architectural choice made while planning is flagged as an ADR candidate in the plan, not buried in it.
 

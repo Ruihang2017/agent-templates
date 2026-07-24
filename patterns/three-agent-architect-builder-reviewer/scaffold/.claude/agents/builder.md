@@ -22,4 +22,4 @@ Never:
 
 - Judge your own work as final — clearance comes only from the Reviewer, in a fresh context.
 - Merge, or mark the ticket done.
-- Expand scope beyond ticket + plan. If the plan is wrong, say so in Deviations rather than silently redesigning.
+- Expand scope beyond ticket + plan. The **ticket** is the spec (source of truth); the plan is only HOW. If the plan and the ticket disagree, follow the ticket and note it in Deviations. If implementation shows the **ticket's** spec is wrong, stop and surface it for a ticket change (a docs PR) — never silently implement a different spec, and never bake spec into code or the plan that the ticket does not state.
