@@ -28,13 +28,18 @@ const mapFile = () => {
 }
 const readMap = () => { const f = mapFile(); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : { seq: 100, prs: [] } }
 const writeMap = (m) => writeFileSync(mapFile(), JSON.stringify(m))
+// record issue bodies (create/edit) to FAKE_GH_BODY_LOG so tests can assert the rendered deps line
+const logBody = (label, body) => {
+  const f = process.env.FAKE_GH_BODY_LOG
+  if (f) writeFileSync(f, (existsSync(f) ? readFileSync(f, 'utf8') : '') + `=== ${label} ===\n` + body + '\n')
+}
 
 if (joined.startsWith('auth status')) process.exit(0)
 
 if (joined.startsWith('issue list')) { process.stdout.write(process.env.FAKE_GH_LIST || '[]'); process.exit(0) }
 
 if (joined.startsWith('issue create')) {
-  if (args.includes('--body-file')) readFileSync(0, 'utf8')
+  logBody('create', args.includes('--body-file') ? readFileSync(0, 'utf8') : '')
   if (process.env.FAKE_GH_FAIL_CREATE === '1') { console.error('GraphQL: boom (createIssue)'); process.exit(1) }
   if (process.env.FAKE_GH_FAIL_LABELS === '1' && args.includes('--label')) { console.error("could not add label: 'module:00-x' not found"); process.exit(1) }
   let n = 101
@@ -50,6 +55,12 @@ if (joined.startsWith('issue close')) {
   const st = process.env.FAKE_GH_CLOSED_STATE
   if (st) writeFileSync(st, (existsSync(st) ? readFileSync(st, 'utf8') : '') + args[2] + '\n')
   console.log(`Closed issue #${args[2]}`)
+  process.exit(0)
+}
+
+if (joined.startsWith('issue edit')) {
+  logBody('edit ' + args[2], args.includes('--body-file') ? readFileSync(0, 'utf8') : (flag('--body') || ''))
+  console.log(`https://github.com/acme/repo/issues/${args[2]}`)
   process.exit(0)
 }
 

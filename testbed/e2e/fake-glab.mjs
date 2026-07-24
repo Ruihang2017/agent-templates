@@ -23,6 +23,10 @@ const mapFile = () => {
 }
 const readMap = () => { const f = mapFile(); return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : { seq: 0, mrs: [] } }
 const writeMap = (m) => writeFileSync(mapFile(), JSON.stringify(m))
+const logBody = (label, body) => {
+  const f = process.env.FAKE_GLAB_BODY_LOG
+  if (f) writeFileSync(f, (existsSync(f) ? readFileSync(f, 'utf8') : '') + `=== ${label} ===\n` + body + '\n')
+}
 
 if (joined.startsWith('auth status')) process.exit(0)
 
@@ -32,7 +36,9 @@ if (joined.startsWith('issue list')) {
   process.exit(0)
 }
 
-if (joined.startsWith('issue create')) { console.log('https://gitlab.example.com/acme/repo/-/issues/77'); process.exit(0) }
+if (joined.startsWith('issue create')) { logBody('create', flag('--description')); console.log('https://gitlab.example.com/acme/repo/-/issues/77'); process.exit(0) }
+
+if (joined.startsWith('issue update')) { logBody('update ' + args[2], flag('--description')); console.log(`Updated issue #${args[2]}`); process.exit(0) }
 
 if (joined.startsWith('issue close')) {
   const st = process.env.FAKE_GLAB_CLOSED_STATE

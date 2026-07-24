@@ -9,11 +9,17 @@
 //
 //   <module-dir>   e.g. docs/prd/01-foo — scans <module-dir>/tickets/*.md
 //   --create       actually create issues (default: dry-run preview)
+//   --sync         with --create, also regenerate EXISTING issue bodies from their ticket
+//                  (backfills the dependency line onto historical issues, and is the
+//                  "ticket changed -> update the issue" step: edit the ticket via a docs
+//                  PR, re-run with --sync, then execute — issue #53's ticket-is-source rule)
 //   --platform     tracker CLI; default: autodetect from the origin remote host
 //
 // Mapping (one issue per ticket file):
 //   title  = "[<id>] <title>"            <- the [<id>] prefix is the idempotency key
-//   body   = file content minus frontmatter (the ticket FILE stays the content source of truth)
+//   body   = a dependency line (Blocked by #N · Blocks #M, resolved to issue NUMBERS so
+//            the DAG is visible on the board — issue #52) + the ticket content minus
+//            frontmatter (the ticket FILE stays the content source of truth)
 //   labels = module:<module>, size:<size>, agent:<agent> (each only if present)
 //
 // Idempotency: the existing-issue list is fetched ONCE per run (list endpoints are
@@ -33,6 +39,7 @@ import { join } from 'node:path'
 
 const argv = process.argv.slice(2)
 const CREATE = argv.includes('--create')
+const SYNC = argv.includes('--sync') // also regenerate existing issue bodies from their ticket
 
 const platformIx = argv.indexOf('--platform')
 let PLATFORM = ''
@@ -131,6 +138,14 @@ if (CREATE && existingIssues === null) {
   console.error('x could not fetch the existing-issue list — refusing to create without a reliable existence check.')
   process.exit(1)
 }
+
+// id -> issue number, seeded from existing issues' "[<id>]" title prefix and grown as we
+// create this run — so the dependency line resolves ticket ids to real issue #numbers.
+const idToNum = new Map()
+for (const i of existingIssues || []) {
+  const m = String(i.title).match(/^\[([^\]]+)\]/)
+  if (m) idToNum.set(m[1], i.number)
+}
 // Returns an issue number, null (not found), or 'ambiguous' (mentions of "[<id>]"
 // exist but none is a clean title prefix — creating would risk a duplicate, guessing
 // would risk closing the wrong issue later, so the ticket is skipped with an error).
@@ -152,6 +167,26 @@ const field = (fm, name) => {
   const v = m[1].trim()
   const stripped = v.replace(/^(['"])(.*)\1$/s, '$2')
   return stripped === v ? v : stripped.replace(/\\"/g, '"')
+}
+
+const listField = (fm, name) =>
+  field(fm, name).replace(/^\[/, '').replace(/\]$/, '').split(',').map((s) => s.trim()).filter(Boolean)
+
+// The dependency line rendered at the top of the issue body — resolved to issue NUMBERS
+// (issue #52: the DAG must be visible to a human on the board, not just to milestone-dag).
+// A dep not yet published resolves to `id` (pending); a later --sync backfills it.
+const renderDeps = (blockedBy, blocks) => {
+  const ref = (id) => (idToNum.has(id) ? '#' + idToNum.get(id) : '`' + id + '` (pending)')
+  const parts = []
+  if (blockedBy.length) parts.push('**Blocked by:** ' + blockedBy.map(ref).join(', '))
+  if (blocks.length) parts.push('**Blocks:** ' + blocks.map(ref).join(', '))
+  if (!parts.length) return ''
+  return '> ' + parts.join(' · ') + '\n>\n> _dependency graph — auto-rendered from the ticket frontmatter (issue #52)_\n\n'
+}
+
+const updateBody = (num, body) => {
+  if (PLATFORM === 'gh') return cli('gh', ['issue', 'edit', String(num), '--body-file', '-'], { input: body }).trim()
+  return cli('glab', ['issue', 'update', String(num), '--description', body]).trim()
 }
 
 const createIssue = (issueTitle, body, labels) => {
@@ -178,6 +213,7 @@ const summary = []
 const seenIds = new Set()
 let created = 0
 let skipped = 0
+let synced = 0
 let planned = 0
 let invalid = 0
 let createFailed = 0
@@ -211,6 +247,7 @@ for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort())
 
   const issueTitle = `[${id}] ${title}`
   const body = text.slice(fmMatch[0].length).trimStart()
+  const fullBody = renderDeps(listField(fm, 'blocked_by'), listField(fm, 'blocks')) + body
   const labels = [
     field(fm, 'module') && `module:${field(fm, 'module')}`,
     field(fm, 'size') && `size:${field(fm, 'size')}`,
@@ -225,7 +262,19 @@ for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort())
     continue
   }
   if (existing) {
-    console.log(`= skip ${id}: issue #${existing} already exists`)
+    if (CREATE && SYNC) {
+      try {
+        updateBody(existing, fullBody)
+        console.log(`~ synced ${id}: issue #${existing} body regenerated from the ticket`)
+        summary.push({ id, path, title: issueTitle, issue: existing, synced: true })
+        synced++
+      } catch (e) {
+        console.error(`  (warn) sync failed for ${id} (#${existing}): ${String(e && e.message ? e.message : e).split('\n')[0]}`)
+        summary.push({ id, path, title: issueTitle, issue: existing, error: 'sync-failed' })
+      }
+      continue
+    }
+    console.log(`= skip ${id}: issue #${existing} already exists${SYNC ? ' (dry-run: would --sync its body)' : ''}`)
     summary.push({ id, path, title: issueTitle, issue: existing })
     skipped++
     continue
@@ -239,11 +288,12 @@ for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort())
   }
 
   try {
-    const out = createIssue(issueTitle, body, labels)
+    const out = createIssue(issueTitle, fullBody, labels)
     const lastLine = out.split('\n').filter(Boolean).pop() || ''
     const num = (lastLine.match(/\/issues\/(\d+)\s*$/) || out.match(/#(\d+)/) || [])[1]
     console.log(`+ created ${id}: ${lastLine}`)
     summary.push({ id, path, title: issueTitle, issue: num ? Number(num) : null })
+    if (num) idToNum.set(id, Number(num)) // so a later same-run ticket's dep line resolves
     created++
   } catch (e) {
     const msg = String(e && e.message ? e.message : e).split('\n')[0]
@@ -254,9 +304,10 @@ for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort())
 }
 
 const invalidNote = invalid ? `, invalid: ${invalid}` : ''
+const syncNote = synced ? `, synced: ${synced}` : ''
 console.log(
   CREATE
-    ? `CREATED: ${created}, already existed: ${skipped}, failed: ${createFailed}${invalidNote}.`
+    ? `CREATED: ${created}, already existed: ${skipped}, failed: ${createFailed}${syncNote}${invalidNote}.`
     : `DRY-RUN: ${planned} would be created, ${skipped} already exist${invalidNote}. Re-run with --create after Gate 1 sign-off.`
 )
 console.log('PUBLISH-SUMMARY-JSON: ' + JSON.stringify(summary))
