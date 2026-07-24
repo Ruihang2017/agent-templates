@@ -4,7 +4,7 @@
 // deterministic DoD combination (catalog issue #26).
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,7 +23,7 @@ const cleanup = (root) => {
   try { rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) } catch {}
 }
 
-function makeRepo({ withOrigin = true, withPlan = true } = {}) {
+function makeRepo({ withOrigin = true, withPlan = true, pushOptionMr = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'e2e-deliver-'))
   const repo = join(root, 'repo')
   mkdirSync(repo)
@@ -41,6 +41,14 @@ function makeRepo({ withOrigin = true, withPlan = true } = {}) {
   if (withOrigin) {
     const origin = join(root, 'origin.git')
     execFileSync('git', ['init', '-q', '--bare', origin], { encoding: 'utf8' })
+    if (pushOptionMr) {
+      // emulate GitLab: advertise push options + a pre-receive hook that prints the MR
+      // URL (relayed to the client as "remote:" lines) when push options are present.
+      execFileSync('git', ['-C', origin, 'config', 'receive.advertisePushOptions', 'true'], { encoding: 'utf8' })
+      const hook = join(origin, 'hooks', 'pre-receive')
+      writeFileSync(hook, '#!/bin/sh\ncat >/dev/null\nif [ "${GIT_PUSH_OPTION_COUNT:-0}" -gt 0 ]; then\n  echo "To create a merge request for this branch, visit:"\n  echo "  https://gitlab.example.com/acme/repo/-/merge_requests/42"\nfi\nexit 0\n')
+      chmodSync(hook, 0o755)
+    }
     git(repo, ['remote', 'add', 'origin', origin])
     git(repo, ['push', '-q', '-u', 'origin', 'main'])
   }
@@ -323,6 +331,37 @@ export async function run() {
     try {
       const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--no-merge'])
       check(S, 'P7 no-forge supervised leaves branch (awaitingMerge, direct)', sum && sum.deliveryMode === 'direct' && sum.awaitingMerge && !sum.merged && !sum.issueClosed, sum && sum.notes)
+    } finally {
+      cleanup(root)
+    }
+  }
+
+  // P11: GitLab push-option MR — MR API 403 + protected default branch (issue #56).
+  // auto-detects pushmr, opens the MR over SSH (scraping the URL from push output),
+  // stops for a human web-merge, then RESUMES to deliver via the working Issues API.
+  {
+    const { root, repo } = makeRepo({ pushOptionMr: true })
+    try {
+      const closed = join(root, 'closed.txt')
+      const vf = join(root, 'verdict.md'); writeFileSync(vf, 'CLEAR — SENTINEL_PUSHMR verdict, in the MR body.\n')
+      const A = ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--platform', 'glab', '--verdict-file', vf]
+      const env = { FAKE_GLAB_CLOSED_STATE: closed, FAKE_GLAB_MR_API_DENIED: '1' }
+
+      const open = deliver(repo, A, env)
+      eq(S, 'P11 open exit 0', open.r.status, 0)
+      check(S, 'P11 auto-detected pushmr (MR API 403)', open.sum && open.sum.deliveryMode === 'pushmr', open.sum && open.sum.notes)
+      check(S, 'P11 branch pushed + MR opened, awaiting web merge, not delivered', open.sum && open.sum.checks.branchPushed && open.sum.checks.prCreated && open.sum.awaitingMerge && !open.sum.merged && !open.sum.issueClosed, open.sum && open.sum.notes)
+      check(S, 'P11 verdict posted as an issue comment (Issues API, MR API blocked)', open.sum && open.sum.checks.verdictPosted, open.sum && open.sum.notes)
+      check(S, 'P11 MR url scraped from the push output', open.sum && /merge_requests\/42/.test(open.sum.prUrl), open.sum && open.sum.prUrl)
+      check(S, 'P11 issue left open for the human', !existsSync(closed))
+      check(S, 'P11 ticket branch on origin', /ticket\/T-01/.test(execFileSync('git', ['-C', join(root, 'origin.git'), 'branch', '--list', 'ticket/T-01'], { encoding: 'utf8' })))
+
+      // human merges the MR on the web -> land the branch on origin/main
+      git(repo, ['merge', '--no-ff', '--no-edit', '-m', 'web merge !42', 'ticket/T-01'])
+      git(repo, ['push', 'origin', 'main'])
+      const done = deliver(repo, A, env)
+      eq(S, 'P11 resume exit 0', done.r.status, 0)
+      check(S, 'P11 resume detects the web merge and delivers via the Issues API', done.sum && done.sum.checks.alreadyMerged && done.sum.merged && done.sum.issueClosed && done.sum.dodPassed, done.sum && done.sum.notes)
     } finally {
       cleanup(root)
     }
