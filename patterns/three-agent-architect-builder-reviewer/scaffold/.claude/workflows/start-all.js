@@ -26,9 +26,12 @@ export const meta = {
 
 // args may arrive as a JSON string depending on the harness (catalog issue #23)
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : (args || {})
-const cfg = Object.assign({ defaultBranch: 'main', platform: 'gh' }, parsedArgs)
+const cfg = Object.assign({ defaultBranch: 'main', platform: 'gh', concurrency: 1 }, parsedArgs)
 if (!Array.isArray(cfg.modules) || cfg.modules.length === 0) {
   throw new Error('args.modules must be a non-empty array of {name, dependsOn, tickets}')
+}
+if (!Number.isInteger(cfg.concurrency) || cfg.concurrency < 1) {
+  throw new Error('args.concurrency must be an integer >= 1')
 }
 for (const m of cfg.modules) {
   if (!m || typeof m.name !== 'string' || !m.name || !Array.isArray(m.tickets) || !Array.isArray(m.dependsOn || [])) {
@@ -79,6 +82,7 @@ for (const m of cfg.modules) {
       mode: cfg.mode,
       defaultBranch: cfg.defaultBranch,
       platform: cfg.platform,
+      concurrency: cfg.concurrency, // ticket-level parallelism WITHIN each module (modules stay sequential)
       ...(cfg.testCmd ? { testCmd: cfg.testCmd } : {}),
     })
   } catch (e) {
