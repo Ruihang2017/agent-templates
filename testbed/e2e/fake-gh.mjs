@@ -82,7 +82,7 @@ if (joined.startsWith('pr list')) {
 }
 
 if (joined.startsWith('pr create')) {
-  if (args.includes('--body-file')) { const f = flag('--body-file'); if (f && existsSync(f)) readFileSync(f, 'utf8') }
+  if (args.includes('--body-file')) { const f = flag('--body-file'); if (f && existsSync(f)) logBody('pr-create', readFileSync(f, 'utf8')) }
   const m = readMap()
   const number = ++m.seq
   const url = `https://github.com/acme/repo/pull/${number}`

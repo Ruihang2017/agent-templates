@@ -390,4 +390,58 @@ export async function run() {
       cleanup(root)
     }
   }
+
+  // P12: PR/MR body resolution (issue #58) — --body-file > repo template > hardcoded fallback
+  // P12a: a pre-composed --body-file is used verbatim as the PR body
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt'); const log = join(root, 'ghbody.txt')
+      const bf = join(root, 'mybody.md'); writeFileSync(bf, '## Custom\nSENTINEL_BODYFILE agent-composed.\nCloses #7\n')
+      const { r } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--body-file', bf], { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_BODY_LOG: log })
+      eq(S, 'P12a exit 0', r.status, 0)
+      check(S, 'P12a --body-file used verbatim as the PR body', existsSync(log) && /SENTINEL_BODYFILE/.test(readFileSync(log, 'utf8')), existsSync(log) ? readFileSync(log, 'utf8').slice(0, 200) : 'no log')
+    } finally { cleanup(root) }
+  }
+
+  // P12b: the repo's own MR/PR template is the skeleton when no --body-file; Closes #N ensured
+  {
+    const { root, repo } = makeRepo()
+    try {
+      mkdirSync(join(repo, '.github'), { recursive: true })
+      writeFileSync(join(repo, '.github', 'pull_request_template.md'), '## Summary\n\n## Constraint check\nSENTINEL_TEMPLATE non-negotiables.\n\n## Related\n')
+      git(repo, ['add', '.github/pull_request_template.md'])
+      git(repo, ['commit', '-q', '-m', 'chore: PR template'])
+      const closed = join(root, 'closed.txt'); const log = join(root, 'ghbody.txt')
+      const { r } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'], { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_BODY_LOG: log })
+      eq(S, 'P12b exit 0', r.status, 0)
+      const body = existsSync(log) ? readFileSync(log, 'utf8') : ''
+      check(S, 'P12b PR body uses the repo template', /SENTINEL_TEMPLATE/.test(body), body.slice(0, 200))
+      check(S, 'P12b Closes #7 ensured (under Related)', /Closes #7/.test(body))
+    } finally { cleanup(root) }
+  }
+
+  // P12c: hardcoded fallback when there is neither a --body-file nor a repo template
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt'); const log = join(root, 'ghbody.txt')
+      deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'], { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_BODY_LOG: log })
+      const body = existsSync(log) ? readFileSync(log, 'utf8') : ''
+      check(S, 'P12c hardcoded fallback body when no template/body-file', /## Summary/.test(body) && /Pipeline evidence/.test(body), body.slice(0, 200))
+    } finally { cleanup(root) }
+  }
+
+  // P13: an untracked docs/plans/*.md (the Architect's ephemeral plan) must not trip the
+  // clean-tree guard and block delivery (issue #58; the user had to move it by hand)
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      writeFileSync(join(repo, 'docs', 'plans', 'EXTRA.md'), 'untracked scratch plan\n')
+      const { r, sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--delivery', 'direct'], { FAKE_GH_CLOSED_STATE: closed })
+      eq(S, 'P13 exit 0', r.status, 0)
+      check(S, 'P13 untracked docs/plans file does not block delivery', sum && sum.merged && sum.dodPassed, sum && sum.notes)
+    } finally { cleanup(root) }
+  }
 }

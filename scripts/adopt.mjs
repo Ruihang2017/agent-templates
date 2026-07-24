@@ -12,7 +12,7 @@
 //   docs/prd/ docs/adr/ docs/plans/   the docs skeleton the pipeline assumes
 //   CLAUDE.md                created from the snippet, or snippet appended once (marker-checked)
 //   .gitattributes           eol=lf rules for scaffold runtime files, appended once (marker-checked)
-//   .gitignore               .claude/tmp/ scratch + allow-main-writes, appended once (marker-checked)
+//   .gitignore               .claude/tmp/ scratch + allow-main-writes + docs/plans/*.md, appended once (marker-checked)
 //
 // Idempotent: re-running skips everything that exists (--force overwrites files, never
 // re-appends the snippet). Exit 0 = installed/verified; exit 1 = bad invocation.
@@ -271,7 +271,10 @@ if (!existsSync(gaPath)) {
 // also ignores it) nor ever be committed (catalog issue #50). Same for the write-guard
 // override sentinel.
 const GI_MARKER = '# agent-templates: ephemeral pipeline scratch'
-const GI_RULES = `${GI_MARKER}\n.claude/tmp/\n.claude/allow-main-writes\n`
+// docs/plans/*.md: the Architect's HOW plan is ephemeral (the ticket is the source of
+// truth, #53) and only needs to EXIST on disk for the DoD, not be committed — ignoring it
+// keeps untracked plans from tripping deliver's clean-tree check (#58). .gitkeep stays tracked.
+const GI_RULES = `${GI_MARKER}\n.claude/tmp/\n.claude/allow-main-writes\ndocs/plans/*.md\n`
 const giPath = join(target, '.gitignore')
 if (!existsSync(giPath)) {
   writeFileSync(giPath, GI_RULES)
