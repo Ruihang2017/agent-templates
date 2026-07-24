@@ -64,6 +64,8 @@ export async function run() {
     check(S, 'shows pinned models from README §3', html.includes('Claude Sonnet 5') && html.includes('Claude Opus 4.8') && html.includes('Claude Fable 5'))
     check(S, 'live-version fallback from package.json', /data-npm-version>v\d+\.\d+\.\d+/.test(html))
     check(S, 'registry live-fetch present', html.includes('registry.npmjs.org/agent-templates'))
+    // issue #62: the parallel-lanes feature is surfaced on the site
+    check(S, 'shows the parallel-delivery section', /Parallel delivery/i.test(html) && html.includes('concurrency') && html.includes('/start-all autonomous 4'))
     check(S, 'no unescaped template failure', !html.includes('undefined') && !html.includes('[object Object]'))
 
     // clay restyle contract (issue #19)
