@@ -41,13 +41,33 @@ Installed into your project by `adopt`; run them in Claude Code. Full list is ge
 | Command | Argument | What it does |
 |---|---|---|
 | `/breakdown-prd` | `[focus notes]` | Decompose `docs/PRD.md` into sub-PRDs + template-compliant tickets (pre-Gate-1 planning). |
-| `/start-milestone` | `<module dir> [supervised\|autonomous]` | Gate 1 for one module — publish its tickets as tracker issues, then run the milestone pipeline. |
-| `/start-all` | `[supervised\|autonomous]` | Gate 1 for the **whole PRD** — compute the module DAG, publish every module, run all modules in dependency order. |
+| `/start-milestone` | `<module dir> [supervised\|autonomous] [concurrency]` | Gate 1 for one module — publish its tickets as tracker issues, then run the milestone pipeline (parallel lanes when `concurrency > 1`). |
+| `/start-all` | `[supervised\|autonomous] [concurrency]` | Gate 1 for the **whole PRD** — compute the module DAG, publish every module, run all modules in dependency order. |
 | `/plan-ticket` | `<ticket-id>` | Architect stage on a ticket. |
 | `/build-ticket` | `<ticket-id>` | Builder stage on a planned ticket. |
 | `/review-ticket` | `<ticket-id> [ref]` | Reviewer stage on a built ticket (fresh context required). |
 | `/verify-delivery` | `<ticket-id>` | Post-merge Definition-of-Done check — verifies delivery instead of assuming it. |
 | `/nightly-issues` | `[max-issues]` | Unattended sweep — triage open issues, auto-fix the fixable ones through the pipeline, post a morning report (headless `claude -p`). |
+
+### Parallel delivery (opt-in)
+
+`/start-milestone` and `/start-all` take an optional **`concurrency`** (default `1`). One number decides the shape:
+
+- **`1` (default)** — sequential: one ticket at a time (plan → build → review → deliver). The original behaviour, unchanged.
+- **`N` (autonomous only)** — independent (non-blocking) tickets run **concurrently**, scheduled from the ticket dependency DAG by the deterministic workflow (not ad-hoc main-session juggling).
+
+```
+/start-milestone docs/prd/01-foundation autonomous 4   # up to 4 parallel lanes within the module
+/start-all autonomous 4                                # parallel within each module; modules stay sequential in DAG order
+```
+
+How a parallel run stays correct:
+
+- Each independent ticket runs in its **own isolated git worktree** — builder and reviewer work there (the reviewer detached-checkouts the builder's commit), so concurrent lanes never clash on the working tree. The Architect writes the plan on the main tree and its content is passed to the isolated builder (a worktree can't see the git-ignored plan).
+- **Deliver is serialized** — merges to the default branch never overlap; a hidden file-scope overlap surfaces as a merge conflict → abort → escalate, so nothing lands broken.
+- A failed ticket **cascades to skip its dependents**; an impossible dependency (a cycle) fails loudly instead of hanging. `supervised` is forced to `1` (it opens a PR and waits for a human merge).
+
+Two honest limits: `concurrency > 1` **multiplies concurrent token spend** (opt in per run), and real parallelism is **bounded by the DAG** — a deep dependency chain can't parallelize, a wide fan-out can — and by the harness's `min(16, cores − 2)` concurrent-agent cap. The design was validated by a sandbox git experiment before it shipped.
 
 - **Applying a pattern to your project** (new — even a bare `PRD.md` — or existing): [ADOPTING.md](ADOPTING.md) — one command: `node scripts/adopt.mjs <pattern> <target-dir>`
 - Operating manual, pattern schema, grounding rules: [CLAUDE.md](CLAUDE.md)

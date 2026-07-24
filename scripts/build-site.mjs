@@ -369,6 +369,20 @@ const html = `<!doctype html>
     </div>
   </section>
 
+  <section>
+    <div class="sec-head"><span style="display:inline-flex;gap:3px;align-items:flex-end;height:18px;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="width:5px;height:11px;border-radius:2.5px;background:#9ed095"></span><span style="width:5px;height:18px;border-radius:2.5px;background:#f6a5bb"></span><span style="width:5px;height:8px;border-radius:2.5px;background:#b3cdf0"></span></span><h2>Parallel delivery — opt in with one number</h2></div>
+    <div class="fact" style="margin-bottom:15px">
+      <div class="fact-ico" style="background:#f4cd6d;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(180,120,20,0.25)"><span style="display:flex;gap:2px;align-items:flex-end"><span style="width:3px;height:8px;border-radius:1.5px;background:#7a5a15"></span><span style="width:3px;height:14px;border-radius:1.5px;background:#7a5a15"></span><span style="width:3px;height:11px;border-radius:1.5px;background:#7a5a15"></span></span></div>
+      <p><b>concurrency</b> — one number decides the shape. <b>1 (default)</b> is the original sequential runner, one ticket at a time, unchanged. <b>N</b> (autonomous only) runs independent tickets — the ones the dependency DAG says don't block each other — as parallel lanes, scheduled by the deterministic workflow.<br>
+      <code style="font-family:var(--mono);font-size:12px;color:var(--code)">/start-milestone docs/prd/01-foundation autonomous 4</code> &nbsp; <code style="font-family:var(--mono);font-size:12px;color:var(--code)">/start-all autonomous 4</code></p>
+    </div>
+    <div class="steps">
+      <div class="step"><span class="step-ico" style="background:#9ed095;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(30,90,40,0.2)"><span style="display:flex;gap:2.5px;align-items:flex-end"><span style="width:3.5px;height:9px;border-radius:2px;background:#fffaf2"></span><span style="width:3.5px;height:15px;border-radius:2px;background:#fffaf2"></span><span style="width:3.5px;height:11px;border-radius:2px;background:#fffaf2"></span></span></span><h3>Isolated worktrees</h3><p>Each independent ticket runs in its own git worktree — builder and reviewer work there, so concurrent lanes never clash on the working tree.</p></div>
+      <div class="step"><span class="step-ico" style="background:#f6a5bb;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(170,30,80,0.2)"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:3.5px;top:1px;width:9px;height:9px;border:2.5px solid #fffaf2;border-bottom:0;border-radius:5px 5px 0 0;box-sizing:border-box"></span><span style="position:absolute;left:1px;bottom:1px;width:14px;height:9px;border-radius:3px;background:#fffaf2"></span></span></span><h3>Serialized merge</h3><p>Delivery to the default branch never overlaps; a hidden file-scope overlap surfaces as a merge conflict → abort → escalate, so nothing lands broken.</p></div>
+      <div class="step"><span class="step-ico" style="background:#b3cdf0;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(40,80,150,0.22)"><span class="gx" style="width:18px;height:16px"><span style="position:absolute;left:6px;top:0;width:6px;height:6px;border-radius:50%;background:#fffaf2"></span><span style="position:absolute;left:0;bottom:1px;width:6px;height:6px;border-radius:50%;background:#fffaf2"></span><span style="position:absolute;right:0;bottom:1px;width:6px;height:6px;border-radius:50%;background:#fffaf2"></span></span></span><h3>DAG-bounded, opt-in</h3><p>A failed ticket skips its dependents; real parallelism is bounded by the dependency graph and the runtime's agent cap. <code>&gt;1</code> multiplies token spend — opt in per run.</p></div>
+    </div>
+  </section>
+
   <footer>
     Generated from the pattern catalog by <a href="${GITHUB}/blob/main/scripts/build-site.mjs"><code>scripts/build-site.mjs</code></a>
     · ${new Date().toISOString().slice(0, 10)} · <a href="${GITHUB}/blob/main/LICENSE">MIT</a>
