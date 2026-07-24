@@ -71,6 +71,10 @@ export async function run() {
     // issue #26: delivery is a deterministic script; the agent only executes it
     const dcall = calls.find((c) => kind(c.label) === 'deliver')
     check(S, 'S1 deliver prompt invokes deliver-ticket.mjs with exact args', !!dcall && dcall.prompt.includes('node .claude/scripts/deliver-ticket.mjs --id T-01 --branch ticket/T-01 --default-branch main --platform gh --issue 1'))
+    // issue #50: the verdict is forwarded to the script (for the PR/MR comment); autonomous never passes --no-merge
+    check(S, 'S1 deliver forwards the verdict file', !!dcall && dcall.prompt.includes('--verdict-file .claude/tmp/T-01-verdict.md'))
+    check(S, 'S1 deliver instructs writing the verdict verbatim', !!dcall && dcall.prompt.includes('VERBATIM'))
+    check(S, 'S1 autonomous deliver does NOT pass --no-merge', !!dcall && !dcall.prompt.includes('--no-merge'))
   }
 
   // S2: bounce once, then clear; fix prompt carries findings + no-merge guard
@@ -138,19 +142,23 @@ export async function run() {
     check(S, 'S5 detail names the false flags', r0 && /merged/.test(r0.detail) && /issueClosed/.test(r0.detail))
   }
 
-  // S6: supervised stops the run after the first CLEAR
+  // S6: supervised opens a PR/MR (deliver --no-merge) then stops the run (issue #50)
   {
     const { result, calls, error } = await runWorkflow({ ...baseArgs, mode: 'supervised' }, ({ label }) => {
       if (kind(label) === 'plan') return plan(tid(label))
       if (kind(label) === 'build') return goodBuild(tid(label))
       if (kind(label) === 'review') return CLEAR
+      if (kind(label) === 'deliver') return { merged: false, issueClosed: false, dodPassed: false, awaitingMerge: true, prUrl: 'https://github.com/acme/repo/pull/7' }
       return null
     })
     check(S, 'S6 no error', !error, error && error.message)
     const r0 = result && result.results[0]
     eq(S, 'S6 awaiting-human-merge', r0 && r0.status, 'awaiting-human-merge')
+    eq(S, 'S6 prUrl passed through to the report', r0 && r0.prUrl, 'https://github.com/acme/repo/pull/7')
     eq(S, 'S6 run stopped (ticket 2 unstarted)', result && result.notStarted, 1)
-    eq(S, 'S6 no deliver call in supervised', calls.filter((c) => kind(c.label) === 'deliver').length, 0)
+    const dcalls = calls.filter((c) => kind(c.label) === 'deliver')
+    eq(S, 'S6 supervised calls deliver exactly once', dcalls.length, 1)
+    check(S, 'S6 supervised deliver passes --no-merge', dcalls[0] && dcalls[0].prompt.includes('--no-merge'))
   }
 
   // S7: builder on the wrong branch = builder failure

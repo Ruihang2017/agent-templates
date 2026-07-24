@@ -12,6 +12,7 @@
 //   docs/prd/ docs/adr/ docs/plans/   the docs skeleton the pipeline assumes
 //   CLAUDE.md                created from the snippet, or snippet appended once (marker-checked)
 //   .gitattributes           eol=lf rules for scaffold runtime files, appended once (marker-checked)
+//   .gitignore               .claude/tmp/ scratch + allow-main-writes, appended once (marker-checked)
 //
 // Idempotent: re-running skips everything that exists (--force overwrites files, never
 // re-appends the snippet). Exit 0 = installed/verified; exit 1 = bad invocation.
@@ -262,6 +263,26 @@ if (!existsSync(gaPath)) {
   installed++
 } else {
   console.log('= exists  .gitattributes (eol=lf rules already present)')
+  skipped++
+}
+
+// 8. .gitignore: the deliver step stages the Reviewer's verdict under .claude/tmp/ for
+// --verdict-file; that ephemeral scratch must not read as a dirty tree (deliver-ticket
+// also ignores it) nor ever be committed (catalog issue #50). Same for the write-guard
+// override sentinel.
+const GI_MARKER = '# agent-templates: ephemeral pipeline scratch'
+const GI_RULES = `${GI_MARKER}\n.claude/tmp/\n.claude/allow-main-writes\n`
+const giPath = join(target, '.gitignore')
+if (!existsSync(giPath)) {
+  writeFileSync(giPath, GI_RULES)
+  console.log('+ install .gitignore (.claude/tmp/ scratch)')
+  installed++
+} else if (!readFileSync(giPath, 'utf8').includes(GI_MARKER)) {
+  writeFileSync(giPath, readFileSync(giPath, 'utf8').trimEnd() + '\n\n' + GI_RULES)
+  console.log('+ append  .gitignore (.claude/tmp/ scratch)')
+  installed++
+} else {
+  console.log('= exists  .gitignore (pipeline scratch rules already present)')
   skipped++
 }
 

@@ -4,7 +4,7 @@
 // deterministic DoD combination (catalog issue #26).
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -62,7 +62,9 @@ function deliver(repo, args, env = {}) {
   return { r, sum: line ? JSON.parse(line.slice('DELIVER-SUMMARY-JSON: '.length)) : null }
 }
 
-const BASE_ARGS = ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7']
+// D-series exercises the DIRECT (no-forge) fallback path explicitly; the PR path is
+// the default via auto-detect and is covered by the P-series below.
+const BASE_ARGS = ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--delivery', 'direct']
 
 export async function run() {
   // D1: happy path (gh) — no-ff merge, push to origin, verified close, DoD green
@@ -91,7 +93,7 @@ export async function run() {
     const { root, repo } = makeRepo()
     try {
       const closed = join(root, 'closed.txt')
-      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01'], {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--delivery', 'direct'], {
         FAKE_GH_CLOSED_STATE: closed,
         FAKE_GH_LIST: JSON.stringify([{ number: 42, title: '[T-01] feature' }, { number: 43, title: '[T-02] other' }]),
       })
@@ -223,6 +225,128 @@ export async function run() {
       check(S, 'D10 failing test-cmd -> dod red', bad.sum && bad.sum.merged && bad.sum.checks.testsPassed === false && !bad.sum.dodPassed)
       const good = deliver(repo, [...BASE_ARGS, '--test-cmd', 'node -e "process.exit(0)"'], { FAKE_GH_CLOSED_STATE: closed })
       check(S, 'D10 passing test-cmd -> dod green', good.sum && good.sum.checks.testsPassed === true && good.sum.dodPassed, good.sum && good.sum.notes)
+    } finally {
+      cleanup(root)
+    }
+  }
+
+  // ---- PR mode (issue #50): default via auto-detect (origin + authenticated forge) ----
+  const originBranch = (root, br) => execFileSync('git', ['-C', join(root, 'origin.git'), 'branch', '--list', br], { encoding: 'utf8' })
+  const prState = (repo) => JSON.parse(readFileSync(join(repo, '.git', 'fake-pr.json'), 'utf8'))
+
+  // P1: gh PR path — branch pushed, PR opened, CLEAR verdict comment, forge-merge, close, DoD.
+  // P2: idempotent re-run recognizes the landed merge and opens no second PR.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      const vf = join(root, 'verdict.md')
+      writeFileSync(vf, 'CLEAR — SENTINEL_VERDICT: checked edge cases and concurrency.\n')
+      const A = ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--verdict-file', vf]
+      const { r, sum } = deliver(repo, A, { FAKE_GH_CLOSED_STATE: closed })
+      eq(S, 'P1 exit 0', r.status, 0)
+      check(S, 'P1 delivery mode = pr', sum && sum.deliveryMode === 'pr', sum && sum.notes)
+      check(S, 'P1 branch pushed + PR created + verdict posted', sum && sum.checks.branchPushed && sum.checks.prCreated && sum.checks.verdictPosted, sum && sum.notes)
+      check(S, 'P1 merged + issueClosed + dodPassed', sum && sum.merged && sum.issueClosed && sum.dodPassed, sum && sum.notes)
+      check(S, 'P1 prUrl is a PR url', sum && /\/pull\/\d+$/.test(sum.prUrl), sum && sum.prUrl)
+      check(S, 'P1 ticket branch exists on origin (AC2)', /ticket\/T-01/.test(originBranch(root, 'ticket/T-01')))
+      eq(S, 'P1 local main == origin main (forge-merge synced)', git(repo, ['rev-parse', 'HEAD']).trim(), execFileSync('git', ['-C', join(root, 'origin.git'), 'rev-parse', 'main'], { encoding: 'utf8' }).trim())
+      check(S, 'P1 CLEAR verdict is a PR comment (AC1)', prState(repo).prs.some((p) => p.comments.some((c) => c.includes('SENTINEL_VERDICT'))))
+
+      const again = deliver(repo, A, { FAKE_GH_CLOSED_STATE: closed })
+      eq(S, 'P2 re-run exit 0', again.r.status, 0)
+      check(S, 'P2 alreadyMerged + still green', again.sum && again.sum.checks.alreadyMerged && again.sum.merged && again.sum.dodPassed, again.sum && again.sum.notes)
+      eq(S, 'P2 no duplicate PR opened', prState(repo).prs.length, 1)
+    } finally {
+      cleanup(root)
+    }
+  }
+
+  // P3: supervised --no-merge — PR opened + verdict comment, NOT merged, issue NOT closed
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      const vf = join(root, 'verdict.md'); writeFileSync(vf, 'CLEAR review.\n')
+      const { r, sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--verdict-file', vf, '--no-merge'], { FAKE_GH_CLOSED_STATE: closed })
+      eq(S, 'P3 exit 0', r.status, 0)
+      check(S, 'P3 awaitingMerge + PR created, not merged/closed/dod', sum && sum.awaitingMerge && sum.checks.prCreated && !sum.merged && !sum.issueClosed && !sum.dodPassed, sum && sum.notes)
+      check(S, 'P3 issue left open for the human', !existsSync(closed))
+      check(S, 'P3 branch pushed for review', /ticket\/T-01/.test(originBranch(root, 'ticket/T-01')))
+    } finally {
+      cleanup(root)
+    }
+  }
+
+  // P4: forge merge blocked (a required check unmet) — not merged, not delivered, close skipped
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      const vf = join(root, 'verdict.md'); writeFileSync(vf, 'CLEAR.\n')
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--verdict-file', vf], { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_MERGE_BLOCKED: '1' })
+      check(S, 'P4 blocked merge -> not merged/delivered, close skipped', sum && !sum.merged && !sum.dodPassed && !sum.issueClosed && !existsSync(closed), sum && sum.notes)
+    } finally {
+      cleanup(root)
+    }
+  }
+
+  // P5: glab MR path happy
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      const vf = join(root, 'verdict.md'); writeFileSync(vf, 'CLEAR — glab.\n')
+      const { r, sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--platform', 'glab', '--verdict-file', vf], { FAKE_GLAB_CLOSED_STATE: closed })
+      eq(S, 'P5 exit 0', r.status, 0)
+      check(S, 'P5 glab pr mode green', sum && sum.deliveryMode === 'pr' && sum.merged && sum.issueClosed && sum.dodPassed, sum && sum.notes)
+      check(S, 'P5 MR url', sum && /merge_requests\/\d+$/.test(sum.prUrl), sum && sum.prUrl)
+    } finally {
+      cleanup(root)
+    }
+  }
+
+  // P6: --delivery pr with no origin refuses (no silent direct fallback under the explicit flag)
+  {
+    const { root, repo } = makeRepo({ withOrigin: false })
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--delivery', 'pr'])
+      check(S, 'P6 explicit pr + no origin -> refuses, not delivered', sum && !sum.merged && !sum.dodPassed && /requires an origin/.test(sum.notes), sum && sum.notes)
+    } finally {
+      cleanup(root)
+    }
+  }
+
+  // P7: supervised --no-merge with no forge -> leaves the local branch, nothing merged
+  {
+    const { root, repo } = makeRepo({ withOrigin: false })
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--no-merge'])
+      check(S, 'P7 no-forge supervised leaves branch (awaitingMerge, direct)', sum && sum.deliveryMode === 'direct' && sum.awaitingMerge && !sum.merged && !sum.issueClosed, sum && sum.notes)
+    } finally {
+      cleanup(root)
+    }
+  }
+
+  // P8: the verdict file run-milestone stages IN-REPO at .claude/tmp/<id>-verdict.md is
+  // untracked scratch — it must NOT trip deliver's clean-tree guard (would block every
+  // real delivery; the P1-P7 cases write the verdict outside the repo and miss this).
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      // realistic: an adopted repo has .claude/ committed, so only .claude/tmp/<id> is
+      // untracked (git does not collapse it to a bare `.claude/`). This is what exercises
+      // deliver-ticket's clean-tree exclusion.
+      mkdirSync(join(repo, '.claude'), { recursive: true })
+      writeFileSync(join(repo, '.claude', 'settings.json'), '{}\n')
+      git(repo, ['add', '.claude/settings.json'])
+      git(repo, ['commit', '-q', '-m', 'chore: .claude'])
+      mkdirSync(join(repo, '.claude', 'tmp'), { recursive: true })
+      writeFileSync(join(repo, '.claude', 'tmp', 'T-01-verdict.md'), 'CLEAR — in-repo staged verdict.\n')
+      const { r, sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--verdict-file', '.claude/tmp/T-01-verdict.md'], { FAKE_GH_CLOSED_STATE: closed })
+      eq(S, 'P8 exit 0', r.status, 0)
+      check(S, 'P8 in-repo .claude/tmp verdict does not read as dirty', sum && sum.deliveryMode === 'pr' && sum.merged && sum.dodPassed && sum.checks.verdictPosted, sum && sum.notes)
     } finally {
       cleanup(root)
     }
