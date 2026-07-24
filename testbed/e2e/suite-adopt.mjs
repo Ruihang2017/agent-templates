@@ -50,6 +50,8 @@ export async function run() {
     const ga1 = readFileSync(join(t1, '.gitattributes'), 'utf8')
     check(S, 'A1 .gitattributes pins workflows + scripts to LF', ga1.includes('.claude/workflows/*.js text eol=lf') && ga1.includes('.claude/scripts/*.mjs text eol=lf'))
     check(S, 'A1 CLAUDE.md declares Operating mode', /Operating mode/.test(readFileSync(join(t1, 'CLAUDE.md'), 'utf8')))
+    // issue #50: the ephemeral verdict scratch is git-ignored so it never blocks delivery or gets committed
+    check(S, 'A1 gitignores .claude/tmp/', existsSync(join(t1, '.gitignore')) && /\.claude\/tmp\//.test(readFileSync(join(t1, '.gitignore'), 'utf8')))
     // issue #34: the resolved platform is recorded in CLAUDE.md
     check(S, 'A1 CLAUDE.md records Tracker: gh', /\*\*Tracker: `gh`\*\*/.test(readFileSync(join(t1, 'CLAUDE.md'), 'utf8')))
     // issue #40: upstream escalation is OFF by default — no catalog repo slug, no marker, no leak

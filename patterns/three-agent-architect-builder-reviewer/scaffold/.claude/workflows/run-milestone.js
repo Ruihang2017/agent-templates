@@ -97,6 +97,8 @@ const DELIVERY = {
     merged: { type: 'boolean' },
     issueClosed: { type: 'boolean' },
     dodPassed: { type: 'boolean' },
+    awaitingMerge: { type: 'boolean' },
+    prUrl: { type: 'string' },
     notes: { type: 'string' },
   },
   required: ['merged', 'issueClosed', 'dodPassed'],
@@ -196,30 +198,41 @@ for (const t of cfg.tickets) {
     continue
   }
 
+  // Delivery is a deterministic script, not agent judgment (catalog issues #26, #50):
+  // harness safety classifiers blocked agent-run merges even after a journaled CLEAR.
+  // The agent below only (1) writes the Reviewer's verdict to a file so the script can
+  // post it as the PR/MR comment (the durable review trail #50 asked for), and (2) runs
+  // the one sanctioned command. It never merges, pushes, opens PRs, or closes issues.
+  const verdictNote = verdict && verdict.checkedNote ? verdict.checkedNote : 'CLEAR (the reviewer returned no note text)'
+  const verdictFile = '.claude/tmp/' + t.id + '-verdict.md'
+  const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
+    ' --default-branch ' + cfg.defaultBranch + ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '') +
+    (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : '') + ' --verdict-file ' + verdictFile +
+    (cfg.mode === 'supervised' ? ' --no-merge' : '')
+  const deliverPrompt =
+    'Delivery step. Delivery is DETERMINISTIC — you only (1) record the verdict and (2) run one command; never merge, push, open PRs/MRs, or close issues yourself. ' +
+    'First write the following Reviewer CLEAR verdict text VERBATIM to ' + verdictFile + ' (create the .claude/tmp directory if needed):\n' +
+    '<<<VERDICT\n' + verdictNote + '\nVERDICT\n' +
+    'Then, from the repo root, run EXACTLY this command and let it do all git and tracker work: ' + deliverCmd +
+    ' — this is the only sanctioned delivery path. Parse the DELIVER-SUMMARY-JSON line it prints last and return ' +
+    'merged, issueClosed, dodPassed, awaitingMerge, and prUrl EXACTLY as reported there, with notes = its notes field plus anything unusual. ' +
+    'If the command cannot run or prints no DELIVER-SUMMARY-JSON, return merged/issueClosed/dodPassed = false with the output tail in notes.'
+
   if (cfg.mode === 'supervised') {
-    results.push({ id: t.id, status: 'awaiting-human-merge', branch: branch, bounces: bounces, note: verdict.checkedNote || '' })
-    log('[' + t.id + '] CLEAR — supervised mode: stopping the run for the human merge. Re-run /start-milestone after merging (closed issues are skipped).')
+    log('[' + t.id + '] CLEAR — supervised: opening a PR/MR for human review (deterministic deliver, --no-merge)')
+    const delivery = await agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY })
+    if (delivery && delivery.awaitingMerge) {
+      results.push({ id: t.id, status: 'awaiting-human-merge', branch: branch, prUrl: delivery.prUrl || '', bounces: bounces, note: verdict.checkedNote || '' })
+      log('[' + t.id + '] PR/MR open for review: ' + (delivery.prUrl || '(url not reported)') + ' — merge it, then re-run to continue (closed issues are filtered out).')
+    } else {
+      results.push({ id: t.id, status: 'delivery-incomplete', detail: 'supervised PR/MR creation did not complete' + (delivery && delivery.notes ? ' — ' + delivery.notes : '') })
+    }
     stopRun = true
     continue
   }
 
-  log('[' + t.id + '] deliver: merge + close issue + DoD (deterministic script)')
-  // Delivery is a deterministic script, not agent judgment (catalog issue #26):
-  // harness safety classifiers blocked agent-run merges even after a journaled
-  // CLEAR. The agent below only executes the sanctioned command and relays its
-  // machine-readable summary — same discipline as publish-tickets.mjs for issues.
-  const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
-    ' --default-branch ' + cfg.defaultBranch + ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '') +
-    (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : '')
-  const delivery = await agent(
-    'Delivery step (autonomous mode — pre-authorized by the human Gate 1 start signal). ' +
-    'Delivery is DETERMINISTIC: from the repo root, run EXACTLY this command and let it do all git and tracker work: ' +
-    deliverCmd + ' — the script is the only sanctioned delivery path; do not merge, push, close issues, or retry pieces yourself. ' +
-    'Parse the DELIVER-SUMMARY-JSON line it prints last and return merged, issueClosed, dodPassed EXACTLY as reported there, ' +
-    'with notes = its notes field plus anything unusual you observed. ' +
-    'If the command cannot run or prints no DELIVER-SUMMARY-JSON, return all three as false with the output tail in notes.',
-    { label: 'deliver:' + t.id, phase: P, schema: DELIVERY }
-  )
+  log('[' + t.id + '] deliver: PR/MR + forge-merge + close + DoD (deterministic script)')
+  const delivery = await agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY })
   // Delivered requires ALL THREE flags — a hallucinated dodPassed alone must not count.
   if (!delivery || !(delivery.merged && delivery.issueClosed && delivery.dodPassed)) {
     const missing = !delivery ? 'delivery agent returned nothing' : ['merged', 'issueClosed', 'dodPassed'].filter(function (k) { return !delivery[k] }).join(', ') + ' = false'
@@ -227,7 +240,7 @@ for (const t of cfg.tickets) {
     if (!cfg.continueOnFailure) break
     continue
   }
-  results.push({ id: t.id, status: 'delivered', bounces: bounces })
+  results.push({ id: t.id, status: 'delivered', bounces: bounces, prUrl: delivery.prUrl || '' })
 }
 
 const throughPipeline = results.filter(function (r) { return r.status === 'delivered' || r.status === 'awaiting-human-merge' }).length
