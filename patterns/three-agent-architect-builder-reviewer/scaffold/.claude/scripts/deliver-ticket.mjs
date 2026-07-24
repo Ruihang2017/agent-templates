@@ -35,7 +35,12 @@
 //   node .claude/scripts/deliver-ticket.mjs --id <ticket-id> --branch <branch>
 //        [--default-branch main] [--issue <n>] [--platform gh|glab]
 //        [--delivery pr|direct|pushmr|auto] [--no-merge] [--verdict-file <path>]
-//        [--test-cmd "<command>"]
+//        [--body-file <path>] [--test-cmd "<command>"]
+//
+// PR/MR body (issue #58): a pre-composed --body-file (the deliver agent fills the repo's
+// .gitlab/merge_request_templates or .github/pull_request_template sections from the ticket,
+// diff, verdict, and CLAUDE.md constraints) is used verbatim; else the repo template is the
+// skeleton (Closes #N ensured); else a hardcoded fallback. The script only assembles/selects.
 //
 // Last line of stdout is machine-readable for run-milestone:
 //   DELIVER-SUMMARY-JSON: {"id","branch","deliveryMode","merged","issueClosed",
@@ -44,7 +49,7 @@
 //             1 = bad invocation or unexpected internal error.
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -65,6 +70,7 @@ const PLATFORM = opt('platform') || 'gh'
 const DELIVERY = opt('delivery') || 'auto'
 const NO_MERGE = has('no-merge')
 const VERDICT_FILE = opt('verdict-file')
+const BODY_FILE = opt('body-file') // pre-composed PR/MR body (agent-filled from the repo template)
 const TEST_CMD = opt('test-cmd')
 
 if (!ID || !BRANCH) {
@@ -208,6 +214,45 @@ const buildBody = () => {
     `- Delivered deterministically by \`run-milestone\` / \`deliver-ticket.mjs\`\n`
 }
 
+// the repo's own MR/PR template file, used as the body skeleton (issue #58) instead of a
+// hardcoded body — so an adopted repo's 8-section template actually applies to pipeline MRs.
+const findMrTemplate = () => {
+  const candidates = PLATFORM === 'glab'
+    ? ['.gitlab/merge_request_templates/default.md', '.gitlab/merge_request_templates/Default.md']
+    : ['.github/pull_request_template.md', '.github/PULL_REQUEST_TEMPLATE.md', 'pull_request_template.md', 'PULL_REQUEST_TEMPLATE.md', 'docs/pull_request_template.md', 'docs/PULL_REQUEST_TEMPLATE.md']
+  for (const c of candidates) { if (existsSync(c)) return { path: c, text: readFileSync(c, 'utf8') } }
+  if (PLATFORM === 'glab') {
+    try {
+      const dir = '.gitlab/merge_request_templates'
+      const f = readdirSync(dir).find((n) => n.toLowerCase().endsWith('.md'))
+      if (f) return { path: `${dir}/${f}`, text: readFileSync(`${dir}/${f}`, 'utf8') }
+    } catch {}
+  }
+  return null
+}
+// ensure `Closes #N` is in a template body (so the issue auto-closes on merge) — under a
+// "Related" section if the template has one, else appended.
+const ensureCloses = (text) => {
+  const n = ISSUE_ARG && Number(ISSUE_ARG) > 0 ? Number(ISSUE_ARG) : null
+  if (!n || new RegExp(`Closes\\s+#${n}\\b`).test(text)) return text
+  const m = text.match(/(^|\n)#+[ \t]*Related[^\n]*\n/i)
+  if (m) { const at = m.index + m[0].length; return text.slice(0, at) + `Closes #${n}\n` + text.slice(at) }
+  return `${text.trimEnd()}\n\nCloses #${n}\n`
+}
+// PR/MR body: a pre-composed --body-file (the deliver agent fills the repo template's
+// semantic sections — Type/Changes/Constraint-check/Evidence — issue #58) wins; else the
+// repo's own template as a skeleton (with Closes #N ensured); else the hardcoded fallback.
+// deliver-ticket stays deterministic: it only selects/assembles, never judges the diff.
+const resolvePrBody = () => {
+  if (BODY_FILE && existsSync(BODY_FILE)) return readFileSync(BODY_FILE, 'utf8')
+  const tpl = findMrTemplate()
+  if (tpl) {
+    note(`MR/PR body from repo template ${tpl.path}`)
+    return `<!-- Auto-delivered by the three-agent pipeline · plan docs/plans/${ID}.md · Reviewer verdict: CLEAR -->\n\n` + ensureCloses(tpl.text)
+  }
+  return buildBody()
+}
+
 // find an existing PR/MR for the branch; returns { number, url } or null
 const findPr = () => {
   try {
@@ -231,7 +276,10 @@ try {
   // 1. clean tree — merging over uncommitted work is never sanctioned. `.claude/tmp/`
   // is ignored: run-milestone stages the Reviewer's verdict there for --verdict-file,
   // and that ephemeral scratch must not read as "dirty" and block delivery.
-  const dirty = git(['status', '--porcelain']).split('\n').filter((l) => l.trim() && !/\.claude\/tmp\//.test(l))
+  // `.claude/tmp/` (staged verdict/body) and `docs/plans/` (the Architect's HOW plan —
+  // ephemeral, and the DoD needs it to EXIST on disk, not be committed) are ignored so
+  // untracked scratch never reads as "dirty" and blocks delivery (issues #50, #58).
+  const dirty = git(['status', '--porcelain']).split('\n').filter((l) => l.trim() && !/\.claude\/tmp\/|docs\/plans\//.test(l))
   if (dirty.length) { note('working tree not clean — refusing to merge'); finish(0) }
 
   // 2. refs must exist locally
@@ -314,13 +362,17 @@ try {
       const m = out.match(/https?:\/\/\S*\/-\/merge_requests\/\d+/) || out.match(/merge_requests\/(\d+)/)
       if (m) { prUrl = m[0].startsWith('http') ? m[0] : ('/-/merge_requests/' + m[1]); checks.prCreated = true; console.log(`+ mr      ${prUrl}`) }
       else { checks.prCreated = true; note('MR opened via push option, but no MR URL appeared in the remote output') }
-      // verdict as an ISSUE comment via the Issues API (works even when the MR API is 403)
+      // the full evidence goes as an ISSUE comment via the Issues API (works even when the
+      // MR API is 403). The push-option MR description is single-line, so the structured body
+      // (agent-filled --body-file) can't live there — it lives on the issue. Prefer the full
+      // body; fall back to the verdict text.
       const vnum = ISSUE_ARG && Number(ISSUE_ARG) > 0 ? Number(ISSUE_ARG) : null
-      if (VERDICT_FILE && vnum) {
-        const vr = tryCli(['issue', 'note', String(vnum), '--message', readFileSync(VERDICT_FILE, 'utf8')])
-        if (vr.ok) { checks.verdictPosted = true; console.log(`+ comment CLEAR verdict posted to issue #${vnum}`) }
-        else note(`verdict issue-comment failed: ${firstLine(vr.out)}`)
-      } else if (VERDICT_FILE) note('verdict not posted — no --issue number to comment on')
+      const commentSrc = BODY_FILE && existsSync(BODY_FILE) ? BODY_FILE : VERDICT_FILE
+      if (commentSrc && vnum) {
+        const vr = tryCli(['issue', 'note', String(vnum), '--message', readFileSync(commentSrc, 'utf8')])
+        if (vr.ok) { checks.verdictPosted = true; console.log(`+ comment delivery evidence posted to issue #${vnum}`) }
+        else note(`issue-comment failed: ${firstLine(vr.out)}`)
+      } else if (commentSrc) note('evidence not posted — no --issue number to comment on')
       awaitingMerge = true
       console.log('= awaiting human merge on the web — no MR API to merge programmatically (issue #56)')
       finish(0)
@@ -337,7 +389,7 @@ try {
     if (pr) { checks.prExists = true; prUrl = pr.url; console.log(`= pr      exists for ${BRANCH} (#${pr.number})`) }
     else {
       const title = prTitle()
-      const body = buildBody() // pr mode posts the verdict as a comment, not in the body
+      const body = resolvePrBody() // repo MR/PR template (agent-filled) > template skeleton > hardcoded
       const tmp = mkdtempSync(join(tmpdir(), 'deliver-'))
       const bodyFile = join(tmp, 'body.md')
       writeFileSync(bodyFile, body)

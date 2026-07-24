@@ -75,6 +75,9 @@ export async function run() {
     check(S, 'S1 deliver forwards the verdict file', !!dcall && dcall.prompt.includes('--verdict-file .claude/tmp/T-01-verdict.md'))
     check(S, 'S1 deliver instructs writing the verdict verbatim', !!dcall && dcall.prompt.includes('VERBATIM'))
     check(S, 'S1 autonomous deliver does NOT pass --no-merge', !!dcall && !dcall.prompt.includes('--no-merge'))
+    // issue #58: the deliver agent composes the MR/PR body from the repo template + fills Constraint check
+    check(S, 'S1 deliver forwards a composed --body-file', !!dcall && dcall.prompt.includes('--body-file .claude/tmp/T-01-mrbody.md'))
+    check(S, 'S1 deliver composes body from the repo template + Constraint check', !!dcall && /merge_request_templates|pull_request_template/.test(dcall.prompt) && dcall.prompt.includes('Constraint check'))
   }
 
   // S2: bounce once, then clear; fix prompt carries findings + no-merge guard
