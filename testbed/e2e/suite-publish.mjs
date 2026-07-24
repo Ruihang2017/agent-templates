@@ -4,7 +4,7 @@
 // machine-readable summary contract.
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -118,6 +118,48 @@ export async function run() {
       eq(S, 'P8 bogus platform exits 1', bogus.status, 1)
       const noArgs = runPub(root, [], {})
       eq(S, 'P8 no args exits 1 with usage', noArgs.status, 1)
+    }
+
+    // P9: the dependency line is rendered into the issue body with real #numbers (issue #52)
+    {
+      const droot = mkdtempSync(join(tmpdir(), 'e2e-pub-dep-'))
+      const dtd = join(droot, 'docs', 'prd', '00-x', 'tickets')
+      mkdirSync(dtd, { recursive: true })
+      writeFileSync(join(dtd, 'FND-07.md'), '---\nid: FND-07\ntitle: Wire it up\nmodule: 00-x\nsize: S\nagent: builder\nstatus: ready\ndate: 2026-07-23\nblocked_by: [FND-01]\nblocks: [FND-09]\n---\n\n# FND-07 — body\n')
+      const log = join(droot, 'bodies.txt')
+      try {
+        const r = runPub(droot, ['docs/prd/00-x', '--create'], {
+          GH_BIN: FAKE_GH,
+          FAKE_GH_LIST: JSON.stringify([{ number: 7, title: '[FND-01] Foundations' }]),
+          FAKE_GH_BODY_LOG: log,
+        })
+        eq(S, 'P9 exit 0', r.status, 0)
+        check(S, 'P9 FND-07 created', entry(r.summary, 'FND-07') && entry(r.summary, 'FND-07').issue !== null)
+        const bodies = existsSync(log) ? readFileSync(log, 'utf8') : ''
+        check(S, 'P9 body renders Blocked by #7 (resolved number)', /Blocked by:\*\* #7/.test(bodies), bodies.slice(0, 300))
+        check(S, 'P9 unpublished blocks target shown as pending', /Blocks:\*\* `FND-09` \(pending\)/.test(bodies), bodies.slice(0, 300))
+      } finally { rmSync(droot, { recursive: true, force: true }) }
+    }
+
+    // P10: --sync regenerates an EXISTING issue body from its ticket (issue #52 backfill + #53 ticket->issue flow)
+    {
+      const sroot = mkdtempSync(join(tmpdir(), 'e2e-pub-sync-'))
+      const std = join(sroot, 'docs', 'prd', '00-x', 'tickets')
+      mkdirSync(std, { recursive: true })
+      writeFileSync(join(std, 'FND-07.md'), '---\nid: FND-07\ntitle: Wire it up\nmodule: 00-x\nsize: S\nagent: builder\nstatus: ready\ndate: 2026-07-23\nblocked_by: [FND-01]\n---\n\n# FND-07 — updated body\n')
+      const log = join(sroot, 'bodies.txt')
+      try {
+        const r = runPub(sroot, ['docs/prd/00-x', '--create', '--sync'], {
+          GH_BIN: FAKE_GH,
+          FAKE_GH_LIST: JSON.stringify([{ number: 7, title: '[FND-01] Foundations' }, { number: 12, title: '[FND-07] Wire it up' }]),
+          FAKE_GH_BODY_LOG: log,
+        })
+        eq(S, 'P10 exit 0', r.status, 0)
+        const e = entry(r.summary, 'FND-07')
+        check(S, 'P10 FND-07 synced (existing #12 body regenerated)', e && e.issue === 12 && e.synced === true, JSON.stringify(e))
+        const bodies = existsSync(log) ? readFileSync(log, 'utf8') : ''
+        check(S, 'P10 edit carried the regenerated deps + prose', /edit 12/.test(bodies) && /Blocked by:\*\* #7/.test(bodies) && /updated body/.test(bodies), bodies.slice(0, 300))
+      } finally { rmSync(sroot, { recursive: true, force: true }) }
     }
   } finally {
     rmSync(root, { recursive: true, force: true })
