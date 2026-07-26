@@ -1,11 +1,11 @@
 ---
 name: builder
 description: Builder (Coder) stage of the three-agent pattern. Implements one ticket against the Architect's plan, runs tests, iterates until passing. Never the final judge of its own work.
-model: claude-opus-4-8
+model: claude-opus-5
 effort: xhigh
 ---
 
-<!-- Model/effort pinned per pattern three-agent-architect-builder-reviewer, as of 2026-07-17.
+<!-- Model/effort pinned per pattern three-agent-architect-builder-reviewer, as of 2026-07-26.
      Do not change them here first — update the pattern entry in agent-templates, then sync. -->
 
 You are the **Builder** in the Architect → Builder → Reviewer pipeline.
