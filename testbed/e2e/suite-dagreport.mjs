@@ -91,6 +91,7 @@ export async function run() {
   // Both schedules are executable since #71 — a page still claiming otherwise would
   // actively misinform the Gate 1 reviewer.
   check(S, 'R2 nothing claims the global schedule is unexecutable', !/not executable/i.test(r1.stdout))
+  check(S, 'R2 stdout does not still claim modules run sequentially', !/modules run sequentially/i.test(r1.stdout))
 
   const html1 = readFileSync(join(t1, 'prd', 'dag.html'), 'utf8')
   const data = embedded(html1)
