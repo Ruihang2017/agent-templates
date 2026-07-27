@@ -15,6 +15,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+// The lane demo's wave breakdown is computed by the SAME scheduler model the runner and
+// dag-report.mjs use — never hand-authored — so the site cannot advertise a schedule the
+// pipeline would not actually produce.
+import { simulate } from '../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/dag-core.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const argv = process.argv.slice(2)
@@ -118,6 +122,58 @@ const ROLE_DOT = {
   Reviewer: ['#8fb4e6', 'rgba(40,80,150,0.3)'],
 }
 const roleDot = (r) => ROLE_DOT[Object.keys(ROLE_DOT).find((k) => r.startsWith(k))] || ['#f2c44e', 'rgba(180,120,20,0.35)']
+
+// --- lane demo -------------------------------------------------------------
+// A miniature of docs/prd/dag.html so the page can SHOW what one lane vs many looks
+// like. Same module colors as the real page (validated all-pairs in light and dark,
+// which the site's decorative pastels are not: green/pink sit at CVD dE 4.5 and
+// green/yellow at normal-vision 11.5 — fine as ornament, unusable as data). Every card
+// still carries its module name, so identity never rests on hue alone.
+const DEMO_MODULES = [
+  { name: '01-core', color: '#2a78d6' },
+  { name: '02-api', color: '#eda100' },
+  { name: '03-jobs', color: '#e87ba4' },
+  { name: '04-docs', color: '#008300' },
+]
+const DEMO_TICKETS = [
+  ['0101', '01-core', []], ['0102', '01-core', []],
+  ['0103', '01-core', ['0101']], ['0104', '01-core', ['0102']],
+  ['0105', '01-core', ['0103', '0104']],
+  ['0201', '02-api', ['0105']], ['0202', '02-api', ['0105']],
+  ['0203', '02-api', ['0105']], ['0204', '02-api', ['0105']],
+  ['0205', '02-api', ['0201']],
+  ['0301', '03-jobs', []], ['0302', '03-jobs', ['0301']], ['0303', '03-jobs', ['0302']],
+  ['0401', '04-docs', []], ['0402', '04-docs', []],
+]
+const DEMO_LANES = [1, 2, 4, 6]
+const demoDeps = Object.fromEntries(DEMO_TICKETS.map(([id, , d]) => [id, d]))
+const demoIds = DEMO_TICKETS.map(([id]) => id)
+const demoModuleOf = Object.fromEntries(DEMO_TICKETS.map(([id, m]) => [id, m]))
+const demoColorOf = (id) => (DEMO_MODULES.find((m) => m.name === demoModuleOf[id]) || {}).color || '#7c7c74'
+// rounds[cap] computed at BUILD time by dag-core.simulate — the runner's own model
+const DEMO_ROUNDS = Object.fromEntries(DEMO_LANES.map((c) => [c, simulate(demoIds, (id) => demoDeps[id], c)]))
+const DEMO_MIN = DEMO_ROUNDS[DEMO_LANES[DEMO_LANES.length - 1]].length
+
+const demoWaveHtml = (cap) => DEMO_ROUNDS[cap].map((batch, i) => `
+        <div class="lw">
+          <span class="lw-h">wave ${i + 1} &middot; ${batch.length}/${cap}</span>
+          ${batch.map((id) => `<span class="lt" style="border-left-color:${demoColorOf(id)}"><b>${id}</b><span class="lt-m" style="background:${demoColorOf(id)}">${esc(demoModuleOf[id])}</span></span>`).join('\n          ')}
+          ${Array.from({ length: Math.max(0, cap - batch.length) }, () => '<span class="lt idle">idle lane</span>').join('\n          ')}
+        </div>`).join('')
+
+const LANE_DEMO = `
+    <div class="lane-ctl" role="group" aria-label="concurrency">
+      <span class="lane-lbl">concurrency</span>
+      ${DEMO_LANES.map((c) => `<button type="button" class="lane-b" data-lane="${c}"${c === 4 ? ' aria-pressed="true"' : ' aria-pressed="false"'}>${c}</button>`).join('')}
+      <span class="lane-read" id="lane-read"></span>
+    </div>
+    <div class="lane-legend">
+      ${DEMO_MODULES.map((m) => `<span class="lane-lg"><span class="lane-sw" style="background:${m.color}"></span>${esc(m.name)}</span>`).join('')}
+    </div>
+    ${DEMO_LANES.map((c) => `<div class="lane-board" data-board="${c}"${c === 4 ? '' : ' hidden'}>${demoWaveHtml(c)}
+    </div>`).join('\n    ')}`
+
+const LANE_FACTS = DEMO_LANES.map((c) => `${c}:${DEMO_ROUNDS[c].length}`).join(',')
 
 // --- pure-CSS clay icons, markup lifted from the approved mock -------------
 const LOGO_ICON = `<span class="gx" style="width:26px;height:26px;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="position:absolute;left:1px;top:2px;width:15px;height:20px;border-radius:5px;background:#b7a0e2;transform:rotate(-9deg);box-shadow:inset 0 2px 2px rgba(255,255,255,0.5)"></span><span style="position:absolute;left:9px;top:3px;width:15px;height:20px;border-radius:5px;background:var(--pill);transform:rotate(7deg);box-shadow:inset 0 -2px 3px rgba(var(--ins),0.35);display:flex;flex-direction:column;gap:3px;padding:4px 3px;box-sizing:border-box"><span style="height:2.5px;border-radius:2px;background:#f4a0b5"></span><span style="height:2.5px;border-radius:2px;background:#d9c8f0"></span><span style="height:2.5px;border-radius:2px;background:#d9c8f0;width:70%"></span></span></span>`
@@ -275,6 +331,31 @@ const html = `<!doctype html>
     box-shadow:inset 0 3px 4px rgba(255,255,255,0.55),inset 0 -5px 8px rgba(40,80,150,0.22),0 10px 20px rgba(var(--amb),0.25)}
   .stat-blue .big{color:#2c548c} .stat-blue p{color:#315e9c}
 
+  /* --- lane demo: a miniature of docs/prd/dag.html, in the site's clay language --- */
+  .lane-ctl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .lane-lbl{font-weight:700;color:var(--sub);font-size:13px;margin-right:2px}
+  .lane-b{font-family:inherit;font-size:14px;font-weight:800;color:var(--sub);cursor:pointer;
+    min-width:34px;padding:5px 11px;border:0;border-radius:11px;background:var(--pill);
+    box-shadow:inset 0 2px 2px rgba(255,255,255,0.7),inset 0 -3px 4px rgba(var(--ins),0.4),0 3px 7px rgba(var(--flt),0.16)}
+  .lane-b[aria-pressed=true]{background:linear-gradient(180deg,#b3dcab,#98cb8e);color:#2f4a28;
+    box-shadow:inset 0 2px 2px rgba(255,255,255,0.6),inset 0 -3px 4px rgba(30,100,40,0.28),0 4px 9px rgba(120,150,100,0.3)}
+  .lane-read{font-size:13px;color:var(--mut);flex-basis:100%}
+  .lane-read b{color:var(--ink)}
+  .lane-legend{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px;font-family:var(--mono);font-size:11.5px;color:var(--sub)}
+  .lane-lg{display:inline-flex;align-items:center;gap:6px}
+  .lane-sw{width:10px;height:10px;border-radius:3px;box-shadow:inset -1px -1px 2px rgba(0,0,0,0.18)}
+  .lane-board{display:flex;gap:14px;overflow-x:auto;padding:2px 2px 8px}
+  /* an author display rule beats the UA [hidden]{display:none}, so restate it or every
+     board renders stacked on top of the others */
+  .lane-board[hidden]{display:none}
+  .lw{display:flex;flex-direction:column;gap:6px;min-width:132px}
+  .lw-h{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);font-weight:700}
+  .lt{display:flex;flex-direction:column;gap:4px;padding:7px 9px;border-radius:9px;background:var(--pill);
+    border-left:3px solid var(--mut);font-family:var(--mono);font-size:11.5px;color:var(--ink);
+    box-shadow:inset 0 2px 2px rgba(255,255,255,0.7),inset 0 -2px 3px rgba(var(--ins),0.3),0 2px 6px rgba(var(--flt),0.13)}
+  .lt-m{align-self:flex-start;font-size:9.5px;padding:1px 5px;border-radius:4px;color:#fff;font-weight:700}
+  .lt.idle{background:transparent;border:1px dashed rgba(var(--ins),0.75);border-left:1px dashed rgba(var(--ins),0.75);
+    box-shadow:none;color:var(--mut);align-items:center;justify-content:center;min-height:34px;font-size:10.5px}
   .sec-head{display:flex;align-items:center;gap:11px;margin:32px 0 14px}
   .sec-head h2{margin:0;font-family:'Baloo 2',cursive;font-weight:800;font-size:25px;color:var(--ink)}
 
@@ -383,6 +464,23 @@ const html = `<!doctype html>
     </div>
   </section>
 
+  <section>
+    <div class="sec-head"><span class="gx" style="width:22px;height:18px;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="position:absolute;left:0;top:1px;width:6px;height:16px;border-radius:3px;background:#b3cdf0"></span><span style="position:absolute;left:8px;top:4px;width:6px;height:10px;border-radius:3px;background:#f6a5bb"></span><span style="position:absolute;left:16px;top:0;width:6px;height:18px;border-radius:3px;background:#f4cd6d"></span></span><h2>See the plan before you run it</h2></div>
+    <div class="fact" style="margin-bottom:15px">
+      <div class="fact-ico" style="background:#b3cdf0;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(40,80,150,0.22)"><span class="gx" style="width:16px;height:14px"><span style="position:absolute;left:0;top:0;width:5px;height:5px;border-radius:50%;background:#fffaf2"></span><span style="position:absolute;left:0;bottom:0;width:5px;height:5px;border-radius:50%;background:#fffaf2"></span><span style="position:absolute;right:0;top:4.5px;width:5px;height:5px;border-radius:50%;background:#fffaf2"></span></span></div>
+      <p><b><code style="font-family:var(--mono);font-size:12px;color:var(--code)">/breakdown-prd</code> writes <code style="font-family:var(--mono);font-size:12px;color:var(--code)">docs/prd/dag.html</code></b> — every ticket in one dependency graph, colored by module. A self-contained file: double-click it, no server, no build step. It tells you the <b>concurrency worth passing</b> instead of making you guess, and flags a module that can only ever use one lane — that is a file-scope decomposition problem, and Gate 1 is the cheapest moment to fix it.</p>
+    </div>
+    <div class="fact" style="display:block;margin-bottom:15px">
+      <p style="margin:0 0 4px"><b>15 tickets, 4 modules</b> — pick a lane count and watch the same graph re-shape. This board is computed at build time by the pipeline's own scheduler, so it is the schedule you would actually get.</p>
+      ${LANE_DEMO}
+    </div>
+    <div class="steps">
+      <div class="step"><span class="step-ico" style="background:#c3abe9;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(90,50,140,0.2)"><span style="width:15px;height:15px;border:2.5px solid #fffaf2;border-radius:50%;box-sizing:border-box;border-top-color:transparent"></span></span><h3>1 lane — the shape of the DAG</h3><p>Every ticket waits for the one before it, so the board is a single column per wave and the run is as long as the ticket count. Useful as the baseline: it is what <code>concurrency</code> defaults to.</p></div>
+      <div class="step"><span class="step-ico" style="background:#9ed095;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(30,90,40,0.2)"><span style="display:flex;gap:2.5px;align-items:flex-end"><span style="width:3.5px;height:15px;border-radius:2px;background:#fffaf2"></span><span style="width:3.5px;height:15px;border-radius:2px;background:#fffaf2"></span><span style="width:3.5px;height:9px;border-radius:2px;background:#fffaf2"></span></span></span><h3>More lanes — until they stop filling</h3><p>Independent tickets pack into the same wave and the run gets shorter — up to a point. Past the widest wave the extra lanes render as <b>idle</b>, which is exactly the number the page tells you not to exceed.</p></div>
+      <div class="step"><span class="step-ico" style="background:#f4cd6d;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(180,120,20,0.25)"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:2px;top:7px;width:12px;height:2.5px;border-radius:2px;background:#7a5a15"></span><span style="position:absolute;left:6.5px;top:2.5px;width:2.5px;height:11px;border-radius:2px;background:#7a5a15"></span></span></span><h3>Where you are, mid-run</h3><p><code>/start-all</code> reloads the DAG every few finished tickets, so a ticket added while it runs is published, scheduled, and re-rendered into the same page. Re-open it during a run — or regenerate any time with <code style="font-family:var(--mono);font-size:11.5px;color:var(--code)">node .claude/scripts/dag-report.mjs docs/prd</code>.</p></div>
+    </div>
+  </section>
+
   <footer>
     Generated from the pattern catalog by <a href="${GITHUB}/blob/main/scripts/build-site.mjs"><code>scripts/build-site.mjs</code></a>
     · ${new Date().toISOString().slice(0, 10)} · <a href="${GITHUB}/blob/main/LICENSE">MIT</a>
@@ -391,6 +489,25 @@ const html = `<!doctype html>
 </div>
 <script>
 (function(){
+  // lane demo: every board is pre-rendered at build time, so switching is a
+  // show/hide -- no client-side scheduling, nothing that can disagree with the runner
+  var ROUNDS={${LANE_FACTS.split(',').map((p) => p.split(':')[0] + ':' + p.split(':')[1]).join(',')}},MIN=${DEMO_MIN}
+  var read=document.getElementById('lane-read')
+  function show(c){
+    document.querySelectorAll('.lane-board').forEach(function(b){b.hidden=String(b.dataset.board)!==String(c)})
+    document.querySelectorAll('.lane-b').forEach(function(b){b.setAttribute('aria-pressed',String(String(b.dataset.lane)===String(c)))})
+    if(!read)return
+    var r=ROUNDS[c],base=ROUNDS[1]
+    read.innerHTML='<b>'+r+'</b> waves at '+c+' lane'+(c==1?'':'s')+
+      (c==1?' \\u2014 the sequential baseline':' \\u2014 '+Math.round((1-r/base)*100)+'% shorter than 1 lane')+
+      (r===MIN&&c>1?' \\u00b7 <b>the widest wave is already full; more lanes just idle</b>':'')
+  }
+  document.querySelectorAll('.lane-b').forEach(function(b){
+    b.addEventListener('click',function(){show(b.dataset.lane)})
+  })
+  show(4)
+})()
+;(function(){
   var b=document.getElementById('copy-btn'),q=document.getElementById('qs'),t
   if(!b||!q)return
   b.addEventListener('click',function(){
