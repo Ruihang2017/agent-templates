@@ -59,7 +59,7 @@ const UNIVERSAL_TEMPLATES = [
 const AGENT_PINS = {
   'architect.md': { model: 'claude-opus-5', effort: 'max' },
   'builder.md': { model: 'claude-opus-5', effort: 'xhigh' },
-  'reviewer.md': { model: 'claude-fable-5', effort: 'xhigh' },
+  'reviewer.md': { model: 'claude-fable-5', effort: 'high' },
   'triage.md': { model: 'claude-sonnet-5', effort: 'xhigh' },
 }
 
