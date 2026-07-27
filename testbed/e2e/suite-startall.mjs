@@ -29,8 +29,12 @@ async function drive(body, args, respond) {
   const workflowCalls = []
   let active = 0
   let maxActive = 0
+  let seq = 0
   const activeIds = new Set()
   const overlaps = new Set()
+  let maxLanes = 0
+  const firstStart = {} // ticket id -> seq of its first agent call
+  const deliverEnd = {} // ticket id -> seq when its deliver returned
 
   const agent = async (prompt, opts = {}) => {
     const label = opts.label || ''
@@ -40,10 +44,15 @@ async function drive(body, args, respond) {
     if (!label.startsWith('rescan')) {
       for (const other of activeIds) if (other !== id) overlaps.add([id, other].sort().join('|'))
       activeIds.add(id)
+      maxLanes = Math.max(maxLanes, activeIds.size)
+      if (firstStart[id] === undefined) firstStart[id] = seq
     }
+    seq += 1
     events.push({ ev: 'start', label, isolation: opts.isolation || null, effort: opts.effort || null, prompt })
     await new Promise((r) => setTimeout(r, 2)) // let sibling lanes interleave
     const res = await respond({ prompt, opts, label, id })
+    if (kind(label) === 'deliver') deliverEnd[id] = seq
+    seq += 1
     events.push({ ev: 'end', label })
     active -= 1
     activeIds.delete(id)
@@ -59,7 +68,7 @@ async function drive(body, args, respond) {
   try {
     result = await fn(agent, null, null, (m) => logs.push(m), () => {}, args, { total: null, spent: () => 0, remaining: () => Infinity }, workflow)
   } catch (e) { error = e }
-  return { result, error, events, logs, maxActive, overlaps, workflowCalls }
+  return { result, error, events, logs, maxActive, overlaps, workflowCalls, maxLanes, firstStart, deliverEnd }
 }
 
 const kind = (l) => l.split(':')[0]
@@ -297,5 +306,71 @@ export async function run() {
       const norm = (res) => (res.results || []).slice().sort((a, b) => a.id.localeCompare(b.id)).map((r) => r.id + '=' + r.status).join(',')
       eq(S, `SA14 [${sc.name}] start-all and run-milestone agree per ticket`, norm(g.result || {}), norm(m.result || {}))
     }
+  }
+
+  // ---- SA15: concurrency sweep on a realistic 24-ticket / 6-module PRD ----------------
+  // Maintainer request: prove the whole thing runs at 1, 2, 4 and 6 lanes. This is the
+  // Level-0 half — the ACTUAL scheduler, stubbed agents, zero tokens. It cannot catch
+  // anything that only fails with real agents (see the pattern's Level-1 rehearsal), but
+  // every scheduler-level bug lives here: lost tickets, a ticket dispatched before its
+  // blocker, the cap being exceeded, or lanes silently never filling.
+  {
+    const P = []
+    const add = (mod, id, deps) => P.push(tk(id, deps, mod))
+    // 01-core: two independent chains converging (max width 2)
+    add('01-core', '0101', []); add('01-core', '0102', [])
+    add('01-core', '0103', ['0101']); add('01-core', '0104', ['0102'])
+    add('01-core', '0105', ['0103', '0104'])
+    // 02-api: 4-wide fan-out off core, each with a test ticket behind it
+    add('02-api', '0201', ['0105']); add('02-api', '0202', ['0105'])
+    add('02-api', '0203', ['0105']); add('02-api', '0204', ['0105'])
+    add('02-api', '0205', ['0201']); add('02-api', '0206', ['0202']); add('02-api', '0207', ['0203'])
+    // 03-ui: depends on the api surface, 3 independent screens then an integration pass
+    add('03-ui', '0301', ['0205']); add('03-ui', '0302', ['0206']); add('03-ui', '0303', ['0207'])
+    add('03-ui', '0304', ['0301', '0302', '0303'])
+    // 05-jobs: one long serial chain, independent of everything else
+    add('05-jobs', '0501', []); add('05-jobs', '0502', ['0501'])
+    add('05-jobs', '0503', ['0502']); add('05-jobs', '0504', ['0503'])
+    // 06-extra + 07-more: free-floating work with no blockers at all
+    add('06-extra', '0601', []); add('06-extra', '0602', [])
+    add('07-more', '0701', []); add('07-more', '0702', ['0701'])
+
+    eq(S, 'SA15 fixture is 24 tickets across 6 modules', P.length, 24)
+    const depMap = Object.fromEntries(P.map((t) => [t.id, t.blockedBy || []]))
+
+    for (const c of [1, 2, 4, 6]) {
+      const st = { tickets: P.slice(), calls: 0 }
+      const r = await drive(SRC, { tickets: P, mode: 'autonomous', concurrency: c, rescanEvery: 0 }, makeRespond(st))
+
+      check(S, `SA15 c=${c} no error`, !r.error, r.error && r.error.message)
+      const delivered = (r.result && r.result.results || []).filter((x) => x.status === 'delivered').length
+      eq(S, `SA15 c=${c} all 24 tickets delivered`, delivered, 24)
+
+      // the cap is a cap: never more tickets in flight than asked for
+      check(S, `SA15 c=${c} never exceeded the lane cap (saw ${r.maxLanes})`, r.maxLanes <= c)
+      // and it is actually USED: with >=6 independent tickets available at the start,
+      // every level here should saturate. A cap that never fills means work is being
+      // serialized for a reason the DAG does not justify.
+      eq(S, `SA15 c=${c} lanes actually saturated`, r.maxLanes, c)
+
+      // the invariant that matters most: nothing ever started before a blocker finished
+      const violations = []
+      for (const [id, deps] of Object.entries(depMap)) {
+        for (const d of deps) {
+          if (!(r.deliverEnd[d] < r.firstStart[id])) violations.push(`${id} started before ${d} delivered`)
+        }
+      }
+      eq(S, `SA15 c=${c} no ticket started before its blocker delivered`, violations.join('; '), '')
+    }
+
+    // More lanes must not change the OUTCOME, only the timing — a scheduler that drops
+    // or reorders work under load would show up here as a differing result set.
+    const outcomes = []
+    for (const c of [1, 2, 4, 6]) {
+      const st = { tickets: P.slice(), calls: 0 }
+      const r = await drive(SRC, { tickets: P, mode: 'autonomous', concurrency: c, rescanEvery: 0 }, makeRespond(st))
+      outcomes.push((r.result.results || []).slice().sort((a, b) => a.id.localeCompare(b.id)).map((x) => x.id + '=' + x.status).join(','))
+    }
+    eq(S, 'SA15 concurrency 1/2/4/6 all produce identical outcomes', new Set(outcomes).size, 1)
   }
 }
