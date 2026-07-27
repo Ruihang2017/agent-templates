@@ -61,7 +61,7 @@ export async function run() {
     check(S, 'carries the quickstart command', html.includes('npx agent-templates@latest adopt three-agent-architect-builder-reviewer'))
     check(S, 'shows the seed pattern title', html.includes('Three-Agent Architect'))
     check(S, 'shows the pattern status pill', /(trialed|adopted|proposed)/.test(html))
-    check(S, 'shows pinned models from README §3', html.includes('Claude Sonnet 5') && html.includes('Claude Opus 4.8') && html.includes('Claude Fable 5'))
+    check(S, 'shows pinned models from README §3', html.includes('Claude Sonnet 5') && html.includes('Claude Opus 5') && html.includes('Claude Fable 5'))
     check(S, 'live-version fallback from package.json', /data-npm-version>v\d+\.\d+\.\d+/.test(html))
     check(S, 'registry live-fetch present', html.includes('registry.npmjs.org/agent-templates'))
     // issue #62: the parallel-lanes feature is surfaced on the site

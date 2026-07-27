@@ -12,8 +12,8 @@
 Every non-trivial ticket flows through three stages; no agent judges its own work.
 
 - **`/breakdown-prd [notes]`** — pre-Gate-1: the Architect decomposes `docs/PRD.md` into a breakdown plan + sub-PRDs + template-compliant tickets (disjoint file-scopes, dependency DAG), then stops for human review.
-- **`/plan-ticket <ticket>`** — Architect (`claude-fable-5` @ `max`) reads the ticket + codebase → implementation plan at `docs/plans/<ticket-id>.md`. Writes no production code.
-- **`/build-ticket <ticket>`** — Builder (`claude-opus-4-8` @ `xhigh`) implements the plan, runs tests until green, records deviations. Never merges or self-clears.
+- **`/plan-ticket <ticket>`** — Architect (`claude-opus-5` @ `max`) reads the ticket + codebase → implementation plan at `docs/plans/<ticket-id>.md`. Writes no production code.
+- **`/build-ticket <ticket>`** — Builder (`claude-opus-5` @ `xhigh`) implements the plan, runs tests until green, records deviations. Never merges or self-clears.
 - **`/review-ticket <ticket>`** — Reviewer (`claude-fable-5` @ `xhigh`) in a **fresh context**, deliberately a different model tier from the Builder. Focus: edge cases, concurrency, security-sensitive paths. Verdict **CLEAR** or **BOUNCE**; merge requires CLEAR.
 - **`/verify-delivery <ticket>`** — post-merge Definition-of-Done check: plan on disk · tests green · **CLEAR verdict attached to the PR/MR as a comment** · MR/PR merged into the default branch · **tracker issue closed** · writeback done. Run after **every** merge; tracker auto-close side effects are never trusted blindly.
 - **`/start-milestone <module> [mode]`** — the Gate 1 start signal: verify sub-PRD + tickets, publish tickets as tracker issues (deterministic idempotent script — agents never hand-create issues), then run every ticket through the deterministic `run-milestone` workflow (stage order, bounce cap, merge policy enforced in code).
