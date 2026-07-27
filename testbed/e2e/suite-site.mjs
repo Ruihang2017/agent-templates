@@ -8,6 +8,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { check, eq } from './lib.mjs'
+// same scheduler model the site and the runner use, so the demo cannot drift
+import { simulate } from '../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/dag-core.mjs'
 
 const S = 'site'
 const REPO = fileURLToPath(new URL('../../', import.meta.url))
@@ -67,6 +69,42 @@ export async function run() {
     // issue #62: the parallel-lanes feature is surfaced on the site
     check(S, 'shows the parallel-delivery section', /Parallel delivery/i.test(html) && html.includes('concurrency') && html.includes('/start-all autonomous 4'))
     check(S, 'no unescaped template failure', !html.includes('undefined') && !html.includes('[object Object]'))
+
+    // Lane demo (issue #73): a miniature of docs/prd/dag.html on the marketing page.
+    // The point of these checks is that the site cannot advertise a schedule the runner
+    // would not produce — the wave counts are recomputed here from dag-core, the same
+    // model build-site.mjs and the pipeline use, and compared against the rendered page.
+    {
+      check(S, 'shows the lane-demo section', /See the plan before you run it/.test(html))
+      check(S, 'lane demo explains where the real page lives', /docs\/prd\/dag\.html/.test(html))
+      check(S, 'lane demo says it needs no server', /no server/i.test(html))
+      check(S, 'lane demo says how to regenerate it', /dag-report\.mjs docs\/prd/.test(html))
+      check(S, 'lane demo covers mid-run progress', /reloads the DAG every few finished tickets/i.test(html))
+
+      const boards = [...html.matchAll(/data-board="(\d+)"/g)].map((m) => m[1])
+      eq(S, 'lane demo renders one board per lane count', boards.join(','), '1,2,4,6')
+      // an author display rule beats the UA [hidden] rule; without this the boards stack
+      check(S, 'lane demo restates [hidden] so only one board shows', /\.lane-board\[hidden\]\{display:none\}/.test(html))
+      check(S, 'lane demo defaults to a single visible board',
+        (html.match(/data-board="\d+" hidden/g) || []).length === 3)
+
+      const waveCounts = html.split(/data-board="/).slice(1)
+        .map((chunk) => (chunk.match(/class="lw"/g) || []).length)
+      const ids = ['0101', '0102', '0103', '0104', '0105', '0201', '0202', '0203', '0204', '0205', '0301', '0302', '0303', '0401', '0402']
+      const deps = { '0103': ['0101'], '0104': ['0102'], '0105': ['0103', '0104'],
+        '0201': ['0105'], '0202': ['0105'], '0203': ['0105'], '0204': ['0105'], '0205': ['0201'],
+        '0302': ['0301'], '0303': ['0302'] }
+      const expected = [1, 2, 4, 6].map((c) => simulate(ids, (id) => deps[id] || [], c).length)
+      eq(S, 'lane demo wave counts match the pipeline scheduler', waveCounts.join(','), expected.join(','))
+      check(S, 'more lanes are never slower on the demo graph',
+        expected.every((v, i) => i === 0 || v <= expected[i - 1]))
+      check(S, 'the demo graph actually demonstrates a saturation point',
+        expected[expected.length - 1] === expected[expected.length - 2])
+      // module identity must not rest on hue alone — every card carries its module name
+      const cards = (html.match(/class="lt"/g) || []).length
+      const chips = (html.match(/class="lt-m"/g) || []).length
+      eq(S, 'every demo ticket card carries its module chip', chips, cards)
+    }
 
     // clay restyle contract (issue #19)
     check(S, 'loads Baloo 2 + Nunito from Google Fonts', html.includes('fonts.googleapis.com/css2') && html.includes('Baloo+2') && html.includes('Nunito'))
