@@ -404,7 +404,7 @@ writeFileSync(out, html)
 // ---- stdout summary (the agent relays this; nobody has to open the page) ----------
 const rr = runnerProfile.roundsByCap[Math.min(recommendedGlobal, capMax) - 1].length
 const gr = globalProfile.roundsByCap[Math.min(recommendedGlobal, capMax) - 1].length
-console.log(`execution plan: ${data.modules.length} module(s), ${n} ticket(s) — modules run sequentially`)
+console.log(`execution plan: ${data.modules.length} module(s), ${n} ticket(s) — /start-all schedules them all from one DAG`)
 for (const m of perModule) {
   const flags = []
   if (m.maxUsefulLanes === recommended && perModule.length > 1) flags.push('widest')
