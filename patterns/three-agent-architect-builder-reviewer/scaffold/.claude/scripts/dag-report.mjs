@@ -8,12 +8,12 @@
 //
 // ONE flowchart covers the whole PRD — every ticket, colored by its module — under two
 // schedules the reader can toggle between:
-//   runner  — what /start-all does today: start-all.js awaits each run-milestone, so a
-//             module barrier sits between modules and `cap` fans out only within one.
-//   global  — what the dependency graph alone permits, module boundaries ignored.
-// The runner cannot execute the global schedule yet. Showing both, with the round
-// delta between them, is the point: it prices the module barrier instead of drawing a
-// picture of a run that never happens.
+//   global  — what /start-all does: it schedules every ticket from the flat DAG, so
+//             module boundaries never gate anything (catalog issue #71).
+//   runner  — what /start-milestone does: one module at a time, so a barrier sits
+//             between modules and `cap` fans out only within the one running.
+// Showing both prices the difference, so a reviewer can see what running module by
+// module would cost on this particular decomposition.
 //
 // Usage: node .claude/scripts/dag-report.mjs [prd-root] [--out <path>]
 //        prd-root defaults to docs/prd; --out defaults to <prd-root>/dag.html
@@ -205,7 +205,7 @@ var pill = document.getElementById('ccv');
 var readout = document.getElementById('readout');
 var flow = document.getElementById('flow');
 var svg = document.getElementById('edges');
-var mode = 'runner';
+var mode = 'global';
 var focus = null;
 
 function el(t, c, x){ var e = document.createElement(t); if(c) e.className = c;
@@ -254,17 +254,20 @@ function render(){
 
   drawEdges();
 
-  // in runner mode THIS schedule is the longer one, so the cost is rounds - other
-  var lost = rounds.length - other.length;
+  // module-by-module is always the longer of the two, so the cost is runner - global
+  var lost = mode === 'runner' ? rounds.length - other.length : other.length - rounds.length;
   var txt = '<b>' + rounds.length + '</b> ticket-rounds at concurrency ' + c +
     ' \\u00b7 <b>' + idle + '</b> idle lane-slots \\u00b7 ';
-  if (mode === 'runner') {
+  if (mode === 'global') {
     txt += lost > 0
-      ? 'a global schedule would finish in <b>' + other.length + '</b> \\u2014 <span class="save">' +
-        lost + ' rounds (' + Math.round(lost / rounds.length * 100) + '%) lost to the module barrier</span>'
-      : 'a global schedule finishes in the same <b>' + other.length + '</b> \\u2014 the module barrier costs nothing here';
+      ? 'running module by module would take <b>' + other.length + '</b> \\u2014 <span class="save">' +
+        lost + ' rounds (' + Math.round(lost / other.length * 100) + '%) more</span>'
+      : 'running module by module takes the same <b>' + other.length + '</b> \\u2014 module boundaries cost nothing here';
   } else {
-    txt += 'the runner would take <b>' + other.length + '</b> today \\u2014 <b>this schedule is not executable yet</b>';
+    txt += lost > 0
+      ? '<code>/start-all</code> finishes the same work in <b>' + other.length + '</b> \\u2014 <span class="save">' +
+        lost + ' rounds (' + Math.round(lost / rounds.length * 100) + '%) saved by scheduling globally</span>'
+      : '<code>/start-all</code> takes the same <b>' + other.length + '</b> \\u2014 module boundaries cost nothing here';
   }
   readout.innerHTML = txt;
 }
@@ -343,21 +346,21 @@ const html = [
   '<h1>PRD execution plan</h1>',
   `<p class="sub">Every ticket under <code>${esc(root)}</code> in one dependency graph, colored by module. Review before Gate 1 sign-off.</p>`,
   '<div class="panel hero">',
-  `  <div class="big"><div class="n">${recommended}</div><div class="l">recommended concurrency</div></div>`,
+  `  <div class="big"><div class="n">${recommendedGlobal}</div><div class="l">recommended concurrency</div></div>`,
   '  <div class="facts">',
   `    <p><b>${data.modules.length}</b> module(s), <b>${n}</b> ticket(s).</p>`,
-  `    <p>Start the run with <code class="cmd">/start-all autonomous ${recommended}</code></p>`,
-  `    <p>Today the runner finishes each module before starting the next, so lanes are intra-module and the recommendation is the widest single module &mdash; never the sum.${serial.length ? ` Fully serial: ${serial.map((s) => `<code>${esc(s)}</code>`).join(', ')} &mdash; a decomposition signal, not a scheduling one.` : ''}</p>`,
+  `    <p>Start the run with <code class="cmd">/start-all autonomous ${recommendedGlobal}</code></p>`,
+  `    <p><code>/start-all</code> schedules every ticket from this one graph, so module boundaries never gate anything. Running module by module instead (<code>/start-milestone</code>) uses at most <b>${recommended}</b> lane(s) &mdash; the widest single module.${serial.length ? ` Fully serial: ${serial.map((s) => `<code>${esc(s)}</code>`).join(', ')} &mdash; a decomposition signal, not a scheduling one.` : ''}</p>`,
   '  </div>',
   '</div>',
   '<div class="panel controls">',
   '  <div class="seg" role="group" aria-label="schedule">',
-  '    <button type="button" data-mode="runner" aria-pressed="true">As the runner executes</button>',
-  '    <button type="button" data-mode="global" aria-pressed="false">Globally scheduled</button>',
+  '    <button type="button" data-mode="global" aria-pressed="true">/start-all (global DAG)</button>',
+  '    <button type="button" data-mode="runner" aria-pressed="false">/start-milestone (module by module)</button>',
   '  </div>',
   '  <label for="cc">concurrency</label>',
-  `  <input id="cc" type="range" min="1" max="${sliderMax}" value="${recommended}" step="1">`,
-  `  <span class="pill" id="ccv">${recommended}</span>`,
+  `  <input id="cc" type="range" min="1" max="${sliderMax}" value="${recommendedGlobal}" step="1">`,
+  `  <span class="pill" id="ccv">${recommendedGlobal}</span>`,
   '  <span class="readout" id="readout"></span>',
   '</div>',
   '<div class="panel">',
@@ -377,8 +380,9 @@ const html = [
   '<div class="panel notes">',
   '  <h3>How to read this</h3>',
   '  <ul>',
-  '    <li><b>Two schedules, one graph.</b> <em>As the runner executes</em> is what <code>/start-all</code> does today: <code>start-all.js</code> awaits each <code>run-milestone</code>, so a barrier sits between modules and <code>concurrency</code> fans out only within the module currently running. <em>Globally scheduled</em> is what the dependency graph alone permits. <b>The runner cannot execute the global schedule yet</b> &mdash; it is shown to price the barrier, not to promise a speed-up.</li>',
-  '    <li><b>Dashed edges cross a module boundary.</b> They are real <code>blocked_by</code> dependencies. Every solid edge inside a module is enforced by the DAG; the barrier additionally serializes tickets with <em>no</em> edge between them at all, which is where the lost rounds come from.</li>',
+  '    <li><b>Two schedules, one graph.</b> <em>/start-all</em> schedules every ticket from this graph, gated only by <code>blocked_by</code> &mdash; module boundaries never gate anything. <em>/start-milestone</em> runs one module at a time, so a barrier sits between modules and <code>concurrency</code> fans out only within the one running. Both are executable; the difference is what running module by module costs on this decomposition.</li>',
+  '    <li><b>Dashed edges cross a module boundary.</b> They are real <code>blocked_by</code> dependencies, and <code>/start-all</code> enforces them directly. Running module by module additionally serializes tickets with <em>no</em> edge between them at all, which is where the extra rounds come from.</li>',
+  '    <li><b>The DAG is live during a run.</b> <code>/start-all</code> reloads it every few settled tickets, so a ticket added while it runs is published, scheduled, and rendered here on the next reload. A dependency added to a ticket that already started cannot be applied retroactively &mdash; the run escalates it instead of pretending it was enforced.</li>',
   '    <li><b>Max useful lanes</b> is the lowest concurrency that still reaches the minimum round count. Above it lanes sit idle; below it, independent tickets are serialized.</li>',
   '    <li><b>Uniform-duration model.</b> Every ticket counts as one round and a wave ends when all its lanes finish. Real lanes finish at different times and the scheduler refills a free lane immediately, so real wall-clock is <em>at most</em> the rounds shown.</li>',
   '    <li><b>A fully serial module is a decomposition problem, not a scheduling one.</b> Its tickets form one <code>blocked_by</code> chain &mdash; revisit the file-scope split before signing off.</li>',
@@ -398,8 +402,8 @@ mkdirSync(dirname(out), { recursive: true })
 writeFileSync(out, html)
 
 // ---- stdout summary (the agent relays this; nobody has to open the page) ----------
-const rr = runnerProfile.roundsByCap[Math.min(recommended, capMax) - 1].length
-const gr = globalProfile.roundsByCap[Math.min(recommended, capMax) - 1].length
+const rr = runnerProfile.roundsByCap[Math.min(recommendedGlobal, capMax) - 1].length
+const gr = globalProfile.roundsByCap[Math.min(recommendedGlobal, capMax) - 1].length
 console.log(`execution plan: ${data.modules.length} module(s), ${n} ticket(s) — modules run sequentially`)
 for (const m of perModule) {
   const flags = []
@@ -409,14 +413,14 @@ for (const m of perModule) {
   console.log(`  ${m.position}. ${m.name}  (${m.tickets.length} ticket(s))  ` +
     `${m.maxUsefulLanes} lane(s) / ${m.minWaves} wave(s)${flags.length ? '  [' + flags.join(', ') + ']' : ''}${d}`)
 }
-console.log(`recommended concurrency: ${recommended}   ->   /start-all autonomous ${recommended}`)
-console.log(`at that concurrency: ${rr} ticket-rounds as the runner executes; ${gr} if modules were globally scheduled` +
-  (rr > gr ? `  (${rr - gr} rounds, ${Math.round((rr - gr) / rr * 100)}%, lost to the module barrier — not executable today)` : '  (the module barrier costs nothing here)'))
+console.log(`recommended concurrency: ${recommendedGlobal}   ->   /start-all autonomous ${recommendedGlobal}`)
+console.log(`at that concurrency: ${gr} ticket-rounds via /start-all (global DAG); ${rr} module-by-module via /start-milestone` +
+  (rr > gr ? `  (running module by module costs ${rr - gr} more rounds, ${Math.round((rr - gr) / rr * 100)}%)` : '  (module boundaries cost nothing here)'))
 console.log(`wrote ${outShown}`)
 console.log('DAG-REPORT-JSON: ' + JSON.stringify({
   out: outShown,
-  recommendedConcurrency: recommended,
-  recommendedConcurrencyGlobal: recommendedGlobal,
+  recommendedConcurrency: recommendedGlobal,
+  recommendedConcurrencyPerModule: recommended,
   totalTickets: n,
   schedules: { atRecommended: { runnerRounds: rr, globalRounds: gr }, runnerMinRounds: runnerProfile.minRounds, globalMinRounds: globalProfile.minRounds },
   modules: perModule.map((m) => ({ name: m.name, position: m.position, tickets: m.tickets.length,

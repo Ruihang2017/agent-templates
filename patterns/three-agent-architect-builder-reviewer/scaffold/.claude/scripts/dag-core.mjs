@@ -53,6 +53,10 @@ export function buildGraph(root) {
         lane: field(fm, 'lane'),
         size: field(fm, 'size'),
         blockedBy: listField(fm, 'blocked_by'),
+        // forward slashes: this path is handed to agents and embedded in JSON that the
+        // E2E matrix compares across ubuntu and windows
+        file: join(tdir, f).replace(/\\/g, '/'),
+        module: d,
       })
     }
     if (tickets.length) modules[d] = { tickets, dependsOn: new Set() }

@@ -66,7 +66,10 @@ export async function run() {
   const r1 = runReport(join(t1, 'prd'))
   check(S, 'R1 exit 0', r1.status === 0, r1.stderr)
   check(S, 'R1 emits DAG-REPORT-JSON', r1.json !== null)
-  eq(S, 'R1 recommended concurrency is the MAX across modules (not the sum)', r1.json && r1.json.recommendedConcurrency, 4)
+  // /start-all schedules globally (issue #71), so the headline recommendation follows the
+  // GLOBAL schedule; the per-module max is what /start-milestone would need.
+  eq(S, 'R1 headline recommendation follows the global schedule', r1.json && r1.json.recommendedConcurrency, 4)
+  eq(S, 'R1 per-module recommendation is reported separately for /start-milestone', r1.json && r1.json.recommendedConcurrencyPerModule, 4)
   eq(S, 'R1 total tickets', r1.json && r1.json.totalTickets, 19)
   eq(S, 'R1 01-core lanes', modOf(r1.json, '01-core').maxUsefulLanes, 2)
   eq(S, 'R1 01-core waves', modOf(r1.json, '01-core').minWaves, 3)
@@ -83,8 +86,11 @@ export async function run() {
   eq(S, 'R2 global rounds at the recommendation', sch && sch.atRecommended.globalRounds, 5)
   check(S, 'R2 a global schedule is never slower than the runner schedule',
     sch && sch.globalMinRounds <= sch.runnerMinRounds)
-  check(S, 'R2 stdout prices the module barrier', /lost to the module barrier/.test(r1.stdout))
-  check(S, 'R2 stdout says the global schedule is not executable today', /not executable today/.test(r1.stdout))
+  check(S, 'R2 stdout prices running module by module', /module by module costs 6 more rounds/.test(r1.stdout))
+  check(S, 'R2 stdout attributes the global schedule to /start-all', /via \/start-all \(global DAG\)/.test(r1.stdout))
+  // Both schedules are executable since #71 — a page still claiming otherwise would
+  // actively misinform the Gate 1 reviewer.
+  check(S, 'R2 nothing claims the global schedule is unexecutable', !/not executable/i.test(r1.stdout))
 
   const html1 = readFileSync(join(t1, 'prd', 'dag.html'), 'utf8')
   const data = embedded(html1)
@@ -107,7 +113,10 @@ export async function run() {
   eq(S, 'R3 exactly one flowchart element', (html1.match(/class="flow"/g) || []).length, 1)
   check(S, 'R3 no per-module chart sections remain', !/class="mod"/.test(html1))
   check(S, 'R3 page offers both schedule modes', /data-mode="runner"/.test(html1) && /data-mode="global"/.test(html1))
-  check(S, 'R3 page states the global schedule is not executable yet', /not executable/i.test(html1))
+  check(S, 'R3 page names the command behind each mode', /\/start-all \(global DAG\)/.test(html1) && /\/start-milestone \(module by module\)/.test(html1))
+  check(S, 'R3 page defaults to the schedule /start-all actually runs', /data-mode="global" aria-pressed="true"/.test(html1))
+  check(S, 'R3 page no longer claims the global schedule is unexecutable', !/not executable/i.test(html1))
+  check(S, 'R3 page explains that the DAG reloads mid-run', /reloads it every few settled tickets/i.test(html1))
   check(S, 'R3 cross-module dependencies are carried into the graph',
     data && data.tickets['0201'].deps.includes('0105'))
   check(S, 'R3 legend has one entry per module',
@@ -148,7 +157,7 @@ export async function run() {
   eq(S, 'R7 fully independent tickets => lanes == ticket count', r7.json && r7.json.recommendedConcurrency, 5)
   eq(S, 'R7 one module => the module barrier costs nothing',
     r7.json && r7.json.schedules.atRecommended.runnerRounds, r7.json && r7.json.schedules.atRecommended.globalRounds)
-  check(S, 'R7 stdout says the barrier is free here', /barrier costs nothing/.test(r7.stdout))
+  check(S, 'R7 stdout says module boundaries are free here', /module boundaries cost nothing here/.test(r7.stdout))
   check(S, 'R7 a fully parallel module is NOT flagged serial', !/fully serial/.test(r7.stdout))
 
   // R8: single ticket — degenerate case must not crash or divide by zero

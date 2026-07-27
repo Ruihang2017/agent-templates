@@ -1,19 +1,38 @@
 ---
-description: Whole-PRD Gate 1 — compute the module DAG, publish every module's tickets, run all modules through the pipeline in dependency order (three-agent pattern)
+description: Gate 1 for the whole PRD — publish every module's tickets, then run them all through the pipeline scheduled from one dependency DAG
 argument-hint: [supervised|autonomous] [concurrency]
 ---
 
-Arguments: `$ARGUMENTS` — optional mode override (else the repo's declared Operating mode in CLAUDE.md); an optional integer sets **`concurrency`** (default 1 = sequential; >1 runs independent tickets WITHIN each module as parallel lanes — autonomous only; modules themselves stay sequential in DAG order).
+Arguments: `$ARGUMENTS` — optional mode override (else the repo's declared Operating mode in CLAUDE.md); an optional integer sets **`concurrency`** (default 1 = sequential; >1 runs independent tickets as parallel lanes — autonomous only).
 
 **Do not guess `concurrency`.** `node .claude/scripts/dag-report.mjs docs/prd` derives it from the ticket DAG and prints `recommended concurrency: N` (also rendered in `docs/prd/dag.html`, written at `/breakdown-prd` time). Above that number the extra lanes never fill; below it, independent tickets get serialized. If the human passed no integer, run the report and report what it recommends rather than defaulting to 1 silently.
 
-Typing this command is the human Gate 1 sign-off **for the whole PRD** — every module, in dependency order. Prefer `/start-milestone` per module when you still want module-boundary checkpoints. Execute in order:
+`/start-all` schedules from **one flat DAG across every module** — it is not a sequence of `/start-milestone` runs. Two modules with no dependency between them run concurrently; only `blocked_by` gates anything (catalog issue #71).
 
-1. **Compute the plan.** Run `node .claude/scripts/milestone-dag.mjs` and show its output (module order, per-module dependencies). STOP on any error — a dangling `blocked_by` or a cycle is a spec defect for the Architect/human, not something to patch here.
-2. **Publish all tickets.** For each module in DAG order: `node .claude/scripts/publish-tickets.mjs docs/prd/<module>` (dry-run, then `--create`; STOP on `error` entries). Keep each module's `PUBLISH-SUMMARY-JSON` line — step 3 needs it. Then, per module, **filter out tickets whose issues are already closed** (closed = delivered by an earlier run — this makes `/start-all` re-runs resume: fully-closed modules pass an empty ticket list and are marked already-complete).
-3. **Launch the driver.** Call the **Workflow** tool with `name: "start-all"` and `args: { modules: [{name, dependsOn, tickets}] in DAG order, mode, defaultBranch, platform, concurrency }` (concurrency from the optional arg, default 1) — read `platform` from the CLAUDE.md **`Tracker:`** line (`gh` or `glab`; adopt.mjs set it), never guess it. Each element of `tickets` MUST be an object `{id, path, issue, blockedBy}` — the exact shape run-milestone validates (issue #27; bare id strings fail). Build it by joining the two step outputs per module: ticket ids, their order, and each ticket's intra-module `blockedBy` come from the DAG plan (step 1, `milestone-dag.mjs` already parses `blocked_by`), `path` and `issue` come from that module's `PUBLISH-SUMMARY-JSON` (step 2), matched by `id`. (`blockedBy` lets `concurrency>1` run independent tickets in parallel; with the default `concurrency: 1` it is unused.) Add `testCmd` (the repo's test command, if its CLAUDE.md declares one) so the deterministic deliver script re-runs tests on the merged default branch as part of DoD. This command's instruction is your authorization to use the Workflow tool. Failure policy is enforced in the workflow: failed modules block their dependents; independent branches continue in `autonomous`; anything short of a CLEAR stops everything in `supervised`.
-4. **Relay the final report verbatim** — per module: `completed` / `already-complete` / `paused-for-merge` (supervised: tell the human to merge, then re-run this command) / `failed` (with the failing ticket + stage) / `skipped-dependency` / `not-started`. Escalations inside a module carry through from run-milestone unchanged.
+1. **Verify the PRD is ready.** `docs/PRD.md` and at least one `docs/prd/<module>/tickets/*.md` must exist. If not, STOP and tell the human to run `/breakdown-prd` first.
 
-While the workflow runs you are an observer. Do not do stage work in parallel, do not "help" a slow stage, do not edit files.
+2. **Compute the graph.** Run `node .claude/scripts/dag-scan.mjs docs/prd` and parse its final `SCAN-JSON` line: `{tickets: [{id, module, path, blockedBy}]}`. This is the whole PRD in one flat list, cross-module edges intact. A non-zero exit means the decomposition is broken (dangling `blocked_by`, or a cycle) — report it and STOP; never start a run on a broken DAG.
 
-Hard rule: DAG computation and publishing are script steps; module sequencing is the workflow's job. Never absorb either role by improvising order or tracker writes yourself.
+3. **Publish every module's tickets.** For each module dir under `docs/prd/`, run `node .claude/scripts/publish-tickets.mjs docs/prd/<module> --create --platform <gh|glab>` — read `platform` from the CLAUDE.md **`Tracker:`** line (adopt.mjs set it), never guess it. Collect each ticket's issue number from the `PUBLISH-SUMMARY-JSON` lines.
+
+4. **Filter out already-delivered tickets.** Drop any ticket whose issue is already **closed** (check via `gh`/`glab`). Closed means an earlier run delivered it — this filter is what makes re-runs after a supervised pause or a crash safe. If every ticket is filtered out, report "already complete" and stop.
+
+5. **Launch the scheduler.** Call the **Workflow** tool with `name: "start-all"` and `args`:
+
+   ```
+   {
+     tickets: [{id, path, issue, module, blockedBy}],   // FLAT — every module, one array
+     mode, concurrency, defaultBranch, platform,
+     rescanEvery: 3,            // reload the DAG every N settled tickets; 0 disables
+     prdRoot: 'docs/prd',
+     testCmd                    // optional, if CLAUDE.md declares one
+   }
+   ```
+
+   Build `tickets` by joining step 2 (`id`, `module`, `path`, `blockedBy`) with step 3 (`issue`) on `id`. **Keep `blockedBy` complete — including cross-module edges.** They gate scheduling directly now; dropping them would let a ticket start before its blocker. This command's instruction is your authorization to use the Workflow tool.
+
+   Failure policy is enforced in the workflow: a failed ticket cascades to its dependents (skipped); independent branches continue in `autonomous`; anything short of a CLEAR stops the run in `supervised`.
+
+6. **The DAG stays live during the run.** Every `rescanEvery` settled tickets — and always once more before the run finishes — the workflow re-reads `docs/prd` through an agent, so **a ticket added while the run is in flight is published, scheduled, executed, and re-rendered into `docs/prd/dag.html`**. Adding one is just writing the ticket file (via `/breakdown-prd` or the architect; the write guard blocks the main session from writing it directly). Pass `rescanEvery: 0` for a frozen graph.
+
+7. **Relay the final report verbatim** — per ticket: `delivered` / `escalated` (with stage + findings) / `failed` (with stage) / `skipped-dependency` / `awaiting-human-merge` (supervised: tell the human to merge, then re-run this command) / `not-started`. **Always relay `escalations` too** — that array carries the things the scheduler could not enforce and a human must judge: a dependency added to a ticket that had already started, a cycle introduced mid-run, a failed DAG reload, or a hit runaway guard. Do not summarize those away.

@@ -1,150 +1,301 @@
 // E2E for the start-all workflow: executes the ACTUAL start-all.js with a stubbed
-// workflow() (standing in for run-milestone children) and asserts the module-level
-// failure policy the maintainer decided in catalog issue #20: failed modules block
-// dependents; independent branches continue in autonomous; anything short of a CLEAR
-// stops everything in supervised; empty ticket lists resume as already-complete.
+// async agent() and asserts the global scheduler from catalog issue #71 —
+//   - it schedules from ONE flat blocked_by DAG (no module barrier, no run-milestone),
+//   - it reloads that DAG mid-run so tickets added while it runs still execute,
+//   - and every merge rule for a reload is enforced, including the escalation paths.
+//
+// The last scenario is a PARITY test against run-milestone. The maintainer accepted
+// duplicating the dispatch loop across two workflow files (they cannot import each
+// other); this is the guard that turns silent behavioral drift into a failed gate.
 
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { check, eq } from './lib.mjs'
 
 const S = 'startall'
-const SRC = readFileSync(
-  fileURLToPath(new URL('../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/workflows/start-all.js', import.meta.url)),
-  'utf8'
-).replace('export const meta', 'const meta')
+const load = (name) =>
+  readFileSync(fileURLToPath(new URL('../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/workflows/' + name, import.meta.url)), 'utf8')
+    .replace('export const meta', 'const meta')
 
-async function runStartAll(args, childImpl) {
-  const children = []
+const SRC = load('start-all.js')
+const RUNMILESTONE = load('run-milestone.js')
+
+// Drive a workflow body with a stubbed agent(). `respond` returns the agent's payload;
+// `onSettle` (optional) fires after each ticket's deliver, which is where a test
+// simulates the outside world adding or editing a ticket mid-run.
+async function drive(body, args, respond) {
+  const events = []
   const logs = []
-  const workflow = async (name, childArgs) => {
-    children.push({ name, args: childArgs })
-    return childImpl(childArgs, children.length)
+  const workflowCalls = []
+  let active = 0
+  let maxActive = 0
+  const activeIds = new Set()
+  const overlaps = new Set()
+
+  const agent = async (prompt, opts = {}) => {
+    const label = opts.label || ''
+    const id = (label.split(':')[1] || '').split('#')[0]
+    active += 1
+    maxActive = Math.max(maxActive, active)
+    if (!label.startsWith('rescan')) {
+      for (const other of activeIds) if (other !== id) overlaps.add([id, other].sort().join('|'))
+      activeIds.add(id)
+    }
+    events.push({ ev: 'start', label, isolation: opts.isolation || null, effort: opts.effort || null, prompt })
+    await new Promise((r) => setTimeout(r, 2)) // let sibling lanes interleave
+    const res = await respond({ prompt, opts, label, id })
+    events.push({ ev: 'end', label })
+    active -= 1
+    activeIds.delete(id)
+    return res
   }
+  const workflow = async (name, a) => { workflowCalls.push({ name, args: a }); return { results: [] } }
   const fn = new Function(
     'agent', 'parallel', 'pipeline', 'log', 'phase', 'args', 'budget', 'workflow',
-    `"use strict"; return (async () => { ${SRC}\n })()`
+    `"use strict"; return (async () => { ${body}\n })()`
   )
   let result = null
   let error = null
   try {
-    result = await fn(null, null, null, (m) => logs.push(m), () => {}, args, { total: null, spent: () => 0, remaining: () => Infinity }, workflow)
-  } catch (e) {
-    error = e
-  }
-  return { result, children, logs, error }
+    result = await fn(agent, null, null, (m) => logs.push(m), () => {}, args, { total: null, spent: () => 0, remaining: () => Infinity }, workflow)
+  } catch (e) { error = e }
+  return { result, error, events, logs, maxActive, overlaps, workflowCalls }
 }
 
-const tk = (id) => ({ id, path: `docs/prd/x/tickets/${id}.md`, issue: 1 })
-const mod = (name, dependsOn, ids) => ({ name, dependsOn, tickets: ids.map(tk) })
-const delivered = (childArgs) => ({ mode: childArgs.mode, results: childArgs.tickets.map((t) => ({ id: t.id, status: 'delivered' })), notStarted: 0 })
+const kind = (l) => l.split(':')[0]
+const tk = (id, blockedBy, module) => ({ id, path: `docs/prd/${module || 'x'}/tickets/${id}.md`, issue: 1, module: module || 'x', ...(blockedBy ? { blockedBy } : {}) })
+
+const plan = (id) => ({ planPath: `docs/plans/${id}.md`, summary: 'ok', content: 'PLAN_' + id })
+const goodBuild = (id) => ({ branch: `ticket/${id}`, testsPassed: true, testOutput: 'green', deviations: '' })
+const CLEAR = { verdict: 'CLEAR', checkedNote: 'ok' }
+const OK_DELIVERY = { merged: true, issueClosed: true, dodPassed: true }
+
+// A responder that delivers everything, and answers rescans from a mutable ticket list
+// the test controls — that list stands in for docs/prd on disk.
+const makeRespond = (scanState) => async ({ label, id }) => {
+  if (label.startsWith('rescan')) {
+    if (scanState.fail) return { ok: false, detail: 'dag-scan exited 1: half-written ticket' }
+    scanState.calls += 1
+    if (scanState.onScan) scanState.onScan(scanState.calls)
+    return { ok: true, tickets: scanState.tickets.map((t) => ({ id: t.id, module: t.module || 'x', path: t.path, blockedBy: t.blockedBy || [], issue: t.issue })) }
+  }
+  if (kind(label) === 'plan') return plan(id)
+  if (kind(label) === 'build' || kind(label) === 'fix') return goodBuild(id)
+  if (kind(label) === 'review') return CLEAR
+  if (kind(label) === 'deliver') {
+    if (scanState.onDeliver) scanState.onDeliver(id)
+    return OK_DELIVERY
+  }
+  return null
+}
+const statusOf = (result, id) => (result.results.find((r) => r.id === id) || {}).status
 
 export async function run() {
-  // SA1: autonomous happy chain — children called once per module, in order
+  // ---- SA1: the module barrier is gone -----------------------------------------------
+  // Two modules with NO dependency between them. Under the old driver these could never
+  // overlap; under the flat DAG they must.
   {
-    const args = { modules: [mod('00-f', [], ['F-1']), mod('01-a', ['00-f'], ['A-1', 'A-2']), mod('02-b', ['01-a'], ['B-1'])], mode: 'autonomous' }
-    const { result, children, error } = await runStartAll(args, delivered)
+    const tickets = [tk('A-1', [], '01-a'), tk('A-2', ['A-1'], '01-a'), tk('B-1', [], '02-b'), tk('B-2', [], '02-b')]
+    const st = { tickets, calls: 0 }
+    const { result, error, overlaps, workflowCalls } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 3, rescanEvery: 0 }, makeRespond(st))
     check(S, 'SA1 no error', !error, error && error.message)
-    eq(S, 'SA1 all modules completed', result && result.results.map((r) => r.state), ['completed', 'completed', 'completed'])
-    eq(S, 'SA1 children in DAG order', children.map((c) => c.args.tickets[0].id), ['F-1', 'A-1', 'B-1'])
-    check(S, 'SA1 composes run-milestone', children.every((c) => c.name === 'run-milestone'))
+    eq(S, 'SA1 every ticket delivered', result && result.results.every((r) => r.status === 'delivered'), true)
+    eq(S, 'SA1 reports the global scheduler', result && result.scheduler, 'global-dag')
+    check(S, 'SA1 tickets from DIFFERENT modules ran concurrently (no module barrier)',
+      [...overlaps].some((p) => p.includes('A-') && p.includes('B-')))
+    eq(S, 'SA1 start-all no longer composes run-milestone', workflowCalls.length, 0)
+    check(S, 'SA1 source contains no workflow() call', !/\bworkflow\s*\(/.test(SRC))
   }
 
-  // SA2: autonomous diamond — a fails; b (independent) continues; c (depends on a) skipped
+  // ---- SA2: cross-module blocked_by gates directly ------------------------------------
   {
-    const args = {
-      modules: [mod('00-f', [], ['F-1']), mod('01-a', ['00-f'], ['A-1']), mod('02-b', ['00-f'], ['B-1']), mod('03-c', ['01-a'], ['C-1'])],
-      mode: 'autonomous',
-    }
-    const { result, children, error } = await runStartAll(args, (childArgs) => {
-      if (childArgs.tickets[0].id === 'A-1') {
-        return { mode: 'autonomous', results: [{ id: 'A-1', status: 'escalated', stage: 'review' }], notStarted: 0 }
-      }
-      return delivered(childArgs)
-    })
+    const tickets = [tk('A-1', [], '01-a'), tk('B-1', ['A-1'], '02-b')]
+    const st = { tickets, calls: 0 }
+    const order = []
+    const respond = makeRespond(st)
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 4, rescanEvery: 0 },
+      async (c) => { if (kind(c.label) === 'plan') order.push(c.id); return respond(c) })
     check(S, 'SA2 no error', !error, error && error.message)
-    const states = Object.fromEntries(result.results.map((r) => [r.name, r.state]))
-    eq(S, 'SA2 failed module marked', states['01-a'], 'failed')
-    eq(S, 'SA2 independent branch continued', states['02-b'], 'completed')
-    eq(S, 'SA2 dependent skipped', states['03-c'], 'skipped-dependency')
-    eq(S, 'SA2 no child launched for the skipped module', children.length, 3)
-    check(S, 'SA2 failure detail names ticket and stage', /A-1: escalated \(review\)/.test(result.results.find((r) => r.name === '01-a').detail))
+    eq(S, 'SA2 cross-module blocker ran first', order, ['A-1', 'B-1'])
+    eq(S, 'SA2 both delivered', result && result.delivered, 2)
   }
 
-  // SA3: supervised — first pause stops the whole run
+  // ---- SA3: failure cascades along ticket edges, independents continue ----------------
   {
-    const args = { modules: [mod('00-f', [], ['F-1']), mod('01-a', ['00-f'], ['A-1'])], mode: 'supervised' }
-    const { result, children, error } = await runStartAll(args, (childArgs) => ({
-      mode: 'supervised',
-      results: [{ id: childArgs.tickets[0].id, status: 'awaiting-human-merge', branch: 'ticket/x' }],
-      notStarted: 0,
-    }))
+    const tickets = [tk('A-1', [], '01-a'), tk('A-2', ['A-1'], '01-a'), tk('B-1', [], '02-b')]
+    const st = { tickets, calls: 0 }
+    const respond = makeRespond(st)
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 3, rescanEvery: 0 },
+      async (c) => (c.id === 'A-1' && kind(c.label) === 'build'
+        ? { branch: 'ticket/A-1', testsPassed: false, testOutput: 'RED' }
+        : respond(c)))
     check(S, 'SA3 no error', !error, error && error.message)
-    eq(S, 'SA3 first module paused', result.results[0].state, 'paused-for-merge')
-    eq(S, 'SA3 second module not started', result.results[1].state, 'not-started')
-    eq(S, 'SA3 only one child launched', children.length, 1)
-    check(S, 'SA3 stoppedEarly flagged', result.stoppedEarly === true)
+    eq(S, 'SA3 the failing ticket is failed', statusOf(result, 'A-1'), 'failed')
+    eq(S, 'SA3 its dependent is skipped', statusOf(result, 'A-2'), 'skipped-dependency')
+    eq(S, 'SA3 an INDEPENDENT ticket still delivers', statusOf(result, 'B-1'), 'delivered')
   }
 
-  // SA4: supervised — a failure (no CLEAR) also stops everything
+  // ---- SA4: supervised forces sequential and stops on the first pause -----------------
   {
-    const args = { modules: [mod('00-f', [], ['F-1']), mod('01-a', ['00-f'], ['A-1'])], mode: 'supervised' }
-    const { result, error } = await runStartAll(args, (childArgs) => ({
-      mode: 'supervised',
-      results: [{ id: childArgs.tickets[0].id, status: 'failed', stage: 'builder' }],
-      notStarted: 0,
-    }))
+    const tickets = [tk('A-1', [], '01-a'), tk('B-1', [], '02-b')]
+    const st = { tickets, calls: 0 }
+    const respond = makeRespond(st)
+    const { result, error, maxActive } = await drive(SRC, { tickets, mode: 'supervised', concurrency: 4, rescanEvery: 0 },
+      async (c) => (kind(c.label) === 'deliver' ? { merged: false, issueClosed: false, dodPassed: false, awaitingMerge: true, prUrl: 'http://x/1' } : respond(c)))
     check(S, 'SA4 no error', !error, error && error.message)
-    eq(S, 'SA4 module marked failed', result.results[0].state, 'failed')
-    eq(S, 'SA4 run stopped', result.results[1].state, 'not-started')
+    eq(S, 'SA4 supervised forced concurrency to 1', result && result.concurrency, 1)
+    eq(S, 'SA4 never more than one agent in flight', maxActive, 1)
+    eq(S, 'SA4 first ticket awaits a human merge', statusOf(result, 'A-1'), 'awaiting-human-merge')
+    eq(S, 'SA4 the run stops rather than continuing', statusOf(result, 'B-1'), 'not-started')
   }
 
-  // SA5: resume — empty ticket list means already-complete, no child call, deps satisfied
+  // ---- SA5: a ticket added mid-run is picked up AND executed --------------------------
   {
-    const args = { modules: [mod('00-f', [], []), mod('01-a', ['00-f'], ['A-1'])], mode: 'autonomous' }
-    const { result, children, error } = await runStartAll(args, delivered)
+    const tickets = [tk('A-1', [], '01-a'), tk('A-2', [], '01-a'), tk('A-3', [], '01-a')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    // after the first delivery, the outside world adds a ticket
+    st.onDeliver = (id) => { if (id === 'A-1') st.tickets.push(tk('NEW-1', [], '03-new')) }
+    const { result, error, events } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
     check(S, 'SA5 no error', !error, error && error.message)
-    eq(S, 'SA5 empty module already-complete', result.results[0].state, 'already-complete')
-    eq(S, 'SA5 dependent still ran', result.results[1].state, 'completed')
-    eq(S, 'SA5 exactly one child launched', children.length, 1)
+    eq(S, 'SA5 the mid-run ticket was executed', statusOf(result, 'NEW-1'), 'delivered')
+    eq(S, 'SA5 ticket count grew', result && result.ticketCount, 4)
+    check(S, 'SA5 the reload agent runs the deterministic scan script',
+      events.some((e) => e.ev === 'start' && e.label.startsWith('rescan') && /dag-scan\.mjs/.test(e.prompt)))
+    check(S, 'SA5 the reload agent publishes new tickets so delivery can close them',
+      events.some((e) => e.ev === 'start' && e.label.startsWith('rescan') && /publish-tickets\.mjs/.test(e.prompt)))
+    check(S, 'SA5 the reload agent refreshes the visualization',
+      events.some((e) => e.ev === 'start' && e.label.startsWith('rescan') && /dag-report\.mjs/.test(e.prompt)))
+    check(S, 'SA5 reload runs at low effort (it only relays script output)',
+      events.some((e) => e.ev === 'start' && e.label.startsWith('rescan') && e.effort === 'low'))
   }
 
-  // SA6: a crashing child = failed module, dependents skipped, run survives
+  // ---- SA6: reload cadence honors rescanEvery, and 0 disables it ----------------------
   {
-    const args = { modules: [mod('00-f', [], ['F-1']), mod('01-a', ['00-f'], ['A-1'])], mode: 'autonomous' }
-    const { result, error } = await runStartAll(args, (childArgs) => {
-      if (childArgs.tickets[0].id === 'F-1') throw new Error('child exploded')
-      return delivered(childArgs)
-    })
-    check(S, 'SA6 no error', !error, error && error.message)
-    eq(S, 'SA6 crashed module failed', result.results[0].state, 'failed')
-    check(S, 'SA6 detail carries the child error', /child exploded/.test(result.results[0].detail))
-    eq(S, 'SA6 dependent skipped', result.results[1].state, 'skipped-dependency')
+    const mk = () => [tk('A-1', [], 'x'), tk('A-2', [], 'x'), tk('A-3', [], 'x'), tk('A-4', [], 'x'), tk('A-5', [], 'x'), tk('A-6', [], 'x')]
+    const stA = { tickets: mk(), calls: 0 }
+    const a = await drive(SRC, { tickets: mk(), mode: 'autonomous', concurrency: 1, rescanEvery: 3 }, makeRespond(stA))
+    // 6 settles => 2 cadence reloads, plus one forced final check
+    eq(S, 'SA6 rescanEvery=3 over 6 tickets => 2 cadence + 1 final reload', a.result && a.result.rescans, 3)
+
+    const stB = { tickets: mk(), calls: 0 }
+    const b = await drive(SRC, { tickets: mk(), mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, makeRespond(stB))
+    eq(S, 'SA6 rescanEvery=0 disables reloading entirely', b.result && b.result.rescans, 0)
+    eq(S, 'SA6 static mode still delivers everything', b.result && b.result.delivered, 6)
   }
 
-  // SA7: validation — order violating the DAG throws; bad mode throws
+  // ---- SA7: the FINAL forced reload catches a ticket added after everything settled ---
   {
-    const bad = await runStartAll({ modules: [mod('01-a', ['00-f'], ['A-1'])], mode: 'autonomous' }, delivered)
-    check(S, 'SA7 order violation throws', bad.error && /violates the DAG/.test(bad.error.message))
-    const badMode = await runStartAll({ modules: [mod('00-f', [], ['F-1'])], mode: 'yolo' }, delivered)
-    check(S, 'SA7 bad mode throws', badMode.error && /mode/.test(badMode.error.message))
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    // added only once the original work is done — a cadence reload would never see it
+    st.onScan = (n) => { if (n === 1) st.tickets.push(tk('LATE-1', [], 'x')) }
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 5 }, makeRespond(st))
+    check(S, 'SA7 no error', !error, error && error.message)
+    eq(S, 'SA7 a ticket added after the last settle still runs', statusOf(result, 'LATE-1'), 'delivered')
   }
 
-  // SA8: args delivered as a JSON string (issue #23) — parsed, run completes
+  // ---- SA8: a late dependency change on already-dispatched work is NOT enforced -------
   {
-    const args = { modules: [mod('00-f', [], ['F-1'])], mode: 'autonomous' }
-    const { result, error } = await runStartAll(JSON.stringify(args), delivered)
-    check(S, 'SA8 stringified args accepted (issue #23)', !error, error && error.message)
-    eq(S, 'SA8 module completed', result && result.results[0].state, 'completed')
+    const tickets = [tk('A-1', [], 'x'), tk('A-2', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    st.onDeliver = (id) => {
+      if (id !== 'A-1') return
+      // retroactively claim A-1 was blocked by A-2 — it already ran
+      st.tickets = st.tickets.map((t) => (t.id === 'A-1' ? { ...t, blockedBy: ['A-2'] } : t))
+    }
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    check(S, 'SA8 no error', !error, error && error.message)
+    eq(S, 'SA8 the already-delivered ticket stays delivered', statusOf(result, 'A-1'), 'delivered')
+    check(S, 'SA8 the unenforceable edge is escalated, not silently applied',
+      result && result.escalations.some((e) => /late dependency change on A-1/.test(e)))
   }
 
-  // SA9: testCmd passes through to run-milestone children (issue #26)
+  // ---- SA9: a reload that introduces a cycle fails loudly -----------------------------
   {
-    const args = { modules: [mod('00-f', [], ['F-1'])], mode: 'autonomous', testCmd: 'npm test' }
-    const { children, error } = await runStartAll(args, delivered)
-    check(S, 'SA9 no error', !error, error && error.message)
-    eq(S, 'SA9 child receives testCmd', children[0] && children[0].args.testCmd, 'npm test')
-    const without = await runStartAll({ modules: [mod('00-f', [], ['F-1'])], mode: 'autonomous' }, delivered)
-    check(S, 'SA9 absent testCmd stays absent on the child', without.children[0] && !('testCmd' in without.children[0].args))
+    const tickets = [tk('A-1', [], 'x'), tk('C-1', [], 'x'), tk('C-2', ['C-1'], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    st.onDeliver = (id) => {
+      if (id !== 'A-1') return
+      st.tickets = st.tickets.map((t) => (t.id === 'C-1' ? { ...t, blockedBy: ['C-2'] } : t)) // C-1 <-> C-2
+    }
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    check(S, 'SA9 no error (the run reports, it does not throw)', !error, error && error.message)
+    eq(S, 'SA9 cycle member failed', statusOf(result, 'C-1'), 'failed')
+    eq(S, 'SA9 other cycle member failed', statusOf(result, 'C-2'), 'failed')
+    check(S, 'SA9 the cycle is named in the escalations',
+      result && result.escalations.some((e) => /cycle/.test(e) && /C-1/.test(e) && /C-2/.test(e)))
+  }
+
+  // ---- SA10: a failed reload keeps the previous graph and finishes the work -----------
+  {
+    const tickets = [tk('A-1', [], 'x'), tk('A-2', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0, fail: true }
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    check(S, 'SA10 no error', !error, error && error.message)
+    eq(S, 'SA10 in-flight work still completes on a broken scan', result && result.delivered, 2)
+    check(S, 'SA10 the scan failure is escalated with its reason',
+      result && result.escalations.some((e) => /kept the previous graph/.test(e) && /half-written ticket/.test(e)))
+  }
+
+  // ---- SA11: a ticket deleted while still pending is dropped from the run -------------
+  {
+    const tickets = [tk('A-1', [], 'x'), tk('DOOMED', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    st.onDeliver = (id) => { if (id === 'A-1') st.tickets = st.tickets.filter((t) => t.id !== 'DOOMED') }
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    check(S, 'SA11 no error', !error, error && error.message)
+    eq(S, 'SA11 the deleted pending ticket is gone from the results', result && result.results.some((r) => r.id === 'DOOMED'), false)
+    eq(S, 'SA11 the surviving ticket delivered', statusOf(result, 'A-1'), 'delivered')
+  }
+
+  // ---- SA12: runaway guards ----------------------------------------------------------
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    let n = 0
+    st.onScan = () => { n += 1; st.tickets.push(tk('GROW-' + n, [], 'x')) } // grows forever
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1, maxTickets: 4 }, makeRespond(st))
+    check(S, 'SA12 no error', !error, error && error.message)
+    check(S, 'SA12 growth stops at maxTickets', result && result.ticketCount <= 4)
+    check(S, 'SA12 the refusal is escalated', result && result.escalations.some((e) => /maxTickets/.test(e)))
+  }
+
+  // ---- SA13: validation ---------------------------------------------------------------
+  {
+    const bad = async (args, why) => {
+      const { error } = await drive(SRC, args, makeRespond({ tickets: [], calls: 0 }))
+      check(S, 'SA13 rejects ' + why, !!error, 'expected a throw')
+    }
+    await bad({ tickets: [], mode: 'autonomous' }, 'an empty ticket list')
+    await bad({ tickets: [tk('A-1')], mode: 'nope' }, 'an unknown mode')
+    await bad({ tickets: [tk('A-1')], mode: 'autonomous', concurrency: 0 }, 'concurrency < 1')
+    await bad({ tickets: [tk('A-1')], mode: 'autonomous', rescanEvery: -1 }, 'a negative rescanEvery')
+    await bad({ tickets: [{ id: 'A-1' }], mode: 'autonomous' }, 'a ticket without a path')
+    await bad({ tickets: [{ id: 'A-1', path: 'p', blockedBy: 'A-2' }], mode: 'autonomous' }, 'a non-array blockedBy')
+  }
+
+  // ---- SA14: PARITY with run-milestone on identical static input ----------------------
+  // The maintainer accepted duplicating the dispatch loop across two workflow files.
+  // This is the guard: same tickets, same failures, same outcomes.
+  {
+    const scenarios = [
+      { name: 'happy chain', tickets: [tk('A-1', []), tk('A-2', ['A-1']), tk('A-3', ['A-2'])], failAt: null },
+      { name: 'diamond with a failure', tickets: [tk('A-1', []), tk('A-2', ['A-1']), tk('A-3', ['A-1']), tk('A-4', ['A-2'])], failAt: 'A-2' },
+      { name: 'independent branches', tickets: [tk('A-1', []), tk('B-1', []), tk('B-2', ['B-1'])], failAt: 'A-1' },
+    ]
+    for (const sc of scenarios) {
+      const mkRespond = () => {
+        const st = { tickets: sc.tickets.slice(), calls: 0 }
+        const base = makeRespond(st)
+        return async (c) => (sc.failAt && c.id === sc.failAt && kind(c.label) === 'build'
+          ? { branch: 'ticket/' + c.id, testsPassed: false, testOutput: 'RED' }
+          : base(c))
+      }
+      const g = await drive(SRC, { tickets: sc.tickets, mode: 'autonomous', concurrency: 2, rescanEvery: 0 }, mkRespond())
+      const m = await drive(RUNMILESTONE, { tickets: sc.tickets, mode: 'autonomous', concurrency: 2 }, mkRespond())
+      check(S, `SA14 [${sc.name}] neither scheduler errored`, !g.error && !m.error, (g.error || m.error || {}).message)
+      const norm = (res) => (res.results || []).slice().sort((a, b) => a.id.localeCompare(b.id)).map((r) => r.id + '=' + r.status).join(',')
+      eq(S, `SA14 [${sc.name}] start-all and run-milestone agree per ticket`, norm(g.result || {}), norm(m.result || {}))
+    }
   }
 }
