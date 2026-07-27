@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PRD execution plan</title>
+<style>
+*,*::before,*::after{box-sizing:border-box}
+:root{
+  color-scheme:light dark;
+  --bg:#f7f7f5; --panel:#fff; --ink:#1a1a18; --muted:#6b6b66; --line:#e2e2dd;
+  --accent:#b4552d; --accent-soft:#f4e7e0; --warn:#a8791f;
+  --card:#fff; --card-line:#d9d9d3; --ghost:#ecece6; --edge:#a8a89e;
+  --m0:#2a78d6; --m1:#eda100; --m2:#e87ba4; --m3:#008300; --mx:#7c7c74;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#16161a; --panel:#1e1e23; --ink:#ecece8; --muted:#9a9a94; --line:#2e2e35;
+  --accent:#e08a5f; --accent-soft:#3a2820; --warn:#d6b06a;
+  --card:#25252b; --card-line:#3a3a43; --ghost:#232329; --edge:#61616e;
+  --m0:#3987e5; --m1:#c98500; --m2:#d55181; --m3:#008300; --mx:#8f8f99;
+}}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1240px;margin:0 auto;padding:32px 20px 72px}
+h1{font-size:1.5rem;margin:0 0 4px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 24px}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
+
+.hero{display:flex;flex-wrap:wrap;gap:24px;align-items:stretch}
+.hero .big{min-width:150px;padding-right:24px;border-right:1px solid var(--line)}
+.hero .big .n{font-size:3rem;line-height:1;font-weight:650;color:var(--accent)}
+.hero .big .l{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;margin-top:6px}
+.hero .facts{flex:1;min-width:280px;display:flex;flex-direction:column;gap:7px;justify-content:center}
+.hero .facts p{margin:0}
+.cmd{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:6px;padding:3px 9px}
+
+.controls{position:sticky;top:0;z-index:6;display:flex;flex-wrap:wrap;gap:14px 18px;align-items:center}
+.controls label{font-weight:600;white-space:nowrap}
+.controls input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
+.pill{background:var(--accent);color:#fff;border-radius:999px;padding:3px 12px;font-weight:650;min-width:2.6em;text-align:center}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:.87rem;
+  padding:6px 12px;cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--accent);color:#fff;font-weight:600}
+.readout{color:var(--muted);font-size:.9rem;flex-basis:100%}
+.readout b{color:var(--ink)}
+.readout .save{color:var(--accent);font-weight:650}
+
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin:0}
+.legend button{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:transparent;
+  color:var(--ink);font:inherit;font-size:.85rem;border-radius:999px;padding:4px 12px 4px 8px;cursor:pointer}
+.legend button[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft)}
+.legend .sw{width:11px;height:11px;border-radius:3px;flex:none}
+.legend .ct{color:var(--muted);font-size:.78rem}
+
+.flow{position:relative;display:flex;gap:28px;overflow-x:auto;overflow-y:hidden;padding:20px 2px 6px}
+.wave{position:relative;z-index:1;display:flex;flex-direction:column;gap:8px;min-width:186px}
+.wave .wl{color:var(--muted);font-size:.74rem;text-transform:uppercase;letter-spacing:.05em}
+.tk{background:var(--card);border:1px solid var(--card-line);border-left:3px solid var(--mx);
+  border-radius:7px;padding:7px 10px;transition:opacity .12s}
+.tk.dim{opacity:.22}
+.tk .id{font-size:.85rem;font-weight:650}
+.tk .ti{font-size:.82rem;color:var(--muted);margin-top:1px;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.tk .mt{margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.chip{font-size:.69rem;border-radius:4px;padding:1px 6px;color:#fff;font-weight:600;white-space:nowrap}
+.tk .mt .meta{font-size:.69rem;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+.slot{border:1px dashed var(--card-line);border-radius:7px;min-height:36px;background:var(--ghost);
+  display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.71rem}
+.edges{position:absolute;top:0;left:0;pointer-events:none;z-index:0;overflow:visible}
+.edges path{fill:none;stroke:var(--edge);stroke-width:1.75;stroke-linecap:round}
+.edges path.cross{stroke-dasharray:5 4}
+
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-size:.76rem;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+td.num{font-variant-numeric:tabular-nums}
+.tag{font-size:.7rem;border-radius:4px;padding:1px 6px;border:1px solid currentColor;color:var(--warn)}
+h3{margin:0 0 10px;font-size:.95rem}
+.notes ul{margin:0;padding-left:20px;color:var(--muted)}
+.notes li{margin:5px 0}
+.notes b{color:var(--ink)}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>PRD execution plan</h1>
+<p class="sub">Every ticket under <code>testbed/rehearsal/prd-b</code> in one dependency graph, colored by module. Review before Gate 1 sign-off.</p>
+<div class="panel hero">
+  <div class="big"><div class="n">4</div><div class="l">recommended concurrency</div></div>
+  <div class="facts">
+    <p><b>2</b> module(s), <b>6</b> ticket(s).</p>
+    <p>Start the run with <code class="cmd">/start-all autonomous 4</code></p>
+    <p><code>/start-all</code> schedules every ticket from this one graph, so module boundaries never gate anything. Running module by module instead (<code>/start-milestone</code>) uses at most <b>2</b> lane(s) &mdash; the widest single module.</p>
+  </div>
+</div>
+<div class="panel controls">
+  <div class="seg" role="group" aria-label="schedule">
+    <button type="button" data-mode="global" aria-pressed="true">/start-all (global DAG)</button>
+    <button type="button" data-mode="runner" aria-pressed="false">/start-milestone (module by module)</button>
+  </div>
+  <label for="cc">concurrency</label>
+  <input id="cc" type="range" min="1" max="6" value="4" step="1">
+  <span class="pill" id="ccv">4</span>
+  <span class="readout" id="readout"></span>
+</div>
+<div class="panel">
+  <h3>Modules <span style="font-weight:400;color:var(--muted)">&mdash; click to highlight</span></h3>
+  <div class="legend">
+    <button type="button" data-mod="03-b-strings" aria-pressed="false"><span class="sw" style="background:var(--m0)"></span><span class="mono">03-b-strings</span><span class="ct">3 tickets &middot; 2 lanes</span></button>
+    <button type="button" data-mod="04-b-numbers" aria-pressed="false"><span class="sw" style="background:var(--m1)"></span><span class="mono">04-b-numbers</span><span class="ct">3 tickets &middot; 2 lanes</span></button>
+  </div>
+</div>
+<div class="panel"><div class="flow" id="flow"><svg class="edges" id="edges"></svg></div></div>
+<div class="panel">
+  <h3>Modules in dispatch order</h3>
+  <table>
+    <thead><tr><th>Module</th><th>Tickets</th><th>Max useful lanes</th><th>Waves</th><th>Runs after</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="legend"><span class="sw" style="background:var(--m0);display:inline-block"></span></span> <code>03-b-strings</code></td>
+        <td class="num">3</td>
+        <td class="num">2</td>
+        <td class="num">2</td>
+        <td>&mdash;</td>
+      </tr>
+      <tr>
+        <td><span class="legend"><span class="sw" style="background:var(--m1);display:inline-block"></span></span> <code>04-b-numbers</code></td>
+        <td class="num">3</td>
+        <td class="num">2</td>
+        <td class="num">2</td>
+        <td>&mdash;</td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+<div class="panel notes">
+  <h3>How to read this</h3>
+  <ul>
+    <li><b>Two schedules, one graph.</b> <em>/start-all</em> schedules every ticket from this graph, gated only by <code>blocked_by</code> &mdash; module boundaries never gate anything. <em>/start-milestone</em> runs one module at a time, so a barrier sits between modules and <code>concurrency</code> fans out only within the one running. Both are executable; the difference is what running module by module costs on this decomposition.</li>
+    <li><b>Dashed edges cross a module boundary.</b> They are real <code>blocked_by</code> dependencies, and <code>/start-all</code> enforces them directly. Running module by module additionally serializes tickets with <em>no</em> edge between them at all, which is where the extra rounds come from.</li>
+    <li><b>The DAG is live during a run.</b> <code>/start-all</code> reloads it every few settled tickets, so a ticket added while it runs is published, scheduled, and rendered here on the next reload. A dependency added to a ticket that already started cannot be applied retroactively &mdash; the run escalates it instead of pretending it was enforced.</li>
+    <li><b>Max useful lanes</b> is the lowest concurrency that still reaches the minimum round count. Above it lanes sit idle; below it, independent tickets are serialized.</li>
+    <li><b>Uniform-duration model.</b> Every ticket counts as one round and a wave ends when all its lanes finish. Real lanes finish at different times and the scheduler refills a free lane immediately, so real wall-clock is <em>at most</em> the rounds shown.</li>
+    <li><b>A fully serial module is a decomposition problem, not a scheduling one.</b> Its tickets form one <code>blocked_by</code> chain &mdash; revisit the file-scope split before signing off.</li>
+    <li><b>Color covers the first 4 modules only.</b> Cards from any two modules can sit side by side, so the palette must clear the all-pairs contrast floors; 4 is the largest set that does in both light and dark. Module 5 onward take the neutral swatch &mdash; identity comes from the chip on every card, the legend, and click-to-highlight, never from hue alone.</li>
+    <li><b>Caps that still apply at run time:</b> <code>supervised</code> mode forces concurrency to 1, and the harness caps concurrent agents at <code>min(16, cores - 2)</code> on the machine that runs it. That machine is unknown here, so it is shown as a formula rather than a number.</li>
+    <li>Regenerate with <code>node .claude/scripts/dag-report.mjs</code> after any ticket <code>blocked_by</code> change. Output is deterministic &mdash; an unchanged DAG rewrites an identical file.</li>
+  </ul>
+</div>
+</div>
+<script id="dag-data" type="application/json">{"recommended":2,"recommendedGlobal":4,"totalTickets":6,"sliderMax":6,"hues":4,"modules":[{"name":"03-b-strings","position":1,"count":3,"lanes":2,"waves":2,"dependsOn":[],"slot":0},{"name":"04-b-numbers","position":2,"count":3,"lanes":2,"waves":2,"dependsOn":[],"slot":1}],"tickets":{"RB-1":{"m":"03-b-strings","s":0,"title":"Add kebab(input)","lane":"03-b-strings","size":"S","deps":[]},"RB-2":{"m":"03-b-strings","s":0,"title":"Add camel(input)","lane":"03-b-strings","size":"S","deps":[]},"RB-5":{"m":"03-b-strings","s":0,"title":"Add identifier(input)","lane":"03-b-strings","size":"S","deps":["RB-1","RB-2"]},"RB-3":{"m":"04-b-numbers","s":1,"title":"Add sum(nums)","lane":"04-b-numbers","size":"S","deps":[]},"RB-4":{"m":"04-b-numbers","s":1,"title":"Add unique(items)","lane":"04-b-numbers","size":"S","deps":[]},"RB-6":{"m":"04-b-numbers","s":1,"title":"Add average(nums)","lane":"04-b-numbers","size":"S","deps":["RB-3","RB-4"]}},"runner":[[["RB-1"],["RB-2"],["RB-5"],["RB-3"],["RB-4"],["RB-6"]],[["RB-1","RB-2"],["RB-5"],["RB-3","RB-4"],["RB-6"]],[["RB-1","RB-2"],["RB-5"],["RB-3","RB-4"],["RB-6"]],[["RB-1","RB-2"],["RB-5"],["RB-3","RB-4"],["RB-6"]],[["RB-1","RB-2"],["RB-5"],["RB-3","RB-4"],["RB-6"]],[["RB-1","RB-2"],["RB-5"],["RB-3","RB-4"],["RB-6"]]],"global":[[["RB-1"],["RB-2"],["RB-3"],["RB-4"],["RB-5"],["RB-6"]],[["RB-1","RB-2"],["RB-3","RB-4"],["RB-5","RB-6"]],[["RB-1","RB-2","RB-3"],["RB-4","RB-5"],["RB-6"]],[["RB-1","RB-2","RB-3","RB-4"],["RB-5","RB-6"]],[["RB-1","RB-2","RB-3","RB-4"],["RB-5","RB-6"]],[["RB-1","RB-2","RB-3","RB-4"],["RB-5","RB-6"]]]}</script>
+<script>
+var DATA = JSON.parse(document.getElementById('dag-data').textContent);
+var slider = document.getElementById('cc');
+var pill = document.getElementById('ccv');
+var readout = document.getElementById('readout');
+var flow = document.getElementById('flow');
+var svg = document.getElementById('edges');
+var mode = 'global';
+var focus = null;
+
+function el(t, c, x){ var e = document.createElement(t); if(c) e.className = c;
+  if(x !== undefined) e.textContent = x; return e; }
+function colorOf(slot){ return slot < 0 ? 'var(--mx)' : 'var(--m' + slot + ')'; }
+function roundsAt(which, c){ var t = DATA[which]; return t[Math.min(c, t.length) - 1] || []; }
+
+function render(){
+  var c = +slider.value;
+  pill.textContent = c;
+  var rounds = roundsAt(mode, c);
+  var other = roundsAt(mode === 'runner' ? 'global' : 'runner', c);
+
+  while (flow.firstChild) flow.removeChild(flow.firstChild);
+  flow.appendChild(svg);
+
+  var idle = 0;
+  rounds.forEach(function(batch, wi){
+    idle += Math.max(0, c - batch.length);
+    var col = el('div', 'wave');
+    col.appendChild(el('div', 'wl', 'Wave ' + (wi + 1) + '  \u00b7  ' + batch.length + '/' + c));
+    batch.forEach(function(id){
+      var t = DATA.tickets[id];
+      var card = el('div', 'tk');
+      card.id = 'tk-' + id;
+      card.style.borderLeftColor = colorOf(t.s);
+      if (focus && t.m !== focus) card.classList.add('dim');
+      card.appendChild(el('div', 'id mono', id));
+      if (t.title) card.appendChild(el('div', 'ti', t.title));
+      var mt = el('div', 'mt');
+      // the module chip is the secondary encoding the palette depends on -- identity
+      // must never rest on hue alone, and past the 4th module there IS no hue
+      var chip = el('span', 'chip', t.m);
+      chip.style.background = colorOf(t.s);
+      mt.appendChild(chip);
+      if (t.lane) mt.appendChild(el('span', 'meta', 'lane ' + t.lane));
+      if (t.size) mt.appendChild(el('span', 'meta', t.size));
+      card.appendChild(mt);
+      card.title = id + (t.title ? ' \u2014 ' + t.title : '') + '\nmodule: ' + t.m +
+        (t.deps.length ? '\nblocked_by: ' + t.deps.join(', ') : '\nno blockers');
+      col.appendChild(card);
+    });
+    for (var k = batch.length; k < c; k++) col.appendChild(el('div', 'slot', 'idle lane'));
+    flow.appendChild(col);
+  });
+
+  drawEdges();
+
+  // module-by-module is always the longer of the two, so the cost is runner - global
+  var lost = mode === 'runner' ? rounds.length - other.length : other.length - rounds.length;
+  var txt = '<b>' + rounds.length + '</b> ticket-rounds at concurrency ' + c +
+    ' \u00b7 <b>' + idle + '</b> idle lane-slots \u00b7 ';
+  if (mode === 'global') {
+    txt += lost > 0
+      ? 'running module by module would take <b>' + other.length + '</b> \u2014 <span class="save">' +
+        lost + ' rounds (' + Math.round(lost / other.length * 100) + '%) more</span>'
+      : 'running module by module takes the same <b>' + other.length + '</b> \u2014 module boundaries cost nothing here';
+  } else {
+    txt += lost > 0
+      ? '<code>/start-all</code> finishes the same work in <b>' + other.length + '</b> \u2014 <span class="save">' +
+        lost + ' rounds (' + Math.round(lost / rounds.length * 100) + '%) saved by scheduling globally</span>'
+      : '<code>/start-all</code> takes the same <b>' + other.length + '</b> \u2014 module boundaries cost nothing here';
+  }
+  readout.innerHTML = txt;
+}
+
+function drawEdges(){
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+  var box = flow.getBoundingClientRect();
+  var ox = flow.scrollLeft, oy = flow.scrollTop;
+  var w = flow.scrollWidth, h = flow.clientHeight;
+  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+  svg.setAttribute('width', w); svg.setAttribute('height', h);
+  Object.keys(DATA.tickets).forEach(function(id){
+    var t = DATA.tickets[id];
+    t.deps.forEach(function(dep){
+      var a = document.getElementById('tk-' + dep), b = document.getElementById('tk-' + id);
+      if (!a || !b) return;
+      var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+      var x1 = ra.right - box.left + ox, y1 = ra.top + ra.height / 2 - box.top + oy;
+      var x2 = rb.left - box.left + ox, y2 = rb.top + rb.height / 2 - box.top + oy;
+      var dx = Math.max(18, (x2 - x1) / 2);
+      var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      // dashed = crosses a module boundary; these edges are invisible in any
+      // per-module view, and they are exactly what the module barrier over-enforces
+      if (DATA.tickets[dep].m !== t.m) p.setAttribute('class', 'cross');
+      p.setAttribute('d', 'M' + x1 + ',' + y1 + ' C' + (x1 + dx) + ',' + y1 + ' ' +
+        (x2 - dx) + ',' + y2 + ' ' + x2 + ',' + y2);
+      if (focus && t.m !== focus && DATA.tickets[dep].m !== focus) p.setAttribute('opacity', '0.2');
+      svg.appendChild(p);
+    });
+  });
+}
+
+document.querySelectorAll('.seg button').forEach(function(b){
+  b.addEventListener('click', function(){
+    mode = b.dataset.mode;
+    document.querySelectorAll('.seg button').forEach(function(o){
+      o.setAttribute('aria-pressed', String(o === b)); });
+    render();
+  });
+});
+document.querySelectorAll('.legend button').forEach(function(b){
+  b.addEventListener('click', function(){
+    focus = (focus === b.dataset.mod) ? null : b.dataset.mod;
+    document.querySelectorAll('.legend button').forEach(function(o){
+      o.setAttribute('aria-pressed', String(o.dataset.mod === focus)); });
+    render();
+  });
+});
+slider.addEventListener('input', render);
+window.addEventListener('resize', render);
+render();
+</script>
+</body>
+</html>
