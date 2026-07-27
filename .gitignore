@@ -3,3 +3,7 @@
 .claude/tmp/
 site/
 *.tgz
+
+# Architect plans are HOW-only scratch: they must EXIST on disk for the DoD check,
+# but are never committed (matches what adopt.mjs installs in adopted repos, issue #58).
+docs/plans/*.md

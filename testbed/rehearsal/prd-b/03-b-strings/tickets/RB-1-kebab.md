@@ -46,7 +46,7 @@ Behaviour: Convert a camelCase or space-separated string to kebab-case: insert `
 - [ ] `kebab('helloWorld') === 'hello-world'`
 - [ ] `kebab('Hello World') === 'hello-world'`
 - [ ] `kebab('') === ''`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 
 ## Test plan

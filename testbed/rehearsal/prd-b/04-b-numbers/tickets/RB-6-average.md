@@ -46,7 +46,7 @@ Behaviour: Compose the two already-delivered helpers: de-duplicate `nums`, then 
 - [ ] `average([1,2,3]) === 2`
 - [ ] `average([2,2,4]) === 3`
 - [ ] `average([]) === 0`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 - [ ] Imports the already-delivered helpers (RB-3, RB-4) instead of reimplementing them.
 

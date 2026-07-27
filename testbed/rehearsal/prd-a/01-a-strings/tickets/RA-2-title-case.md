@@ -46,7 +46,7 @@ Behaviour: Uppercase the first letter of every whitespace-separated word; leave 
 - [ ] `titleCase('hello world') === 'Hello World'`
 - [ ] `titleCase('a') === 'A'`
 - [ ] `titleCase('') === ''`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 
 ## Test plan

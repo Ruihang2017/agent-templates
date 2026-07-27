@@ -47,7 +47,7 @@ Behaviour: Return `n` bounded to the inclusive range [lo, hi]. Throw a `RangeErr
 - [ ] `clamp(-2, 1, 10) === 1`
 - [ ] `clamp(99, 1, 10) === 10`
 - [ ] `clamp(1, 10, 1) throws RangeError`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 
 ## Test plan

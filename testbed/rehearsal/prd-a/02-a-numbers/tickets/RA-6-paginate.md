@@ -46,7 +46,7 @@ Behaviour: Compose the two already-delivered helpers: clamp `size` into [1, maxS
 - [ ] `paginate([1,2,3,4,5], 2, 4) deep-equals [[1,2],[3,4],[5]]`
 - [ ] `paginate([1,2,3], 99, 2) deep-equals [[1,2],[3]]`
 - [ ] `paginate([1,2,3], 0, 4) deep-equals [[1],[2],[3]]`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 - [ ] Imports the already-delivered helpers (RA-3, RA-4) instead of reimplementing them.
 

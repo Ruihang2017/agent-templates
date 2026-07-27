@@ -10,4 +10,4 @@ Non-goal: anything beyond the listed functions. This module exists to exercise t
 | RA-4 | S | 02-a-numbers | `testbed/rehearsal/src/chunk.mjs` + `testbed/rehearsal/tests/chunk.test.mjs` | — |
 | RA-6 | S | 02-a-numbers | `testbed/rehearsal/src/paginate.mjs` + `testbed/rehearsal/tests/paginate.test.mjs` | RA-3, RA-4 |
 
-Acceptance: every listed ticket delivered, and `node --test testbed/rehearsal/tests/` green on the rehearsal branch.
+Acceptance: every listed ticket delivered, and `node --test "testbed/rehearsal/tests/*.test.mjs"` green on the rehearsal branch.

@@ -46,7 +46,7 @@ Behaviour: Lowercase the input, replace every run of non-alphanumeric characters
 - [ ] `slugify('Hello, World!') === 'hello-world'`
 - [ ] `slugify('  A -- B  ') === 'a-b'`
 - [ ] `slugify('') === ''`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 
 ## Test plan

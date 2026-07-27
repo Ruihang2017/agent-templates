@@ -279,7 +279,12 @@ try {
   // `.claude/tmp/` (staged verdict/body) and `docs/plans/` (the Architect's HOW plan —
   // ephemeral, and the DoD needs it to EXIST on disk, not be committed) are ignored so
   // untracked scratch never reads as "dirty" and blocks delivery (issues #50, #58).
-  const dirty = git(['status', '--porcelain']).split('\n').filter((l) => l.trim() && !/\.claude\/tmp\/|docs\/plans\//.test(l))
+  // `-uall` is load-bearing, not a detail: porcelain defaults to `-unormal`, which
+  // COLLAPSES an entirely-untracked directory to a single entry. In a repo with nothing
+  // tracked under docs/, the Architect's plan makes git print `?? docs/` — which this
+  // path-anchored allowlist cannot match, so delivery refused every ticket as "dirty".
+  // Observed on the catalog's own Level-1 rehearsal, 2026-07-27 (issue #75).
+  const dirty = git(['status', '--porcelain', '-uall']).split('\n').filter((l) => l.trim() && !/\.claude\/tmp\/|docs\/plans\//.test(l))
   if (dirty.length) { note('working tree not clean — refusing to merge'); finish(0) }
 
   // 2. refs must exist locally

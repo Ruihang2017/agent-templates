@@ -45,7 +45,7 @@ Behaviour: Return a new array with duplicates removed, preserving first-seen ord
 
 - [ ] `unique([1,2,2,3,1]) deep-equals [1,2,3]`
 - [ ] `unique([]) deep-equals []`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 
 ## Test plan
