@@ -46,7 +46,7 @@ Behaviour: Convert a kebab-case string to camelCase: drop each `-` and uppercase
 - [ ] `camel('hello-world') === 'helloWorld'`
 - [ ] `camel('a-b-c') === 'aBC'`
 - [ ] `camel('') === ''`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 
 ## Test plan

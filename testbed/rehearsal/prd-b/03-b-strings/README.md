@@ -10,4 +10,4 @@ Non-goal: anything beyond the listed functions. This module exists to exercise t
 | RB-2 | S | 03-b-strings | `testbed/rehearsal/src/camel.mjs` + `testbed/rehearsal/tests/camel.test.mjs` | — |
 | RB-5 | S | 03-b-strings | `testbed/rehearsal/src/identifier.mjs` + `testbed/rehearsal/tests/identifier.test.mjs` | RB-1, RB-2 |
 
-Acceptance: every listed ticket delivered, and `node --test testbed/rehearsal/tests/` green on the rehearsal branch.
+Acceptance: every listed ticket delivered, and `node --test "testbed/rehearsal/tests/*.test.mjs"` green on the rehearsal branch.

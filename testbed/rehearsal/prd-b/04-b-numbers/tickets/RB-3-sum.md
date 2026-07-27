@@ -46,7 +46,7 @@ Behaviour: Return the arithmetic sum of an array of numbers; `sum([])` is 0. Thr
 - [ ] `sum([1,2,3]) === 6`
 - [ ] `sum([]) === 0`
 - [ ] `sum([1, NaN]) throws TypeError`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 
 ## Test plan

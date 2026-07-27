@@ -46,7 +46,7 @@ Behaviour: Split an array into consecutive arrays of at most `size` elements. Th
 - [ ] `chunk([1,2,3,4,5], 2) deep-equals [[1,2],[3,4],[5]]`
 - [ ] `chunk([], 3) deep-equals []`
 - [ ] `chunk([1], 0) throws RangeError`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 
 ## Test plan

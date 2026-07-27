@@ -45,7 +45,7 @@ Behaviour: Compose the two already-delivered helpers: kebab-case the input, then
 
 - [ ] `identifier('Hello World') === 'helloWorld'`
 - [ ] `identifier('already-kebab') === 'alreadyKebab'`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 - [ ] Imports the already-delivered helpers (RB-1, RB-2) instead of reimplementing them.
 

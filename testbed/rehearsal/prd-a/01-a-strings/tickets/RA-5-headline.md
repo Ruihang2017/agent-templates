@@ -45,7 +45,7 @@ Behaviour: Compose the two already-delivered helpers: slugify the input, turn `-
 
 - [ ] `headline('hello, world!') === 'Hello World'`
 - [ ] `headline('  A -- B  ') === 'A B'`
-- [ ] `node --test testbed/rehearsal/tests/` passes with the new test file included.
+- [ ] `node --test "testbed/rehearsal/tests/*.test.mjs"` passes with the new test file included.
 - [ ] The export is **named** (not default), and importing the module has no side effects.
 - [ ] Imports the already-delivered helpers (RA-1, RA-2) instead of reimplementing them.
 

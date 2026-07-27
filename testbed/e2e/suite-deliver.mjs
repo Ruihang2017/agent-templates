@@ -444,4 +444,26 @@ export async function run() {
       check(S, 'P13 untracked docs/plans file does not block delivery', sum && sum.merged && sum.dodPassed, sum && sum.notes)
     } finally { cleanup(root) }
   }
+
+  // P14: the SAME allowance, but with nothing tracked under docs/ at all.
+  // P13 passes vacuously against this failure mode: makeRepo() commits
+  // docs/plans/T-01.md, so docs/ always has tracked content and git never collapses it.
+  // With docs/ entirely untracked, `git status --porcelain` (default -unormal) prints the
+  // single line `?? docs/` instead of the individual files — which the path-anchored
+  // allowlist cannot match, so delivery refused every ticket as "dirty". That is exactly
+  // what killed the catalog's first Level-1 rehearsal (issue #75, 2026-07-27).
+  {
+    const { root, repo } = makeRepo({ withPlan: false })
+    try {
+      const closed = join(root, 'closed.txt')
+      mkdirSync(join(repo, 'docs', 'plans'), { recursive: true })
+      writeFileSync(join(repo, 'docs', 'plans', 'T-01.md'), 'plan\n')
+      // guard the guard: prove the fixture really does reproduce the collapse
+      const porcelain = git(repo, ['status', '--porcelain'])
+      check(S, 'P14 fixture reproduces the collapsed `?? docs/` entry', /^\?\? docs\/$/m.test(porcelain), porcelain)
+      const { r, sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--delivery', 'direct'], { FAKE_GH_CLOSED_STATE: closed })
+      eq(S, 'P14 exit 0', r.status, 0)
+      check(S, 'P14 a fully untracked docs/ does not block delivery', sum && sum.merged && sum.dodPassed, sum && sum.notes)
+    } finally { cleanup(root) }
+  }
 }
