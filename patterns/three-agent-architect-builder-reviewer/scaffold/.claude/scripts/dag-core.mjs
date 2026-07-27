@@ -144,6 +144,65 @@ export function laneProfile(ids, depsOf) {
   return { roundsByCap, minWaves, maxUsefulLanes, peakLanes }
 }
 
+// Every ticket's dependencies across the WHOLE prd, cross-module edges included,
+// filtered to ids that exist. This is the real dependency graph; intraModuleDeps is a
+// projection of it that exists only because the runner happens to serialize modules.
+export function allDeps(modules) {
+  const known = new Set()
+  for (const mod of Object.values(modules)) for (const t of mod.tickets) known.add(t.id)
+  const deps = {}
+  for (const mod of Object.values(modules)) {
+    for (const t of mod.tickets) deps[t.id] = t.blockedBy.filter((d) => known.has(d))
+  }
+  return deps
+}
+
+// The two schedules the report contrasts. Both return rounds as arrays of ticket ids
+// over the whole PRD, so one renderer draws either.
+//
+// runnerSchedule — what /start-all does TODAY: start-all.js awaits each run-milestone,
+// so a module barrier sits between every pair of modules and `cap` only fans out
+// within the module currently running. Rounds are each module's waves, concatenated.
+//
+// globalSchedule — what the dependency graph alone would permit, module boundaries
+// ignored. The runner cannot do this yet; the report shows the gap rather than
+// presenting it as achievable.
+export function runnerSchedule(order, modules, ticketOrder, cap) {
+  let rounds = []
+  for (const m of order) {
+    const deps = intraModuleDeps(modules[m])
+    const r = simulate(ticketOrder[m], (id) => deps[id], cap)
+    if (!r) return null
+    rounds = rounds.concat(r)
+  }
+  return rounds
+}
+
+export function globalSchedule(order, modules, ticketOrder, cap) {
+  const deps = allDeps(modules)
+  const ids = order.flatMap((m) => ticketOrder[m])
+  return simulate(ids, (id) => deps[id], cap)
+}
+
+// Round counts at every concurrency from 1..n for a schedule function, plus the
+// lowest concurrency that already reaches the minimum round count. Above it lanes sit
+// idle; below it, work that could run in parallel is serialized.
+export function scheduleProfile(scheduleFn, n) {
+  if (!n) return { roundsByCap: [], minRounds: 0, maxUsefulLanes: 0 }
+  const roundsByCap = []
+  for (let cap = 1; cap <= n; cap++) {
+    const r = scheduleFn(cap)
+    if (!r) return null
+    roundsByCap.push(r)
+  }
+  const minRounds = roundsByCap[n - 1].length
+  let maxUsefulLanes = n
+  for (let i = 0; i < n; i++) {
+    if (roundsByCap[i].length === minRounds) { maxUsefulLanes = i + 1; break }
+  }
+  return { roundsByCap, minRounds, maxUsefulLanes }
+}
+
 // Full plan: module order + per-module ticket order. Returns { ok: false, ... } for
 // every failure mode so the caller decides how to report and exit.
 export function buildPlan(root) {

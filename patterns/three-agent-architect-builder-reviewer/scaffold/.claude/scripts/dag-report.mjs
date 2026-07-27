@@ -6,11 +6,20 @@
 // actually have, where is it serial, and what `concurrency` is worth passing to
 // /start-all? Both read the same graph via dag-core.mjs.
 //
+// ONE flowchart covers the whole PRD — every ticket, colored by its module — under two
+// schedules the reader can toggle between:
+//   runner  — what /start-all does today: start-all.js awaits each run-milestone, so a
+//             module barrier sits between modules and `cap` fans out only within one.
+//   global  — what the dependency graph alone permits, module boundaries ignored.
+// The runner cannot execute the global schedule yet. Showing both, with the round
+// delta between them, is the point: it prices the module barrier instead of drawing a
+// picture of a run that never happens.
+//
 // Usage: node .claude/scripts/dag-report.mjs [prd-root] [--out <path>]
 //        prd-root defaults to docs/prd; --out defaults to <prd-root>/dag.html
 // Output: a self-contained HTML page (no CDN, no network), a text summary on stdout,
 //         and a final machine-readable line:
-//   DAG-REPORT-JSON: {"out":"...","recommendedConcurrency":N,"modules":[...]}
+//   DAG-REPORT-JSON: {"out":"...","recommendedConcurrency":N,"schedules":{...},...}
 // Exit 1 on the same spec defects milestone-dag.mjs rejects: missing root, no modules,
 // a blocked_by referencing an unknown ticket, or a dependency cycle.
 //
@@ -20,7 +29,7 @@
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import { buildPlan, intraModuleDeps, laneProfile } from './dag-core.mjs'
+import { allDeps, buildPlan, globalSchedule, intraModuleDeps, laneProfile, runnerSchedule, scheduleProfile } from './dag-core.mjs'
 
 const argv = process.argv.slice(2)
 const outIx = argv.indexOf('--out')
@@ -53,120 +62,139 @@ if (plan.ticketCycle) {
   process.exit(1)
 }
 
-// ---- compute the lane profile per module -----------------------------------------
-// Modules run SEQUENTIALLY (start-all awaits each run-milestone), so lanes are an
-// intra-module property and the PRD-wide recommendation is the max across modules —
-// never the sum.
-const mods = []
-for (let i = 0; i < plan.order.length; i++) {
-  const name = plan.order[i]
-  const mod = plan.modules[name]
-  const deps = intraModuleDeps(mod)
-  const profile = laneProfile(plan.ticketOrder[name], (id) => deps[id])
-  const meta = Object.fromEntries(
-    mod.tickets.map((t) => [t.id, { title: t.title, lane: t.lane, size: t.size, deps: deps[t.id] }]),
-  )
-  mods.push({
-    name,
-    position: i + 1,
-    dependsOn: [...mod.dependsOn].sort(),
-    order: plan.ticketOrder[name],
-    tickets: meta,
-    roundsByCap: profile.roundsByCap,
-    minWaves: profile.minWaves,
-    maxUsefulLanes: profile.maxUsefulLanes,
-    peakLanes: profile.peakLanes,
-  })
+const { order, modules, ticketOrder } = plan
+const deps = allDeps(modules)
+const allIds = order.flatMap((m) => ticketOrder[m])
+const n = allIds.length
+// Bound the embedded schedule tables: n caps x n ids. Past 32 lanes the harness cap
+// (min(16, cores-2)) has long since bound the run anyway.
+const capMax = Math.min(n, 32)
+
+const runnerProfile = scheduleProfile((cap) => runnerSchedule(order, modules, ticketOrder, cap), capMax)
+const globalProfile = scheduleProfile((cap) => globalSchedule(order, modules, ticketOrder, cap), capMax)
+
+// Per-module lane facts still drive the recommendation for the runner schedule: with a
+// module barrier between every pair, the useful lane count is the max any single
+// module can occupy — never the sum.
+const perModule = order.map((name, i) => {
+  const d = intraModuleDeps(modules[name])
+  const p = laneProfile(ticketOrder[name], (id) => d[id])
+  return { name, position: i + 1, dependsOn: [...modules[name].dependsOn].sort(),
+    tickets: ticketOrder[name], maxUsefulLanes: p.maxUsefulLanes, minWaves: p.minWaves }
+})
+
+const recommended = perModule.reduce((m, x) => Math.max(m, x.maxUsefulLanes), 1)
+const recommendedGlobal = globalProfile.maxUsefulLanes
+const sliderMax = Math.min(32, Math.max(recommended, recommendedGlobal) + 2, Math.max(2, n))
+const serial = perModule.filter((m) => m.maxUsefulLanes === 1 && m.tickets.length > 1).map((m) => m.name)
+
+// Categorical color = module identity, assigned in FIXED order and never cycled.
+// Cards from different modules sit arbitrarily adjacent in a wave column, so this is
+// the all-pairs case: an exhaustive search over the reference palette found 4 to be the
+// largest subset clearing the all-pairs CVD and normal-vision floors in BOTH modes
+// (slots 1/4/5/6). Modules past the 4th take the neutral and are identified by their
+// chip, the legend, and click-to-highlight — a 9th generated hue would be a lie about
+// distinguishability. The chip is also the secondary encoding that makes dark mode's
+// worst pair (CVD dE 6.9, in the 6-8 band) legal at all, so it is mandatory.
+const HUES = 4
+const ticketMeta = {}
+for (const [name, mod] of Object.entries(modules)) {
+  const slot = order.indexOf(name)
+  for (const t of mod.tickets) {
+    ticketMeta[t.id] = { m: name, s: slot < HUES ? slot : -1, title: t.title, lane: t.lane, size: t.size, deps: deps[t.id] }
+  }
 }
 
-const recommended = mods.reduce((m, x) => Math.max(m, x.maxUsefulLanes), 1)
-const totalTickets = mods.reduce((n, x) => n + x.order.length, 0)
-const sliderMax = Math.min(32, Math.max(recommended + 2, ...mods.map((m) => m.order.length)))
-const widest = mods.filter((m) => m.maxUsefulLanes === recommended).map((m) => m.name)
-const serial = mods.filter((m) => m.maxUsefulLanes === 1 && m.order.length > 1).map((m) => m.name)
-
-const data = { recommended, totalTickets, sliderMax, widest, serial, modules: mods }
+const data = {
+  recommended,
+  recommendedGlobal,
+  totalTickets: n,
+  sliderMax,
+  hues: HUES,
+  modules: perModule.map((m) => ({ name: m.name, position: m.position, count: m.tickets.length,
+    lanes: m.maxUsefulLanes, waves: m.minWaves, dependsOn: m.dependsOn, slot: m.position - 1 < HUES ? m.position - 1 : -1 })),
+  tickets: ticketMeta,
+  runner: runnerProfile.roundsByCap,
+  global: globalProfile.roundsByCap,
+}
 
 // ---- page ------------------------------------------------------------------------
 const CSS = `
 *,*::before,*::after{box-sizing:border-box}
 :root{
+  color-scheme:light dark;
   --bg:#f7f7f5; --panel:#fff; --ink:#1a1a18; --muted:#6b6b66; --line:#e2e2dd;
-  --accent:#b4552d; --accent-soft:#f4e7e0; --ok:#3f7d58; --warn:#a8791f;
+  --accent:#b4552d; --accent-soft:#f4e7e0; --warn:#a8791f;
   --card:#fff; --card-line:#d9d9d3; --ghost:#ecece6; --edge:#a8a89e;
+  --m0:#2a78d6; --m1:#eda100; --m2:#e87ba4; --m3:#008300; --mx:#7c7c74;
 }
 @media (prefers-color-scheme:dark){:root{
   --bg:#16161a; --panel:#1e1e23; --ink:#ecece8; --muted:#9a9a94; --line:#2e2e35;
-  --accent:#e08a5f; --accent-soft:#3a2820; --ok:#7fb894; --warn:#d6b06a;
+  --accent:#e08a5f; --accent-soft:#3a2820; --warn:#d6b06a;
   --card:#25252b; --card-line:#3a3a43; --ghost:#232329; --edge:#61616e;
+  --m0:#3987e5; --m1:#c98500; --m2:#d55181; --m3:#008300; --mx:#8f8f99;
 }}
-html{color-scheme:light dark}
 body{margin:0;background:var(--bg);color:var(--ink);
   font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
-.wrap{max-width:1180px;margin:0 auto;padding:32px 20px 72px}
+.wrap{max-width:1240px;margin:0 auto;padding:32px 20px 72px}
 h1{font-size:1.5rem;margin:0 0 4px;letter-spacing:-.01em}
 .sub{color:var(--muted);margin:0 0 24px}
 code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-bottom:16px}
 
-.hero{display:flex;flex-wrap:wrap;gap:20px;align-items:stretch;
-  background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px;margin-bottom:20px}
-.hero .big{min-width:150px;padding-right:20px;border-right:1px solid var(--line)}
+.hero{display:flex;flex-wrap:wrap;gap:24px;align-items:stretch}
+.hero .big{min-width:150px;padding-right:24px;border-right:1px solid var(--line)}
 .hero .big .n{font-size:3rem;line-height:1;font-weight:650;color:var(--accent)}
-.hero .big .l{color:var(--muted);font-size:.82rem;text-transform:uppercase;letter-spacing:.06em;margin-top:6px}
-.hero .facts{flex:1;min-width:260px;display:flex;flex-direction:column;gap:8px;justify-content:center}
+.hero .big .l{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;margin-top:6px}
+.hero .facts{flex:1;min-width:280px;display:flex;flex-direction:column;gap:7px;justify-content:center}
 .hero .facts p{margin:0}
-.cmd{display:inline-block;background:var(--accent-soft);color:var(--accent);
-  border-radius:6px;padding:4px 9px;font-size:.9rem}
+.cmd{display:inline-block;background:var(--accent-soft);color:var(--accent);border-radius:6px;padding:3px 9px}
 
-.controls{position:sticky;top:0;z-index:5;background:var(--panel);border:1px solid var(--line);
-  border-radius:12px;padding:14px 18px;margin-bottom:24px;
-  display:flex;flex-wrap:wrap;gap:16px;align-items:center}
+.controls{position:sticky;top:0;z-index:6;display:flex;flex-wrap:wrap;gap:14px 18px;align-items:center}
 .controls label{font-weight:600;white-space:nowrap}
-.controls input[type=range]{flex:1;min-width:200px;accent-color:var(--accent)}
-.pill{background:var(--accent);color:#fff;border-radius:999px;padding:3px 12px;font-weight:650;
-  min-width:2.6em;text-align:center}
-.readout{color:var(--muted);font-size:.9rem}
+.controls input[type=range]{flex:1;min-width:180px;accent-color:var(--accent)}
+.pill{background:var(--accent);color:#fff;border-radius:999px;padding:3px 12px;font-weight:650;min-width:2.6em;text-align:center}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-size:.87rem;
+  padding:6px 12px;cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--accent);color:#fff;font-weight:600}
+.readout{color:var(--muted);font-size:.9rem;flex-basis:100%}
 .readout b{color:var(--ink)}
-.readout.warn b{color:var(--warn)}
+.readout .save{color:var(--accent);font-weight:650}
 
-.mod{background:var(--panel);border:1px solid var(--line);border-radius:12px;
-  padding:18px;margin-bottom:16px}
-.mod h2{font-size:1.05rem;margin:0;display:flex;flex-wrap:wrap;gap:10px;align-items:baseline}
-.pos{color:var(--muted);font-variant-numeric:tabular-nums}
-.badge{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;
-  border-radius:5px;padding:2px 7px;font-weight:650}
-.badge.widest{background:var(--accent-soft);color:var(--accent)}
-.badge.serial{background:transparent;color:var(--warn);border:1px solid currentColor}
-.deps{color:var(--muted);font-size:.85rem;margin:6px 0 0}
-.stats{display:flex;flex-wrap:wrap;gap:22px;margin:12px 0 4px;
-  padding:10px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.stat .v{font-size:1.25rem;font-weight:650;font-variant-numeric:tabular-nums}
-.stat .k{color:var(--muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.05em}
-.stat .v.idle{color:var(--warn)}
+.legend{display:flex;flex-wrap:wrap;gap:8px;margin:0}
+.legend button{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:transparent;
+  color:var(--ink);font:inherit;font-size:.85rem;border-radius:999px;padding:4px 12px 4px 8px;cursor:pointer}
+.legend button[aria-pressed=true]{border-color:var(--accent);background:var(--accent-soft)}
+.legend .sw{width:11px;height:11px;border-radius:3px;flex:none}
+.legend .ct{color:var(--muted);font-size:.78rem}
 
-/* overflow-y must be pinned: with overflow-x:auto the browser promotes a visible
-   overflow-y to auto, and the absolutely-positioned edge layer then feeds its own
-   scrollbar (svg sized from scrollHeight -> overflow -> taller scrollHeight). */
-.waves{position:relative;display:flex;gap:26px;overflow-x:auto;overflow-y:hidden;padding:18px 2px 4px}
-.wave{position:relative;z-index:1;display:flex;flex-direction:column;gap:8px;min-width:172px}
-.wave .wl{color:var(--muted);font-size:.75rem;text-transform:uppercase;letter-spacing:.05em;
-  padding-bottom:2px}
-.tk{background:var(--card);border:1px solid var(--card-line);border-left:3px solid var(--accent);
-  border-radius:7px;padding:8px 10px}
-.tk .id{font-size:.86rem;font-weight:650}
-.tk .ti{font-size:.83rem;color:var(--muted);margin-top:2px;
+.flow{position:relative;display:flex;gap:28px;overflow-x:auto;overflow-y:hidden;padding:20px 2px 6px}
+.wave{position:relative;z-index:1;display:flex;flex-direction:column;gap:8px;min-width:186px}
+.wave .wl{color:var(--muted);font-size:.74rem;text-transform:uppercase;letter-spacing:.05em}
+.tk{background:var(--card);border:1px solid var(--card-line);border-left:3px solid var(--mx);
+  border-radius:7px;padding:7px 10px;transition:opacity .12s}
+.tk.dim{opacity:.22}
+.tk .id{font-size:.85rem;font-weight:650}
+.tk .ti{font-size:.82rem;color:var(--muted);margin-top:1px;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.tk .mt{margin-top:5px;display:flex;gap:6px;flex-wrap:wrap}
-.tk .mt span{font-size:.7rem;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
-.slot{border:1px dashed var(--card-line);border-radius:7px;min-height:38px;background:var(--ghost);
-  display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.72rem}
+.tk .mt{margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;align-items:center}
+.chip{font-size:.69rem;border-radius:4px;padding:1px 6px;color:#fff;font-weight:600;white-space:nowrap}
+.tk .mt .meta{font-size:.69rem;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:1px 5px}
+.slot{border:1px dashed var(--card-line);border-radius:7px;min-height:36px;background:var(--ghost);
+  display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:.71rem}
 .edges{position:absolute;top:0;left:0;pointer-events:none;z-index:0;overflow:visible}
 .edges path{fill:none;stroke:var(--edge);stroke-width:1.75;stroke-linecap:round}
+.edges path.cross{stroke-dasharray:5 4}
 
-.notes{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px;margin-top:24px}
-.notes h3{margin:0 0 8px;font-size:.95rem}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-size:.76rem;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
+td.num{font-variant-numeric:tabular-nums}
+.tag{font-size:.7rem;border-radius:4px;padding:1px 6px;border:1px solid currentColor;color:var(--warn)}
+h3{margin:0 0 10px;font-size:.95rem}
 .notes ul{margin:0;padding-left:20px;color:var(--muted)}
-.notes li{margin:4px 0}
+.notes li{margin:5px 0}
 .notes b{color:var(--ink)}
 `
 
@@ -175,135 +203,131 @@ var DATA = JSON.parse(document.getElementById('dag-data').textContent);
 var slider = document.getElementById('cc');
 var pill = document.getElementById('ccv');
 var readout = document.getElementById('readout');
+var flow = document.getElementById('flow');
+var svg = document.getElementById('edges');
+var mode = 'runner';
+var focus = null;
 
-function el(tag, cls, txt){ var e = document.createElement(tag); if(cls) e.className = cls;
-  if(txt !== undefined) e.textContent = txt; return e; }
+function el(t, c, x){ var e = document.createElement(t); if(c) e.className = c;
+  if(x !== undefined) e.textContent = x; return e; }
+function colorOf(slot){ return slot < 0 ? 'var(--mx)' : 'var(--m' + slot + ')'; }
+function roundsAt(which, c){ var t = DATA[which]; return t[Math.min(c, t.length) - 1] || []; }
 
-// rounds at concurrency c; caps above the ticket count behave like the ticket count
-function roundsAt(m, c){ return m.roundsByCap[Math.min(c, m.roundsByCap.length) - 1] || []; }
-
-function renderModule(m){
-  var host = document.getElementById('m-' + m.position);
+function render(){
   var c = +slider.value;
-  var rounds = roundsAt(m, c);
-  var busiest = 0, idle = 0;
-  for (var i = 0; i < rounds.length; i++){
-    busiest = Math.max(busiest, rounds[i].length);
-    idle += Math.max(0, c - rounds[i].length);
-  }
-  host.querySelector('[data-k=waves]').textContent = rounds.length;
-  host.querySelector('[data-k=busy]').textContent = busiest;
-  var idleEl = host.querySelector('[data-k=idle]');
-  idleEl.textContent = idle;
-  idleEl.classList.toggle('idle', idle > 0);
+  pill.textContent = c;
+  var rounds = roundsAt(mode, c);
+  var other = roundsAt(mode === 'runner' ? 'global' : 'runner', c);
 
-  var waves = host.querySelector('.waves');
-  var svg = waves.querySelector('.edges');
-  waves.querySelectorAll('.wave').forEach(function(w){ w.remove(); });
+  while (flow.firstChild) flow.removeChild(flow.firstChild);
+  flow.appendChild(svg);
 
+  var idle = 0;
   rounds.forEach(function(batch, wi){
+    idle += Math.max(0, c - batch.length);
     var col = el('div', 'wave');
     col.appendChild(el('div', 'wl', 'Wave ' + (wi + 1) + '  \\u00b7  ' + batch.length + '/' + c));
     batch.forEach(function(id){
-      var t = m.tickets[id];
+      var t = DATA.tickets[id];
       var card = el('div', 'tk');
-      card.id = 'tk-' + m.position + '-' + id;
+      card.id = 'tk-' + id;
+      card.style.borderLeftColor = colorOf(t.s);
+      if (focus && t.m !== focus) card.classList.add('dim');
       card.appendChild(el('div', 'id mono', id));
       if (t.title) card.appendChild(el('div', 'ti', t.title));
       var mt = el('div', 'mt');
-      if (t.lane) mt.appendChild(el('span', null, 'lane ' + t.lane));
-      if (t.size) mt.appendChild(el('span', null, t.size));
-      if (t.deps.length) mt.appendChild(el('span', null, 'after ' + t.deps.join(', ')));
-      if (mt.children.length) card.appendChild(mt);
-      card.title = id + (t.title ? ' \\u2014 ' + t.title : '') +
-        (t.deps.length ? '\\nblocked_by: ' + t.deps.join(', ') : '\\nno intra-module blockers');
+      // the module chip is the secondary encoding the palette depends on -- identity
+      // must never rest on hue alone, and past the 4th module there IS no hue
+      var chip = el('span', 'chip', t.m);
+      chip.style.background = colorOf(t.s);
+      mt.appendChild(chip);
+      if (t.lane) mt.appendChild(el('span', 'meta', 'lane ' + t.lane));
+      if (t.size) mt.appendChild(el('span', 'meta', t.size));
+      card.appendChild(mt);
+      card.title = id + (t.title ? ' \\u2014 ' + t.title : '') + '\\nmodule: ' + t.m +
+        (t.deps.length ? '\\nblocked_by: ' + t.deps.join(', ') : '\\nno blockers');
       col.appendChild(card);
     });
-    // ghost slots make "I set concurrency too high" visible instead of theoretical
     for (var k = batch.length; k < c; k++) col.appendChild(el('div', 'slot', 'idle lane'));
-    waves.appendChild(col);
+    flow.appendChild(col);
   });
-  drawEdges(m, waves, svg);
+
+  drawEdges();
+
+  // in runner mode THIS schedule is the longer one, so the cost is rounds - other
+  var lost = rounds.length - other.length;
+  var txt = '<b>' + rounds.length + '</b> ticket-rounds at concurrency ' + c +
+    ' \\u00b7 <b>' + idle + '</b> idle lane-slots \\u00b7 ';
+  if (mode === 'runner') {
+    txt += lost > 0
+      ? 'a global schedule would finish in <b>' + other.length + '</b> \\u2014 <span class="save">' +
+        lost + ' rounds (' + Math.round(lost / rounds.length * 100) + '%) lost to the module barrier</span>'
+      : 'a global schedule finishes in the same <b>' + other.length + '</b> \\u2014 the module barrier costs nothing here';
+  } else {
+    txt += 'the runner would take <b>' + other.length + '</b> today \\u2014 <b>this schedule is not executable yet</b>';
+  }
+  readout.innerHTML = txt;
 }
 
-function drawEdges(m, waves, svg){
+function drawEdges(){
   while (svg.firstChild) svg.removeChild(svg.firstChild);
-  var box = waves.getBoundingClientRect();
-  var ox = waves.scrollLeft, oy = waves.scrollTop;
-  // height from clientHeight, not scrollHeight: sizing the overlay from the scroll
-  // extent it contributes to is a feedback loop that grows a phantom scrollbar
-  var w = waves.scrollWidth, h = waves.clientHeight;
+  var box = flow.getBoundingClientRect();
+  var ox = flow.scrollLeft, oy = flow.scrollTop;
+  var w = flow.scrollWidth, h = flow.clientHeight;
   svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
-  svg.setAttribute('width', w);
-  svg.setAttribute('height', h);
-  m.order.forEach(function(id){
-    m.tickets[id].deps.forEach(function(dep){
-      var a = document.getElementById('tk-' + m.position + '-' + dep);
-      var b = document.getElementById('tk-' + m.position + '-' + id);
+  svg.setAttribute('width', w); svg.setAttribute('height', h);
+  Object.keys(DATA.tickets).forEach(function(id){
+    var t = DATA.tickets[id];
+    t.deps.forEach(function(dep){
+      var a = document.getElementById('tk-' + dep), b = document.getElementById('tk-' + id);
       if (!a || !b) return;
       var ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
       var x1 = ra.right - box.left + ox, y1 = ra.top + ra.height / 2 - box.top + oy;
       var x2 = rb.left - box.left + ox, y2 = rb.top + rb.height / 2 - box.top + oy;
       var dx = Math.max(18, (x2 - x1) / 2);
       var p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      p.setAttribute('d', 'M' + x1 + ',' + y1 + ' C' + (x1 + dx) + ',' + y1 +
-        ' ' + (x2 - dx) + ',' + y2 + ' ' + x2 + ',' + y2);
+      // dashed = crosses a module boundary; these edges are invisible in any
+      // per-module view, and they are exactly what the module barrier over-enforces
+      if (DATA.tickets[dep].m !== t.m) p.setAttribute('class', 'cross');
+      p.setAttribute('d', 'M' + x1 + ',' + y1 + ' C' + (x1 + dx) + ',' + y1 + ' ' +
+        (x2 - dx) + ',' + y2 + ' ' + x2 + ',' + y2);
+      if (focus && t.m !== focus && DATA.tickets[dep].m !== focus) p.setAttribute('opacity', '0.2');
       svg.appendChild(p);
     });
   });
 }
 
-function renderAll(){
-  var c = +slider.value;
-  pill.textContent = c;
-  var total = 0, idle = 0;
-  DATA.modules.forEach(function(m){
-    var rounds = roundsAt(m, c);
-    total += rounds.length;
-    for (var i = 0; i < rounds.length; i++) idle += Math.max(0, c - rounds[i].length);
-    renderModule(m);
+document.querySelectorAll('.seg button').forEach(function(b){
+  b.addEventListener('click', function(){
+    mode = b.dataset.mode;
+    document.querySelectorAll('.seg button').forEach(function(o){
+      o.setAttribute('aria-pressed', String(o === b)); });
+    render();
   });
-  var over = c > DATA.recommended;
-  var under = c < DATA.recommended;
-  readout.className = 'readout' + (over || under ? ' warn' : '');
-  readout.innerHTML = '<b>' + total + '</b> ticket-rounds end to end \\u00b7 <b>' + idle +
-    '</b> idle lane-slots' +
-    (over ? ' \\u00b7 <b>above the useful maximum \\u2014 the extra lanes never fill</b>'
-     : under ? ' \\u00b7 <b>below ' + DATA.recommended + ' \\u2014 independent tickets are being serialized</b>'
-     : ' \\u00b7 <b>this is the recommended setting</b>');
-}
-
-slider.addEventListener('input', renderAll);
-window.addEventListener('resize', renderAll);
-renderAll();
+});
+document.querySelectorAll('.legend button').forEach(function(b){
+  b.addEventListener('click', function(){
+    focus = (focus === b.dataset.mod) ? null : b.dataset.mod;
+    document.querySelectorAll('.legend button').forEach(function(o){
+      o.setAttribute('aria-pressed', String(o.dataset.mod === focus)); });
+    render();
+  });
+});
+slider.addEventListener('input', render);
+window.addEventListener('resize', render);
+render();
 `
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+const swatch = (slot) => `background:${slot < 0 ? 'var(--mx)' : `var(--m${slot})`}`
 
-const moduleHtml = (m) => {
-  const badges = []
-  if (m.maxUsefulLanes === recommended && mods.length > 1) badges.push('<span class="badge widest">widest</span>')
-  if (m.maxUsefulLanes === 1 && m.order.length > 1) badges.push('<span class="badge serial">fully serial</span>')
-  return [
-    `<section class="mod" id="m-${m.position}">`,
-    '  <h2>',
-    `    <span class="pos">${m.position}.</span> <span class="mono">${esc(m.name)}</span>`,
-    `    ${badges.join(' ')}`,
-    '  </h2>',
-    `  <p class="deps">${m.dependsOn.length
-      ? 'runs after: ' + m.dependsOn.map((d) => `<code>${esc(d)}</code>`).join(', ')
-      : 'no cross-module blockers'}</p>`,
-    '  <div class="stats">',
-    `    <div class="stat"><div class="v">${m.order.length}</div><div class="k">tickets</div></div>`,
-    '    <div class="stat"><div class="v" data-k="waves">-</div><div class="k">waves</div></div>',
-    '    <div class="stat"><div class="v" data-k="busy">-</div><div class="k">peak lanes busy</div></div>',
-    '    <div class="stat"><div class="v" data-k="idle">-</div><div class="k">idle lane-slots</div></div>',
-    `    <div class="stat"><div class="v">${m.maxUsefulLanes}</div><div class="k">max useful lanes</div></div>`,
-    '  </div>',
-    '  <div class="waves"><svg class="edges"></svg></div>',
-    '</section>',
-  ].join('\n')
-}
+const rows = data.modules.map((m) => `      <tr>
+        <td><span class="legend"><span class="sw" style="${swatch(m.slot)};display:inline-block"></span></span> <code>${esc(m.name)}</code>${serial.includes(m.name) ? ' <span class="tag">fully serial</span>' : ''}</td>
+        <td class="num">${m.count}</td>
+        <td class="num">${m.lanes}</td>
+        <td class="num">${m.waves}</td>
+        <td>${m.dependsOn.length ? m.dependsOn.map((d) => `<code>${esc(d)}</code>`).join(', ') : '&mdash;'}</td>
+      </tr>`).join('\n')
 
 const html = [
   '<!doctype html>',
@@ -317,29 +341,48 @@ const html = [
   '<body>',
   '<div class="wrap">',
   '<h1>PRD execution plan</h1>',
-  `<p class="sub">Generated from ticket <code>blocked_by</code> frontmatter under <code>${esc(root)}</code>. Review this before Gate 1 sign-off.</p>`,
-  '<div class="hero">',
+  `<p class="sub">Every ticket under <code>${esc(root)}</code> in one dependency graph, colored by module. Review before Gate 1 sign-off.</p>`,
+  '<div class="panel hero">',
   `  <div class="big"><div class="n">${recommended}</div><div class="l">recommended concurrency</div></div>`,
   '  <div class="facts">',
-  `    <p><b>${mods.length}</b> module(s), <b>${totalTickets}</b> ticket(s). Modules run <b>sequentially</b>; lanes are intra-module only.</p>`,
+  `    <p><b>${data.modules.length}</b> module(s), <b>${n}</b> ticket(s).</p>`,
   `    <p>Start the run with <code class="cmd">/start-all autonomous ${recommended}</code></p>`,
-  `    <p>${widest.length ? 'Widest module(s): ' + widest.map((n) => `<code>${esc(n)}</code>`).join(', ') + '.' : ''}${serial.length ? ' Fully serial: ' + serial.map((n) => `<code>${esc(n)}</code>`).join(', ') + ' &mdash; a decomposition signal, not a scheduling one.' : ''}</p>`,
+  `    <p>Today the runner finishes each module before starting the next, so lanes are intra-module and the recommendation is the widest single module &mdash; never the sum.${serial.length ? ` Fully serial: ${serial.map((s) => `<code>${esc(s)}</code>`).join(', ')} &mdash; a decomposition signal, not a scheduling one.` : ''}</p>`,
   '  </div>',
   '</div>',
-  '<div class="controls">',
+  '<div class="panel controls">',
+  '  <div class="seg" role="group" aria-label="schedule">',
+  '    <button type="button" data-mode="runner" aria-pressed="true">As the runner executes</button>',
+  '    <button type="button" data-mode="global" aria-pressed="false">Globally scheduled</button>',
+  '  </div>',
   '  <label for="cc">concurrency</label>',
   `  <input id="cc" type="range" min="1" max="${sliderMax}" value="${recommended}" step="1">`,
   `  <span class="pill" id="ccv">${recommended}</span>`,
   '  <span class="readout" id="readout"></span>',
   '</div>',
-  mods.map(moduleHtml).join('\n'),
-  '<div class="notes">',
+  '<div class="panel">',
+  '  <h3>Modules <span style="font-weight:400;color:var(--muted)">&mdash; click to highlight</span></h3>',
+  '  <div class="legend">',
+  data.modules.map((m) => `    <button type="button" data-mod="${esc(m.name)}" aria-pressed="false"><span class="sw" style="${swatch(m.slot)}"></span><span class="mono">${esc(m.name)}</span><span class="ct">${m.count} tickets &middot; ${m.lanes} lane${m.lanes === 1 ? '' : 's'}</span></button>`).join('\n'),
+  '  </div>',
+  '</div>',
+  '<div class="panel"><div class="flow" id="flow"><svg class="edges" id="edges"></svg></div></div>',
+  '<div class="panel">',
+  '  <h3>Modules in dispatch order</h3>',
+  '  <table>',
+  '    <thead><tr><th>Module</th><th>Tickets</th><th>Max useful lanes</th><th>Waves</th><th>Runs after</th></tr></thead>',
+  `    <tbody>\n${rows}\n    </tbody>`,
+  '  </table>',
+  '</div>',
+  '<div class="panel notes">',
   '  <h3>How to read this</h3>',
   '  <ul>',
-  '    <li><b>Modules never overlap.</b> <code>start-all</code> awaits each <code>run-milestone</code> in DAG order, so cross-module <code>blocked_by</code> sets <em>order</em>, never parallelism. The recommendation is the <em>max</em> across modules, never the sum.</li>',
-  '    <li><b>Max useful lanes</b> is the lowest concurrency that still reaches the module\'s minimum wave count. Above it, lanes sit idle; below it, independent tickets get serialized.</li>',
-  '    <li><b>Uniform-duration model.</b> Every ticket counts as one round and a wave ends when all its lanes finish. Real lanes finish at different times and the scheduler refills a free lane immediately, so real wall-clock is <em>at most</em> the waves shown.</li>',
-  '    <li><b>A fully serial module is a decomposition problem, not a scheduling one.</b> It means its tickets form one <code>blocked_by</code> chain &mdash; revisit the file-scope split before signing off.</li>',
+  '    <li><b>Two schedules, one graph.</b> <em>As the runner executes</em> is what <code>/start-all</code> does today: <code>start-all.js</code> awaits each <code>run-milestone</code>, so a barrier sits between modules and <code>concurrency</code> fans out only within the module currently running. <em>Globally scheduled</em> is what the dependency graph alone permits. <b>The runner cannot execute the global schedule yet</b> &mdash; it is shown to price the barrier, not to promise a speed-up.</li>',
+  '    <li><b>Dashed edges cross a module boundary.</b> They are real <code>blocked_by</code> dependencies. Every solid edge inside a module is enforced by the DAG; the barrier additionally serializes tickets with <em>no</em> edge between them at all, which is where the lost rounds come from.</li>',
+  '    <li><b>Max useful lanes</b> is the lowest concurrency that still reaches the minimum round count. Above it lanes sit idle; below it, independent tickets are serialized.</li>',
+  '    <li><b>Uniform-duration model.</b> Every ticket counts as one round and a wave ends when all its lanes finish. Real lanes finish at different times and the scheduler refills a free lane immediately, so real wall-clock is <em>at most</em> the rounds shown.</li>',
+  '    <li><b>A fully serial module is a decomposition problem, not a scheduling one.</b> Its tickets form one <code>blocked_by</code> chain &mdash; revisit the file-scope split before signing off.</li>',
+  `    <li><b>Color covers the first ${HUES} modules only.</b> Cards from any two modules can sit side by side, so the palette must clear the all-pairs contrast floors; ${HUES} is the largest set that does in both light and dark. Module ${HUES + 1} onward take the neutral swatch &mdash; identity comes from the chip on every card, the legend, and click-to-highlight, never from hue alone.</li>`,
   '    <li><b>Caps that still apply at run time:</b> <code>supervised</code> mode forces concurrency to 1, and the harness caps concurrent agents at <code>min(16, cores - 2)</code> on the machine that runs it. That machine is unknown here, so it is shown as a formula rather than a number.</li>',
   '    <li>Regenerate with <code>node .claude/scripts/dag-report.mjs</code> after any ticket <code>blocked_by</code> change. Output is deterministic &mdash; an unchanged DAG rewrites an identical file.</li>',
   '  </ul>',
@@ -355,29 +398,27 @@ mkdirSync(dirname(out), { recursive: true })
 writeFileSync(out, html)
 
 // ---- stdout summary (the agent relays this; nobody has to open the page) ----------
-console.log(`execution plan: ${mods.length} module(s), ${totalTickets} ticket(s) — modules run sequentially`)
-for (const m of mods) {
+const rr = runnerProfile.roundsByCap[Math.min(recommended, capMax) - 1].length
+const gr = globalProfile.roundsByCap[Math.min(recommended, capMax) - 1].length
+console.log(`execution plan: ${data.modules.length} module(s), ${n} ticket(s) — modules run sequentially`)
+for (const m of perModule) {
   const flags = []
-  if (m.maxUsefulLanes === recommended && mods.length > 1) flags.push('widest')
-  if (m.maxUsefulLanes === 1 && m.order.length > 1) flags.push('fully serial')
-  const deps = m.dependsOn.length ? `  <- after: ${m.dependsOn.join(', ')}` : ''
-  console.log(
-    `  ${m.position}. ${m.name}  (${m.order.length} ticket(s))  ` +
-    `${m.maxUsefulLanes} lane(s) / ${m.minWaves} wave(s)${flags.length ? '  [' + flags.join(', ') + ']' : ''}${deps}`,
-  )
+  if (m.maxUsefulLanes === recommended && perModule.length > 1) flags.push('widest')
+  if (m.maxUsefulLanes === 1 && m.tickets.length > 1) flags.push('fully serial')
+  const d = m.dependsOn.length ? `  <- after: ${m.dependsOn.join(', ')}` : ''
+  console.log(`  ${m.position}. ${m.name}  (${m.tickets.length} ticket(s))  ` +
+    `${m.maxUsefulLanes} lane(s) / ${m.minWaves} wave(s)${flags.length ? '  [' + flags.join(', ') + ']' : ''}${d}`)
 }
 console.log(`recommended concurrency: ${recommended}   ->   /start-all autonomous ${recommended}`)
+console.log(`at that concurrency: ${rr} ticket-rounds as the runner executes; ${gr} if modules were globally scheduled` +
+  (rr > gr ? `  (${rr - gr} rounds, ${Math.round((rr - gr) / rr * 100)}%, lost to the module barrier — not executable today)` : '  (the module barrier costs nothing here)'))
 console.log(`wrote ${outShown}`)
 console.log('DAG-REPORT-JSON: ' + JSON.stringify({
   out: outShown,
   recommendedConcurrency: recommended,
-  totalTickets,
-  modules: mods.map((m) => ({
-    name: m.name,
-    position: m.position,
-    tickets: m.order.length,
-    maxUsefulLanes: m.maxUsefulLanes,
-    minWaves: m.minWaves,
-    dependsOn: m.dependsOn,
-  })),
+  recommendedConcurrencyGlobal: recommendedGlobal,
+  totalTickets: n,
+  schedules: { atRecommended: { runnerRounds: rr, globalRounds: gr }, runnerMinRounds: runnerProfile.minRounds, globalMinRounds: globalProfile.minRounds },
+  modules: perModule.map((m) => ({ name: m.name, position: m.position, tickets: m.tickets.length,
+    maxUsefulLanes: m.maxUsefulLanes, minWaves: m.minWaves, dependsOn: m.dependsOn })),
 }))

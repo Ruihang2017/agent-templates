@@ -25,7 +25,8 @@ Then present the breakdown summary and **STOP**:
 
 - modules, ticket count, open questions;
 - the execution shape from the report — per module: lanes, waves, and any module flagged **fully serial**;
-- the **recommended concurrency**, quoted as the exact command to run: `/start-all autonomous <N>`.
+- the **recommended concurrency**, quoted as the exact command to run: `/start-all autonomous <N>`;
+- the rounds lost to the module barrier, if the report prints any. State it as a **decomposition** fact, not a promise: the runner cannot execute a global schedule today, so that number is the cost of the current module split, and the lever the human has at Gate 1 is to move independent work into the same module where file-scopes allow.
 
 Call out a fully-serial module explicitly. It means that module's tickets form one `blocked_by` chain and it can only ever use one lane — that is a **file-scope decomposition** problem to fix now, while the tickets are still cheap to change, not a scheduling detail to discover mid-run.
 
