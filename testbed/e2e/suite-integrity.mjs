@@ -21,6 +21,7 @@ const EXPECTED_FILES = [
   '.claude/scripts/milestone-dag.mjs',
   '.claude/scripts/dag-core.mjs',
   '.claude/scripts/dag-report.mjs',
+  '.claude/scripts/dag-scan.mjs',
   '.claude/scripts/deliver-ticket.mjs',
   '.claude/workflows/run-milestone.js',
   '.claude/workflows/nightly-issues.js',
@@ -124,6 +125,7 @@ export async function run() {
     const MUST_ALLOW = [
       'Bash(node .claude/scripts/milestone-dag.mjs:*)',
       'Bash(node .claude/scripts/dag-report.mjs:*)',
+      'Bash(node .claude/scripts/dag-scan.mjs:*)',
       'Bash(node .claude/scripts/publish-tickets.mjs:*)',
       'Bash(node .claude/scripts/deliver-ticket.mjs:*)',
       'Bash(git checkout:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git push:*)',
@@ -161,6 +163,7 @@ export async function run() {
     p('.claude/scripts/milestone-dag.mjs'),
     p('.claude/scripts/dag-core.mjs'),
     p('.claude/scripts/dag-report.mjs'),
+    p('.claude/scripts/dag-scan.mjs'),
     p('.claude/scripts/deliver-ticket.mjs'),
     REPO_ROOT + '.claude/workflows/run-milestone.js',
     REPO_ROOT + '.claude/workflows/nightly-issues.js',
