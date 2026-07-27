@@ -5,6 +5,8 @@ argument-hint: [supervised|autonomous] [concurrency]
 
 Arguments: `$ARGUMENTS` — optional mode override (else the repo's declared Operating mode in CLAUDE.md); an optional integer sets **`concurrency`** (default 1 = sequential; >1 runs independent tickets WITHIN each module as parallel lanes — autonomous only; modules themselves stay sequential in DAG order).
 
+**Do not guess `concurrency`.** `node .claude/scripts/dag-report.mjs docs/prd` derives it from the ticket DAG and prints `recommended concurrency: N` (also rendered in `docs/prd/dag.html`, written at `/breakdown-prd` time). Above that number the extra lanes never fill; below it, independent tickets get serialized. If the human passed no integer, run the report and report what it recommends rather than defaulting to 1 silently.
+
 Typing this command is the human Gate 1 sign-off **for the whole PRD** — every module, in dependency order. Prefer `/start-milestone` per module when you still want module-boundary checkpoints. Execute in order:
 
 1. **Compute the plan.** Run `node .claude/scripts/milestone-dag.mjs` and show its output (module order, per-module dependencies). STOP on any error — a dangling `blocked_by` or a cycle is a spec defect for the Architect/human, not something to patch here.

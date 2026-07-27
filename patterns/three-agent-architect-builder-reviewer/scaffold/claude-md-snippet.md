@@ -11,7 +11,7 @@
 
 Every non-trivial ticket flows through three stages; no agent judges its own work.
 
-- **`/breakdown-prd [notes]`** — pre-Gate-1: the Architect decomposes `docs/PRD.md` into a breakdown plan + sub-PRDs + template-compliant tickets (disjoint file-scopes, dependency DAG), then stops for human review.
+- **`/breakdown-prd [notes]`** — pre-Gate-1: the Architect decomposes `docs/PRD.md` into a breakdown plan + sub-PRDs + template-compliant tickets (disjoint file-scopes, dependency DAG), then writes the execution-plan view to `docs/prd/dag.html` (`dag-report.mjs` — lanes, waves, and the **recommended `concurrency`** for `/start-all`) and stops for human review. A module flagged **fully serial** there is a file-scope decomposition problem to fix before Gate 1, not a scheduling detail.
 - **`/plan-ticket <ticket>`** — Architect (`claude-opus-5` @ `max`) reads the ticket + codebase → implementation plan at `docs/plans/<ticket-id>.md`. Writes no production code.
 - **`/build-ticket <ticket>`** — Builder (`claude-opus-5` @ `xhigh`) implements the plan, runs tests until green, records deviations. Never merges or self-clears.
 - **`/review-ticket <ticket>`** — Reviewer (`claude-fable-5` @ `xhigh`) in a **fresh context**, deliberately a different model tier from the Builder. Focus: edge cases, concurrency, security-sensitive paths. Verdict **CLEAR** or **BOUNCE**; merge requires CLEAR.
