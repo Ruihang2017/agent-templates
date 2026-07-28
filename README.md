@@ -84,7 +84,9 @@ Releases publish from a version tag ([`.github/workflows/publish.yml`](.github/w
 git tag vX.Y.Z && git push origin vX.Y.Z   # X.Y.Z = the version in package.json
 ```
 
-CI re-runs the E2E gate, checks the tag matches `package.json`, and publishes to npm. **One-time setup:** add an `NPM_TOKEN` repo secret (Settings → Secrets and variables → Actions).
+CI re-runs the E2E gate, checks the tag matches `package.json`, and publishes to npm.
+
+**One-time setup:** add an `NPM_TOKEN` repo secret (Settings → Secrets and variables → Actions). It must be a **Granular Access Token** with *Read and write* on this package — **not** a Classic token. npm is restricting classic tokens that bypass 2FA for direct publishing, so with the wrong type CI passes both gates, builds the tarball, and only then fails with `npm error code EOTP` ("requires a one-time password") — which no CI runner can supply. Learned the hard way on 2026-07-27; the token type is the single most likely cause if a tagged release fails at the last step.
 
 ## License
 
