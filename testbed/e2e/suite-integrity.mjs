@@ -173,6 +173,23 @@ export async function run() {
     check(S, `LF-only (no \\r): ${f.slice(REPO_ROOT.length)}`, !/\r/.test(readFileSync(f, 'utf8')))
   }
 
+  // issue #109: the repo gated artifact CORRECTNESS hard and artifact DELIVERY not at
+  // all — suite-site asserted the generated page was right while the live page sat eight
+  // PRs stale, still advertising the pre-Opus-5 model table, because site/ is gitignored
+  // and nothing deployed it. Deleting or de-triggering the deploy workflow must fail the
+  // merge gate rather than silently re-open that hole.
+  {
+    const wf = REPO_ROOT + '.github/workflows/pages.yml'
+    check(S, 'a Pages deploy workflow exists', existsSync(wf))
+    if (existsSync(wf)) {
+      const text = readFileSync(wf, 'utf8')
+      check(S, 'pages workflow triggers on push to main', /push:\s*\n\s*branches:\s*\[main\]/.test(text))
+      check(S, 'pages workflow builds the site from the generator', /build-site\.mjs/.test(text))
+      check(S, 'pages workflow gates the deploy on the E2E suite', /npm test/.test(text))
+      check(S, 'pages workflow can write (needs contents: write to push gh-pages)', /contents:\s*write/.test(text))
+    }
+  }
+
   check(S, 'snippet declares Operating mode', /Operating mode/.test(readFileSync(p('claude-md-snippet.md'), 'utf8')))
   const ticketTpl = readFileSync(REPO_ROOT + 'templates/ticket.template.md', 'utf8')
   for (const f of ['id', 'title', 'module', 'lane', 'size', 'agent', 'status', 'date', 'blocked_by', 'blocks']) {
