@@ -90,7 +90,7 @@ Two honest limits: `concurrency > 1` **multiplies concurrent token spend** (opt 
 
 CI ([`.github/workflows/test.yml`](.github/workflows/test.yml)) runs the E2E suite on every PR and push to `main`, across ubuntu + windows × Node 18/20 — the merge gate is enforced server-side and cross-platform.
 
-Releases publish from a version tag ([`.github/workflows/publish.yml`](.github/workflows/publish.yml)): bump `package.json`, then
+Releases publish from a version tag ([`.github/workflows/publish.yml`](.github/workflows/publish.yml)): bump `package.json` via a PR, merge, then
 
 ```
 git tag vX.Y.Z && git push origin vX.Y.Z   # X.Y.Z = the version in package.json
@@ -98,7 +98,20 @@ git tag vX.Y.Z && git push origin vX.Y.Z   # X.Y.Z = the version in package.json
 
 CI re-runs the E2E gate, checks the tag matches `package.json`, and publishes to npm.
 
-**One-time setup:** add an `NPM_TOKEN` repo secret (Settings → Secrets and variables → Actions). It must be a **Granular Access Token** with *Read and write* on this package — **not** a Classic token. npm is restricting classic tokens that bypass 2FA for direct publishing, so with the wrong type CI passes both gates, builds the tarball, and only then fails with `npm error code EOTP` ("requires a one-time password") — which no CI runner can supply. Learned the hard way on 2026-07-27; the token type is the single most likely cause if a tagged release fails at the last step.
+**Track record, so you know what to expect:** as of 2026-07-29 this workflow has run twice and **published nothing** — `v0.8.0` and `v0.9.0` both failed with `npm error code EOTP`. Both times the workflow was correct (gates passed, tarball built, registry refused the token) and the version shipped by the manual fallback below. Treat the tag path as the intended route, not a proven one, until a run goes green.
+
+**One-time setup:** add an `NPM_TOKEN` repo secret (Settings → Secrets and variables → Actions). It must be a **Granular Access Token** with *Read and write* on this package — **not** a Classic token. npm restricts classic tokens that bypass 2FA for direct publishing, so with the wrong type CI passes both gates, builds the tarball, and only then fails with `npm error code EOTP` ("requires a one-time password"), which no CI runner can supply. That is the single most likely cause of a tagged release failing at the last step — and it is not detectable earlier: `npm whoami` succeeds for both token types and `npm publish --dry-run` never touches auth.
+
+**Retrying a failed release:** don't delete or re-push the tag, and don't bump the version — the tag already points at the right commit. Fix the secret, then Actions → **publish** → **Run workflow** → enter the tag (e.g. `v0.9.0`). The tag-matches-version gate still runs, so a dispatch against the wrong ref fails closed.
+
+**Manual fallback** — this is how every release since 0.7.0 has actually shipped, so it is a supported step, not a workaround. From a clean checkout of the tag:
+
+```
+git checkout main && git pull            # HEAD must be the tagged commit
+npm publish                              # prompts for your OTP interactively
+```
+
+Publishing locally works precisely where CI cannot: you can answer the one-time-password prompt. Afterwards, confirm with `npm view agent-templates version`.
 
 ## License
 

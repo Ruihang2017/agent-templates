@@ -193,6 +193,23 @@ export async function run() {
     }
   }
 
+  // issue #119: the release workflow has failed 2/2 (v0.8.0, v0.9.0 — both EOTP on a
+  // token that cannot publish unattended) and every actual release since 0.7.0 shipped
+  // by hand. The workflow is not the defect, so guard it the way #110 guards pages.yml:
+  // its gates and its manual-retry path must not quietly disappear.
+  {
+    const wf = REPO_ROOT + '.github/workflows/publish.yml'
+    check(S, 'a publish workflow exists', existsSync(wf))
+    if (existsSync(wf)) {
+      const text = readFileSync(wf, 'utf8')
+      check(S, 'publish workflow triggers on version tags', /tags:\s*\['v\[0-9\]\*'\]/.test(text))
+      check(S, 'publish workflow is manually dispatchable (retry without tag surgery)', /workflow_dispatch:/.test(text))
+      check(S, 'publish workflow gates on the E2E suite', /npm test/.test(text))
+      check(S, 'publish workflow refuses a tag/version mismatch', /does not match package\.json/.test(text))
+      check(S, 'publish workflow reads the token from a secret, never a literal', /secrets\.NPM_TOKEN/.test(text) && !/npm_[A-Za-z0-9]{20,}/.test(text))
+    }
+  }
+
   check(S, 'snippet declares Operating mode', /Operating mode/.test(readFileSync(p('claude-md-snippet.md'), 'utf8')))
   const ticketTpl = readFileSync(REPO_ROOT + 'templates/ticket.template.md', 'utf8')
   for (const f of ['id', 'title', 'module', 'lane', 'size', 'agent', 'status', 'date', 'blocked_by', 'blocks']) {

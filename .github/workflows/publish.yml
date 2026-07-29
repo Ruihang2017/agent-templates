@@ -3,11 +3,30 @@ name: publish
 # Release = push a version tag. On a v* tag: re-run the full E2E gate in a clean
 # environment, verify the tag matches package.json version (no accidental mismatched
 # publish), then publish to npm. Requires an NPM_TOKEN repo secret (maintainer adds it;
-# the automation cannot). Removes the manual npm-publish + auth step.
+# the automation cannot).
+#
+# workflow_dispatch exists because this has already failed twice on a bad token
+# (v0.8.0 and v0.9.0, both `npm error code EOTP` — see issue #119). Both times the
+# workflow itself was correct: gates passed, the tarball built, and the registry
+# refused the token. Recovering from that used to mean finding a run id, or deleting
+# and force-pushing a tag that already looks published. Now: fix the secret, hit Run
+# workflow, pick the tag. The tag-matches-version gate below still runs, so a dispatch
+# against the wrong ref fails closed rather than publishing a mismatch.
+#
+# There is deliberately NO token preflight. `npm whoami` succeeds for both token types
+# and `npm publish --dry-run` never touches auth, so nothing here can tell a
+# publish-capable token from one that will demand a one-time password. A check that
+# cannot discriminate would only add false confidence.
 
 on:
   push:
     tags: ['v[0-9]*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag to publish (e.g. v0.9.0). Defaults to the branch/tag this was dispatched from.'
+        required: false
+        type: string
 
 jobs:
   publish:
@@ -16,6 +35,8 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -24,10 +45,13 @@ jobs:
         shell: bash
         run: |
           pkg="v$(node -p "require('./package.json').version")"
-          tag="${GITHUB_REF_NAME}"
+          # on a tag push GITHUB_REF_NAME is the tag; on a dispatch it is whatever was
+          # dispatched, so prefer the explicit input when one was given
+          tag="${{ inputs.ref || '' }}"
+          [ -n "$tag" ] || tag="${GITHUB_REF_NAME}"
           echo "tag=$tag pkg=$pkg"
           if [ "$tag" != "$pkg" ]; then
-            echo "::error::tag $tag does not match package.json $pkg — bump the version and re-tag"
+            echo "::error::tag $tag does not match package.json $pkg — bump the version and re-tag, or dispatch against the matching tag"
             exit 1
           fi
       - name: E2E gate
@@ -36,3 +60,8 @@ jobs:
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: If this failed with EOTP
+        if: failure()
+        shell: bash
+        run: |
+          echo "::notice::If the failure above is 'npm error code EOTP', the NPM_TOKEN secret cannot publish without an interactive one-time password. Replace it with a Granular Access Token (Read and write, scoped to this package) — not a Classic token — then re-run via Run workflow. See README § CI & releasing."
