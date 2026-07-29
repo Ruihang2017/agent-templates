@@ -28,7 +28,18 @@
 // anything. Note: the gh path lists up to 1000 issues; beyond that, split modules.
 //
 // Last line of stdout is machine-readable for /start-milestone:
-//   PUBLISH-SUMMARY-JSON: [{"id","path","title","issue","error"?}]
+//   PUBLISH-SUMMARY-JSON: [{"id","path","title","issue","state"?,"drift"?,"error"?}]
+//
+// `state` ("open"/"closed") and `drift` exist to close a silent-skip hole (issue #112).
+// /start-all drops tickets whose issue is CLOSED — that is the resume filter, and it is
+// what makes a re-run after Gate 2 execute only the new phase. But it also means editing
+// an already-delivered ticket and re-running does NOTHING, and said nothing, because the
+// filter never reported what it dropped. So the state comes back in the summary, and a
+// closed issue whose body no longer matches its ticket is flagged `drift: true` for the
+// caller to ESCALATE. Two readings, both a human's call, neither the scheduler's:
+// the ticket was edited after delivery, or the issue predates a body-format change
+// (`--sync` refreshes that one). Silently swallowing either is this repo's recurring
+// failure class — a gate on correctness with none on delivery.
 // Exit codes: 0 = ok (invalid tickets are reported in the summary, not fatal);
 //             1 = bad invocation, missing CLI in --create mode, fetch failure in
 //                 --create mode, or any create failure (summary still printed).
@@ -107,26 +118,36 @@ if (!cliOk) {
 }
 
 // Fetch the existing-issue list ONCE; match "[<id>]" prefixes client-side.
-// Returns [{number, title}] or null when unavailable.
+// Returns [{number, title, state, body}] or null when unavailable. `state`/`body` come
+// from the SAME list call — no extra round-trip per ticket — and are absent-tolerant:
+// an older CLI that omits them yields '' and simply disables drift detection rather
+// than reporting false drift on every ticket.
+const normState = (s) => (String(s || '').toLowerCase().includes('close') ? 'closed' : String(s || '') ? 'open' : '')
 const fetchExistingIssues = () => {
   if (!cliOk) return null
   try {
     if (PLATFORM === 'gh') {
-      const out = cli('gh', ['issue', 'list', '--state', 'all', '--limit', '1000', '--json', 'number,title'])
-      return JSON.parse(out).map((i) => ({ number: i.number, title: i.title }))
+      const out = cli('gh', ['issue', 'list', '--state', 'all', '--limit', '1000', '--json', 'number,title,state,body'])
+      return JSON.parse(out).map((i) => ({ number: i.number, title: i.title, state: normState(i.state), body: i.body || '' }))
     }
     try {
       const out = cli('glab', ['issue', 'list', '--all', '--output', 'json'])
-      return JSON.parse(out).map((i) => ({ number: i.iid ?? i.id, title: i.title }))
+      return JSON.parse(out).map((i) => ({
+        number: i.iid ?? i.id,
+        title: i.title,
+        state: normState(i.state),
+        body: i.description || '',
+      }))
     } catch {
       // older glab without --output json: parse per LINE so the number always
-      // belongs to the line whose title matches (never "first #N in the blob")
+      // belongs to the line whose title matches (never "first #N in the blob").
+      // No state/body available here — drift detection degrades off, it does not lie.
       const out = cli('glab', ['issue', 'list', '--all'])
       return out
         .split('\n')
         .map((l) => l.match(/^#(\d+)\s+(.*)$/))
         .filter(Boolean)
-        .map((m) => ({ number: Number(m[1]), title: m[2] }))
+        .map((m) => ({ number: Number(m[1]), title: m[2], state: '', body: '' }))
     }
   } catch {
     return null
@@ -146,17 +167,27 @@ for (const i of existingIssues || []) {
   const m = String(i.title).match(/^\[([^\]]+)\]/)
   if (m) idToNum.set(m[1], i.number)
 }
-// Returns an issue number, null (not found), or 'ambiguous' (mentions of "[<id>]"
-// exist but none is a clean title prefix — creating would risk a duplicate, guessing
-// would risk closing the wrong issue later, so the ticket is skipped with an error).
+// Returns the issue RECORD ({number,title,state,body}), null (not found), or 'ambiguous'
+// (mentions of "[<id>]" exist but none is a clean title prefix — creating would risk a
+// duplicate, guessing would risk closing the wrong issue later, so the ticket is skipped
+// with an error). The record rather than the bare number, so state and body are
+// available for the resume filter and drift detection without a second lookup.
 const findExisting = (id) => {
   if (!existingIssues) return null
   const marker = `[${id}]`
   const hits = existingIssues.filter((i) => String(i.title).includes(marker))
   const exact = hits.find((i) => String(i.title).trim().startsWith(marker))
-  if (exact) return exact.number
+  if (exact) return exact
   if (hits.length > 0) return 'ambiguous'
   return null
+}
+
+// Compare a rendered body against what the tracker holds. Normalized for line endings
+// and trailing whitespace only — the tracker round-trips CRLF and trims, and treating
+// that as an edit would flag every ticket.
+const bodyDiffers = (rendered, stored) => {
+  const norm = (s) => String(s || '').replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').trim()
+  return norm(rendered) !== norm(stored)
 }
 
 const field = (fm, name) => {
@@ -217,6 +248,7 @@ let synced = 0
 let planned = 0
 let invalid = 0
 let createFailed = 0
+let driftedClosed = 0
 
 for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort()) {
   const path = join(ticketsDir, f).replaceAll('\\', '/')
@@ -262,20 +294,34 @@ for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort())
     continue
   }
   if (existing) {
+    const num = existing.number
+    const state = existing.state || ''
     if (CREATE && SYNC) {
       try {
-        updateBody(existing, fullBody)
-        console.log(`~ synced ${id}: issue #${existing} body regenerated from the ticket`)
-        summary.push({ id, path, title: issueTitle, issue: existing, synced: true })
+        updateBody(num, fullBody)
+        console.log(`~ synced ${id}: issue #${num} body regenerated from the ticket`)
+        summary.push({ id, path, title: issueTitle, issue: num, state, synced: true })
         synced++
       } catch (e) {
-        console.error(`  (warn) sync failed for ${id} (#${existing}): ${String(e && e.message ? e.message : e).split('\n')[0]}`)
-        summary.push({ id, path, title: issueTitle, issue: existing, error: 'sync-failed' })
+        console.error(`  (warn) sync failed for ${id} (#${num}): ${String(e && e.message ? e.message : e).split('\n')[0]}`)
+        summary.push({ id, path, title: issueTitle, issue: num, state, error: 'sync-failed' })
       }
       continue
     }
-    console.log(`= skip ${id}: issue #${existing} already exists${SYNC ? ' (dry-run: would --sync its body)' : ''}`)
-    summary.push({ id, path, title: issueTitle, issue: existing })
+    // A CLOSED issue means /start-all's resume filter will DROP this ticket. If the
+    // ticket text no longer matches what was delivered, dropping it silently is the
+    // bug (#112) — flag it so the caller escalates instead. Only when a body is
+    // actually available; a CLI that cannot report one must not manufacture drift.
+    const drifted = state === 'closed' && existing.body !== '' && bodyDiffers(fullBody, existing.body)
+    if (drifted) {
+      driftedClosed++
+      console.error(
+        `! ${id}: issue #${num} is CLOSED but its body no longer matches the ticket — /start-all will SKIP this ticket. ` +
+          `Either it was edited after delivery (a human decides whether to re-run it) or the issue predates a body-format change (re-run with --sync).`
+      )
+    }
+    console.log(`= skip ${id}: issue #${num} already exists${state ? ` (${state})` : ''}${SYNC ? ' (dry-run: would --sync its body)' : ''}`)
+    summary.push({ id, path, title: issueTitle, issue: num, state, ...(drifted ? { drift: true } : {}) })
     skipped++
     continue
   }
@@ -292,7 +338,7 @@ for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort())
     const lastLine = out.split('\n').filter(Boolean).pop() || ''
     const num = (lastLine.match(/\/issues\/(\d+)\s*$/) || out.match(/#(\d+)/) || [])[1]
     console.log(`+ created ${id}: ${lastLine}`)
-    summary.push({ id, path, title: issueTitle, issue: num ? Number(num) : null })
+    summary.push({ id, path, title: issueTitle, issue: num ? Number(num) : null, state: 'open' })
     if (num) idToNum.set(id, Number(num)) // so a later same-run ticket's dep line resolves
     created++
   } catch (e) {
@@ -305,10 +351,11 @@ for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort())
 
 const invalidNote = invalid ? `, invalid: ${invalid}` : ''
 const syncNote = synced ? `, synced: ${synced}` : ''
+const driftNote = driftedClosed ? `, DRIFTED-CLOSED: ${driftedClosed} (escalate — see above)` : ''
 console.log(
   CREATE
-    ? `CREATED: ${created}, already existed: ${skipped}, failed: ${createFailed}${syncNote}${invalidNote}.`
-    : `DRY-RUN: ${planned} would be created, ${skipped} already exist${invalidNote}. Re-run with --create after Gate 1 sign-off.`
+    ? `CREATED: ${created}, already existed: ${skipped}, failed: ${createFailed}${syncNote}${invalidNote}${driftNote}.`
+    : `DRY-RUN: ${planned} would be created, ${skipped} already exist${invalidNote}${driftNote}. Re-run with --create after Gate 1 sign-off.`
 )
 console.log('PUBLISH-SUMMARY-JSON: ' + JSON.stringify(summary))
 process.exit(createFailed ? 1 : 0)

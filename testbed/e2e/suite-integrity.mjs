@@ -22,6 +22,7 @@ const EXPECTED_FILES = [
   '.claude/scripts/dag-core.mjs',
   '.claude/scripts/dag-report.mjs',
   '.claude/scripts/dag-scan.mjs',
+  '.claude/scripts/prd-phase.mjs',
   '.claude/scripts/deliver-ticket.mjs',
   '.claude/workflows/run-milestone.js',
   '.claude/workflows/nightly-issues.js',
@@ -126,6 +127,7 @@ export async function run() {
       'Bash(node .claude/scripts/milestone-dag.mjs:*)',
       'Bash(node .claude/scripts/dag-report.mjs:*)',
       'Bash(node .claude/scripts/dag-scan.mjs:*)',
+      'Bash(node .claude/scripts/prd-phase.mjs:*)',
       'Bash(node .claude/scripts/publish-tickets.mjs:*)',
       'Bash(node .claude/scripts/deliver-ticket.mjs:*)',
       'Bash(git checkout:*)', 'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git push:*)',
@@ -164,6 +166,7 @@ export async function run() {
     p('.claude/scripts/dag-core.mjs'),
     p('.claude/scripts/dag-report.mjs'),
     p('.claude/scripts/dag-scan.mjs'),
+    p('.claude/scripts/prd-phase.mjs'),
     p('.claude/scripts/deliver-ticket.mjs'),
     REPO_ROOT + '.claude/workflows/run-milestone.js',
     REPO_ROOT + '.claude/workflows/nightly-issues.js',
@@ -192,6 +195,7 @@ export async function run() {
     '.claude/workflows/start-all.js': SCAFFOLD + '.claude/workflows/start-all.js',
     '.claude/scripts/dag-core.mjs': SCAFFOLD + '.claude/scripts/dag-core.mjs',
     '.claude/scripts/dag-scan.mjs': SCAFFOLD + '.claude/scripts/dag-scan.mjs',
+    '.claude/scripts/prd-phase.mjs': SCAFFOLD + '.claude/scripts/prd-phase.mjs',
     '.claude/scripts/dag-report.mjs': SCAFFOLD + '.claude/scripts/dag-report.mjs',
     '.claude/scripts/milestone-dag.mjs': SCAFFOLD + '.claude/scripts/milestone-dag.mjs',
     '.claude/scripts/publish-tickets.mjs': SCAFFOLD + '.claude/scripts/publish-tickets.mjs',
@@ -214,7 +218,12 @@ export async function run() {
   const norm = (s) => s.replace(/\r\n/g, '\n')
   for (const [repoRel, srcRel] of Object.entries(SELF_HOSTED)) {
     const repoPath = REPO_ROOT + repoRel
-    const ok = existsSync(repoPath) && norm(readFileSync(repoPath, 'utf8')) === norm(readFileSync(REPO_ROOT + srcRel, 'utf8'))
-    check(S, `self-hosted copy in sync: ${repoRel}`, ok)
+    const srcPath = REPO_ROOT + srcRel
+    // Guard the SOURCE read too: an unguarded readFileSync here threw ENOENT and
+    // crashed the whole suite when a scaffold file was missing, taking ~50 later
+    // integrity checks down with it. A missing source is a finding, not an abort.
+    const ok = existsSync(repoPath) && existsSync(srcPath) &&
+      norm(readFileSync(repoPath, 'utf8')) === norm(readFileSync(srcPath, 'utf8'))
+    check(S, `self-hosted copy in sync: ${repoRel}`, ok, existsSync(srcPath) ? '' : `scaffold source missing: ${srcRel}`)
   }
 }
