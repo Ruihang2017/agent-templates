@@ -213,7 +213,7 @@
         </div>
         <div class="cmds">
           <div class="cmds-label">Commands</div>
-          <div class="cmd"><code class="cmd-name">/breakdown-prd</code><code class="cmd-hint">[focus notes, e.g. module-count hint or what to defer]</code><span class="cmd-desc">Decompose docs/PRD.md into sub-PRDs + template-compliant tickets (three-agent pattern, pre-Gate-1 planning)</span></div>
+          <div class="cmd"><code class="cmd-name">/breakdown-prd</code><code class="cmd-hint">[prd-path] [focus notes, e.g. module-count hint or what to defer]</code><span class="cmd-desc">Decompose a PRD into sub-PRDs + template-compliant tickets (three-agent pattern, pre-Gate-1 planning); appends a new phase to an existing PRD tree without touching delivered work</span></div>
           <div class="cmd"><code class="cmd-name">/build-ticket</code><code class="cmd-hint">&lt;ticket-id&gt;</code><span class="cmd-desc">Run the Builder stage on a planned ticket (three-agent pattern)</span></div>
           <div class="cmd"><code class="cmd-name">/nightly-issues</code><code class="cmd-hint">[max-issues]</code><span class="cmd-desc">Nightly issue sweep — triage open issues, auto-fix the fixable ones through the three-agent pipeline, post the morning report (designed for headless `claude -p &quot;/nightly-issues&quot;`)</span></div>
           <div class="cmd"><code class="cmd-name">/plan-ticket</code><code class="cmd-hint">&lt;ticket-id or path to ticket file&gt;</code><span class="cmd-desc">Run the Architect stage on a ticket (three-agent pattern)</span></div>
