@@ -90,20 +90,32 @@
   /* --- lane demo: a miniature of docs/prd/dag.html, in the site's clay language --- */
   .lane-ctl{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:12px}
   .lane-lbl{font-weight:700;color:var(--sub);font-size:13px;margin-right:2px}
-  .lane-b{font-family:inherit;font-size:14px;font-weight:800;color:var(--sub);cursor:pointer;
+  .lane-b,.ph-b{font-family:inherit;font-size:14px;font-weight:800;color:var(--sub);cursor:pointer;
     min-width:34px;padding:5px 11px;border:0;border-radius:11px;background:var(--pill);
     box-shadow:inset 0 2px 2px rgba(255,255,255,0.7),inset 0 -3px 4px rgba(var(--ins),0.4),0 3px 7px rgba(var(--flt),0.16)}
-  .lane-b[aria-pressed=true]{background:linear-gradient(180deg,#b3dcab,#98cb8e);color:#2f4a28;
+  .lane-b[aria-pressed=true],.ph-b[aria-pressed=true]{background:linear-gradient(180deg,#b3dcab,#98cb8e);color:#2f4a28;
     box-shadow:inset 0 2px 2px rgba(255,255,255,0.6),inset 0 -3px 4px rgba(30,100,40,0.28),0 4px 9px rgba(120,150,100,0.3)}
   .lane-read{font-size:13px;color:var(--mut);flex-basis:100%}
   .lane-read b{color:var(--ink)}
   .lane-legend{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:14px;font-family:var(--mono);font-size:11.5px;color:var(--sub)}
   .lane-lg{display:inline-flex;align-items:center;gap:6px}
   .lane-sw{width:10px;height:10px;border-radius:3px;box-shadow:inset -1px -1px 2px rgba(0,0,0,0.18)}
-  .lane-board{display:flex;gap:14px;overflow-x:auto;padding:2px 2px 8px}
+  .lane-board,.ph-board{display:flex;gap:14px;overflow-x:auto;padding:2px 2px 8px}
   /* an author display rule beats the UA [hidden]{display:none}, so restate it or every
      board renders stacked on top of the others */
-  .lane-board[hidden]{display:none}
+  .lane-board[hidden],.ph-board[hidden]{display:none}
+  /* phase demo (issue #115). Deliberately NOT reusing .lane-board/.lane-b as hooks:
+     the lane demo's script hides every .lane-board it finds, so a shared class would
+     make the two demos fight. Shared styling, separate selectors. */
+  .lt.done{opacity:.55;background:transparent;box-shadow:none;
+    border:1px dashed rgba(var(--ins),0.75);border-left-width:3px;border-left-style:solid}
+  .lt-s{font-size:9.5px;color:var(--mut)}
+  .lt-x{font-size:9.5px;color:var(--code);font-weight:700}
+  .ph-done{border-right:1px dashed rgba(var(--ins),0.9);padding-right:14px}
+  .ph-tag{font-size:9.5px;color:var(--mut)}
+  .ph-seq{margin:0;padding:11px 13px;border-radius:12px;background:rgba(var(--flt),0.1);overflow-x:auto}
+  .ph-seq code{font-family:var(--mono);font-size:11.5px;font-weight:700;color:var(--code);line-height:1.75;white-space:pre}
+  .ph-c{color:var(--mut);font-weight:400}
   .lw{display:flex;flex-direction:column;gap:6px;min-width:132px}
   .lw-h{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);font-weight:700}
   .lt{display:flex;flex-direction:column;gap:4px;padding:7px 9px;border-radius:9px;background:var(--pill);
@@ -193,7 +205,7 @@
     <div class="stat stat-green"><span class="big">1</span><p>pattern in the catalog</p></div>
     <div class="stat stat-orange"><span class="big" data-npm-version>v0.8.1</span><p>on npm · MIT</p></div>
     <div class="stat stat-yellow"><span class="big">E2E</span><p>gated merges — deterministic, zero-token tests</p></div>
-    <div class="stat stat-blue"><span class="big">2</span><p>human gates: sign-off &amp; smoke test</p></div>
+    <div class="stat stat-blue"><span class="big">2</span><p>human gates per phase: sign-off &amp; smoke test</p></div>
   </div>
 
   <section>
@@ -236,7 +248,7 @@
       <div class="step"><span class="step-ico" style="background:#f4cd6d;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(180,120,20,0.25),0 6px 10px rgba(var(--amb),0.22)"><span class="gx" style="width:22px;height:16px"><span style="position:absolute;inset:0;border-radius:3px;background:#fffaf2;box-shadow:0 3px 5px rgba(160,100,20,0.3)"></span><span style="position:absolute;left:6.5px;top:0;width:1.5px;height:16px;background:rgba(var(--flt),0.25)"></span><span style="position:absolute;left:14px;top:0;width:1.5px;height:16px;background:rgba(var(--flt),0.25)"></span><span style="position:absolute;left:9px;top:5px;width:4px;height:4px;border-radius:50%;background:#f2789a"></span></span></span><h3>2. Break down</h3><p><code>/breakdown-prd</code> — the Architect turns your PRD into sub-PRDs and cold-startable tickets, then stops.</p></div>
       <div class="step"><span class="step-ico" style="background:#f3e6d0;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.7),inset -3px -4px 6px rgba(170,120,70,0.2),0 6px 10px rgba(var(--amb),0.22)"><span style="width:13px;height:28px;border-radius:6.5px;background:#7a6a58;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;box-shadow:inset 0 2px 2px rgba(255,255,255,0.25),0 3px 5px rgba(90,60,30,0.35)"><span style="width:6px;height:6px;border-radius:50%;background:#f28b8b"></span><span style="width:6px;height:6px;border-radius:50%;background:#f9d66e"></span><span style="width:6px;height:6px;border-radius:50%;background:#8fc98b"></span></span></span><h3>3. Gate 1 — you decide</h3><p>Review the breakdown, then <code>/start-milestone</code>: tickets become tracker issues and the pipeline starts.</p></div>
       <div class="step"><span class="step-ico" style="background:#c3abe9;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(90,50,140,0.22),0 6px 10px rgba(var(--amb),0.22)"><span class="gx" style="width:24px;height:24px"><span style="position:absolute;left:11px;top:0;width:2px;height:4px;background:#fffaf2"></span><span style="position:absolute;left:9.5px;top:-3px;width:5px;height:5px;border-radius:50%;background:#f2789a"></span><span style="position:absolute;left:0;top:5px;width:24px;height:18px;border-radius:7px;background:#fffaf2;box-shadow:inset 0 -3px 4px rgba(90,50,140,0.2),0 3px 5px rgba(70,30,120,0.3)"></span><span style="position:absolute;left:5px;top:11px;width:5px;height:5px;border-radius:50%;background:#8f74c4"></span><span style="position:absolute;left:14px;top:11px;width:5px;height:5px;border-radius:50%;background:#8f74c4"></span></span></span><h3>4. Autonomous middle</h3><p>Plan → build → fresh-context review (bounce-capped in code) → merge on <code>CLEAR</code> → issue closed → delivery verified.</p></div>
-      <div class="step"><span class="step-ico" style="background:#f6a5bb;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(170,30,80,0.2),0 6px 10px rgba(var(--amb),0.22)"><span class="gx" style="width:22px;height:22px"><span style="position:absolute;left:0;top:0;width:13px;height:13px;border-radius:50%;border:4px solid #fffaf2;box-shadow:0 3px 5px rgba(150,60,90,0.3)"></span><span style="position:absolute;left:16px;top:15px;width:4.5px;height:9px;border-radius:2.5px;background:#fffaf2;transform:rotate(-45deg)"></span></span></span><h3>5. Gate 2 — smoke test</h3><p>Agents own unit/integration/E2E all along; you test once, when the PRD is done. A nightly sweep fixes issues while you sleep.</p></div>
+      <div class="step"><span class="step-ico" style="background:#f6a5bb;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(170,30,80,0.2),0 6px 10px rgba(var(--amb),0.22)"><span class="gx" style="width:22px;height:22px"><span style="position:absolute;left:0;top:0;width:13px;height:13px;border-radius:50%;border:4px solid #fffaf2;box-shadow:0 3px 5px rgba(150,60,90,0.3)"></span><span style="position:absolute;left:16px;top:15px;width:4.5px;height:9px;border-radius:2.5px;background:#fffaf2;transform:rotate(-45deg)"></span></span></span><h3>5. Gate 2 — smoke test</h3><p>Agents own unit/integration/E2E all along; you test once per phase, when that PRD is done. A nightly sweep fixes issues while you sleep.</p></div>
     </div>
   </section>
 
@@ -492,6 +504,83 @@
     </div>
   </section>
 
+  <section>
+    <div class="sec-head"><span class="gx" style="width:24px;height:18px;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="position:absolute;left:0;top:3px;width:11px;height:13px;border-radius:3px;background:#b3cdf0"></span><span style="position:absolute;left:8px;top:0;width:11px;height:13px;border-radius:3px;background:#f6a5bb"></span><span style="position:absolute;right:0;bottom:0;width:8px;height:8px;border-radius:50%;background:#9ed095"></span></span><h2>The project doesn't end at Gate 2</h2></div>
+    <div class="fact" style="margin-bottom:15px">
+      <div class="fact-ico" style="background:#c3abe9;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(90,50,140,0.2)"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:0;top:2px;width:7px;height:12px;border-radius:2px;background:#fffaf2"></span><span style="position:absolute;right:0;top:0;width:7px;height:12px;border-radius:2px;background:#fffaf2"></span></span></div>
+      <p><b>The PRD document splits by phase. The ticket tree never does.</b> Write the next phase as its own PRD and point <code style="font-family:var(--mono);font-size:12px;color:var(--code)">/breakdown-prd</code> at it — it decomposes into the same <code style="font-family:var(--mono);font-size:12px;color:var(--code)">docs/prd/</code>, because <code style="font-family:var(--mono);font-size:12px;color:var(--code)">/start-all</code> schedules one global DAG and a dependency that crosses phases only resolves inside it. Then run the same command again: everything already delivered has a closed issue and filters itself out.</p>
+    </div>
+    <div class="fact" style="display:block;margin-bottom:15px">
+      <p style="margin:0 0 8px"><b>Three commands, no migration:</b></p>
+      <pre class="ph-seq"><code>docs/PRD-02-billing.md                    <span class="ph-c"># write the next phase</span>
+/breakdown-prd docs/PRD-02-billing.md     <span class="ph-c"># appends modules; delivered work is frozen</span>
+/start-all autonomous 2                   <span class="ph-c"># only the new tickets run</span></code></pre>
+    </div>
+    <div class="fact" style="display:block;margin-bottom:15px">
+      <p style="margin:0 0 4px"><b>One tree, two phases</b> — toggle to see what the second run actually schedules. Both boards are computed at build time by the pipeline's own scheduler. Watch <b>BIL-1</b>: it is <code style="font-family:var(--mono);font-size:11.5px;color:var(--code)">blocked_by</code> a phase-1 ticket that already shipped — the edge every argument for splitting the tree would break.</p>
+      
+    <div class="lane-ctl" role="group" aria-label="phase">
+      <span class="lane-lbl">run</span>
+      <button type="button" class="ph-b" data-phase="1" aria-pressed="false">phase 1</button>
+      <button type="button" class="ph-b" data-phase="2" aria-pressed="true">+ phase 2</button>
+      <span class="lane-read" id="ph-read"></span>
+    </div>
+    <div class="lane-legend">
+      <span class="lane-lg"><span class="lane-sw" style="background:#2a78d6"></span>01-core <span class="ph-tag">phase 1</span></span><span class="lane-lg"><span class="lane-sw" style="background:#eda100"></span>02-api <span class="ph-tag">phase 1</span></span><span class="lane-lg"><span class="lane-sw" style="background:#e87ba4"></span>03-billing <span class="ph-tag">phase 2</span></span>
+    </div>
+    <div class="ph-board" data-phase="1" hidden>
+        <div class="lw">
+          <span class="lw-h">wave 1 &middot; 2/2</span>
+          <span class="lt" style="border-left-color:#2a78d6"><b>0101</b><span class="lt-m" style="background:#2a78d6">01-core</span></span>
+          <span class="lt" style="border-left-color:#2a78d6"><b>0102</b><span class="lt-m" style="background:#2a78d6">01-core</span></span>
+          
+        </div>
+        <div class="lw">
+          <span class="lw-h">wave 2 &middot; 1/2</span>
+          <span class="lt" style="border-left-color:#2a78d6"><b>0103</b><span class="lt-m" style="background:#2a78d6">01-core</span></span>
+          <span class="lt idle">idle lane</span>
+        </div>
+        <div class="lw">
+          <span class="lw-h">wave 3 &middot; 2/2</span>
+          <span class="lt" style="border-left-color:#eda100"><b>0201</b><span class="lt-m" style="background:#eda100">02-api</span></span>
+          <span class="lt" style="border-left-color:#eda100"><b>0202</b><span class="lt-m" style="background:#eda100">02-api</span></span>
+          
+        </div>
+    </div>
+    <div class="ph-board" data-phase="2">
+      <div class="lw ph-done">
+        <span class="lw-h">already delivered</span>
+        <span class="lt done" style="border-left-color:#2a78d6"><b>0101</b><span class="lt-s">delivered &middot; skipped</span><span class="lt-m" style="background:#2a78d6">01-core</span></span>
+        <span class="lt done" style="border-left-color:#2a78d6"><b>0102</b><span class="lt-s">delivered &middot; skipped</span><span class="lt-m" style="background:#2a78d6">01-core</span></span>
+        <span class="lt done" style="border-left-color:#2a78d6"><b>0103</b><span class="lt-s">delivered &middot; skipped</span><span class="lt-m" style="background:#2a78d6">01-core</span></span>
+        <span class="lt done" style="border-left-color:#eda100"><b>0201</b><span class="lt-s">delivered &middot; skipped</span><span class="lt-m" style="background:#eda100">02-api</span></span>
+        <span class="lt done" style="border-left-color:#eda100"><b>0202</b><span class="lt-s">delivered &middot; skipped</span><span class="lt-m" style="background:#eda100">02-api</span></span>
+      </div>
+        <div class="lw">
+          <span class="lw-h">wave 1 &middot; 1/2</span>
+          <span class="lt" style="border-left-color:#e87ba4"><b>BIL-1</b><span class="lt-x">&larr; 0201 &middot; phase 1</span><span class="lt-m" style="background:#e87ba4">03-billing</span></span>
+          <span class="lt idle">idle lane</span>
+        </div>
+        <div class="lw">
+          <span class="lw-h">wave 2 &middot; 2/2</span>
+          <span class="lt" style="border-left-color:#e87ba4"><b>BIL-2</b><span class="lt-m" style="background:#e87ba4">03-billing</span></span>
+          <span class="lt" style="border-left-color:#e87ba4"><b>BIL-3</b><span class="lt-m" style="background:#e87ba4">03-billing</span></span>
+          
+        </div>
+        <div class="lw">
+          <span class="lw-h">wave 3 &middot; 1/2</span>
+          <span class="lt" style="border-left-color:#e87ba4"><b>BIL-4</b><span class="lt-m" style="background:#e87ba4">03-billing</span></span>
+          <span class="lt idle">idle lane</span>
+        </div>
+    </div>
+    </div>
+    <div class="steps">
+      <div class="step"><span class="step-ico" style="background:#b3cdf0;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(40,80,150,0.22)"><span class="gx" style="width:17px;height:15px"><span style="position:absolute;left:5.5px;top:0;width:6px;height:6px;border-radius:50%;background:#fffaf2"></span><span style="position:absolute;left:0;bottom:0;width:6px;height:6px;border-radius:50%;background:#fffaf2"></span><span style="position:absolute;right:0;bottom:0;width:6px;height:6px;border-radius:50%;background:#fffaf2"></span></span></span><h3>One tree, one DAG</h3><p>A parallel <code>docs/prd2/</code> would make every cross-phase dependency a dangling reference — a hard error by design. Keeping one root is what lets new work depend on shipped work.</p></div>
+      <div class="step"><span class="step-ico" style="background:#9ed095;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(30,90,40,0.2)"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:3px;top:0;width:10px;height:8px;border:2.5px solid #fffaf2;border-bottom:0;border-radius:5px 5px 0 0;box-sizing:border-box"></span><span style="position:absolute;left:0.5px;bottom:0;width:15px;height:9px;border-radius:3px;background:#fffaf2"></span></span></span><h3>Delivered work is frozen</h3><p>Existing files under <code>docs/prd/</code> may only be <b>added to</b> — never modified or deleted — and that is checked against git, not asked for politely. A shipped ticket is the record of what was built.</p></div>
+      <div class="step"><span class="step-ico" style="background:#f4cd6d;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(180,120,20,0.25)"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:6.5px;top:1px;width:3px;height:9px;border-radius:2px;background:#7a5a15"></span><span style="position:absolute;left:6.5px;bottom:1px;width:3px;height:3px;border-radius:50%;background:#7a5a15"></span></span></span><h3>Nothing is skipped silently</h3><p>The run reports every ticket it dropped as already delivered. Edit a ticket <i>after</i> it shipped and it comes back as <b>drift</b> for a human to judge — the scheduler never re-runs it, and never hides it either.</p></div>
+    </div>
+  </section>
+
   <footer>
     Generated from the pattern catalog by <a href="https://github.com/Ruihang2017/agent-templates/blob/main/scripts/build-site.mjs"><code>scripts/build-site.mjs</code></a>
     · 2026-07-29 · <a href="https://github.com/Ruihang2017/agent-templates/blob/main/LICENSE">MIT</a>
@@ -517,6 +606,22 @@
     b.addEventListener('click',function(){show(b.dataset.lane)})
   })
   show(4)
+})()
+;(function(){
+  // phase demo (issue #115): same pre-rendered show/hide contract as the lane demo.
+  // Both wave counts came from dag-core.simulate at build time.
+  var W={1:3,2:3},N={1:5,2:4}
+  var read=document.getElementById('ph-read')
+  function show(p){
+    document.querySelectorAll('.ph-board').forEach(function(b){b.hidden=String(b.dataset.phase)!==String(p)})
+    document.querySelectorAll('.ph-b').forEach(function(b){b.setAttribute('aria-pressed',String(String(b.dataset.phase)===String(p)))})
+    if(!read)return
+    read.innerHTML = String(p)==='1'
+      ? '<b>'+N[1]+'</b> tickets \u00b7 '+W[1]+' waves at '+2+' lanes \u2014 the first delivery, through Gate 2'
+      : '<b>'+N[2]+'</b> new tickets \u00b7 '+W[2]+' waves \u00b7 <b>'+N[1]+' skipped</b> because their issues are closed \u2014 same tree, same command'
+  }
+  document.querySelectorAll('.ph-b').forEach(function(b){b.addEventListener('click',function(){show(b.dataset.phase)})})
+  show(2)
 })()
 ;(function(){
   var b=document.getElementById('copy-btn'),q=document.getElementById('qs'),t
