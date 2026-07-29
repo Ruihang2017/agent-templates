@@ -88,13 +88,18 @@ export async function run() {
 
       const boards = [...html.matchAll(/data-board="(\d+)"/g)].map((m) => m[1])
       eq(S, 'lane demo renders one board per lane count', boards.join(','), '1,2,4,6')
-      // an author display rule beats the UA [hidden] rule; without this the boards stack
-      check(S, 'lane demo restates [hidden] so only one board shows', /\.lane-board\[hidden\]\{display:none\}/.test(html))
+      // an author display rule beats the UA [hidden] rule; without this the boards stack.
+      // Tolerant of a selector LIST (the phase demo shares the rule) but still requires
+      // .lane-board[hidden] itself to be the thing set to display:none.
+      check(S, 'lane demo restates [hidden] so only one board shows', /\.lane-board\[hidden\][^{]*\{display:none\}/.test(html))
       check(S, 'lane demo defaults to a single visible board',
         (html.match(/data-board="\d+" hidden/g) || []).length === 3)
 
+      // Terminate the last chunk at its section: without this the final board absorbs
+      // everything below it on the page, so a second demo further down silently
+      // inflates its wave count (issue #115 tripped exactly that).
       const waveCounts = html.split(/data-board="/).slice(1)
-        .map((chunk) => (chunk.match(/class="lw"/g) || []).length)
+        .map((chunk) => (chunk.split('</section>')[0].match(/class="lw"/g) || []).length)
       const ids = ['0101', '0102', '0103', '0104', '0105', '0201', '0202', '0203', '0204', '0205', '0301', '0302', '0303', '0401', '0402']
       const deps = { '0103': ['0101'], '0104': ['0102'], '0105': ['0103', '0104'],
         '0201': ['0105'], '0202': ['0105'], '0203': ['0105'], '0204': ['0105'], '0205': ['0201'],
@@ -105,10 +110,58 @@ export async function run() {
         expected.every((v, i) => i === 0 || v <= expected[i - 1]))
       check(S, 'the demo graph actually demonstrates a saturation point',
         expected[expected.length - 1] === expected[expected.length - 2])
-      // module identity must not rest on hue alone — every card carries its module name
-      const cards = (html.match(/class="lt"/g) || []).length
+      // Module identity must not rest on hue alone — every card carries its module name.
+      // Page-wide on purpose, across every demo: a delivered card (`lt done`) is still a
+      // ticket and still needs its chip; only `lt idle` placeholders are not tickets.
+      const cards = (html.match(/class="lt"/g) || []).length + (html.match(/class="lt done"/g) || []).length
       const chips = (html.match(/class="lt-m"/g) || []).length
-      eq(S, 'every demo ticket card carries its module chip', chips, cards)
+      eq(S, 'every ticket card on the page carries its module chip', chips, cards)
+    }
+
+    // Phase demo (issue #115): #112 shipped phased PRDs and the page explained none of
+    // it — a whole capability went live invisible while every check stayed green,
+    // because nothing gated CONTENT coverage. These assertions are that gate.
+    {
+      check(S, 'shows the phased-PRD section', /The project doesn't end at Gate 2/.test(html))
+      check(S, 'states the document-splits-tree-does-not rule',
+        /The PRD document splits by phase\. The ticket tree never does\./.test(html))
+      check(S, 'carries the literal three-command sequence',
+        html.includes('/breakdown-prd docs/PRD-02-billing.md') && html.includes('/start-all autonomous 2'))
+      check(S, 'covers the freeze rule', /Delivered work is frozen/.test(html) && /added to/.test(html))
+      check(S, 'covers drift — the skip is never silent', /Nothing is skipped silently/.test(html) && /drift/.test(html))
+      check(S, 'Gate 2 is stated as per-phase, not once per project',
+        /once per phase/.test(html) && /human gates per phase/.test(html))
+
+      const phBoards = [...html.matchAll(/class="ph-board" data-phase="(\d)"/g)].map((m) => m[1])
+      eq(S, 'phase demo renders one board per phase view', phBoards.join(','), '1,2')
+      eq(S, 'exactly one phase board is visible by default',
+        (html.match(/class="ph-board" data-phase="\d" hidden/g) || []).length, 1)
+
+      // The cross-phase edge is the ONE fact this section exists to convey: a new
+      // ticket blocked_by a delivered one. It only resolves because both phases live
+      // in a single graph — split the tree and it becomes a dangling reference.
+      check(S, 'phase demo renders the cross-phase dependency', /class="lt-x">&larr; 0201 &middot; phase 1</.test(html))
+      check(S, 'phase demo marks phase-1 tickets delivered and skipped',
+        /class="lt done"/.test(html) && /delivered &middot; skipped/.test(html))
+
+      // Same contract as the lane demo: the waves must be the pipeline's own schedule,
+      // recomputed here rather than trusted from the page.
+      const deps = { '0103': ['0101', '0102'], '0201': ['0103'], '0202': ['0103'],
+        'BIL-1': ['0201'], 'BIL-2': ['BIL-1'], 'BIL-3': ['BIL-1'], 'BIL-4': ['BIL-2', 'BIL-3'] }
+      const expected = [['0101', '0102', '0103', '0201', '0202'], ['BIL-1', 'BIL-2', 'BIL-3', 'BIL-4']]
+        .map((ids) => simulate(ids, (id) => deps[id] || [], 2).length)
+      // `class="lw ph-done"` (the delivered strip) is deliberately not matched by the
+      // exact `class="lw"` literal, so this counts waves only
+      const phWaveCounts = html.split(/class="ph-board" data-phase="/).slice(1)
+        .map((chunk) => (chunk.split('</section>')[0].match(/class="lw"/g) || []).length)
+      eq(S, 'phase demo wave counts match the pipeline scheduler', phWaveCounts.join(','), expected.join(','))
+      check(S, 'phase 2 schedules strictly fewer tickets than phase 1 delivered',
+        (html.match(/class="lt done"/g) || []).length === 5)
+
+      // guard the guard: a phase that does not exist must be absent, so the includes()
+      // checks above are shown to discriminate rather than pass on any page
+      check(S, 'phase coverage is non-vacuous (sentinel absent)',
+        !html.includes('PRD-99-definitely-not-a-phase') && !html.includes('data-phase="7"'))
     }
 
     // clay restyle contract (issue #19)
