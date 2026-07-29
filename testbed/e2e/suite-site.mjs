@@ -63,7 +63,12 @@ export async function run() {
     check(S, 'carries the quickstart command', html.includes('npx agent-templates@latest adopt three-agent-architect-builder-reviewer'))
     check(S, 'shows the seed pattern title', html.includes('Three-Agent Architect'))
     check(S, 'shows the pattern status pill', /(trialed|adopted|proposed)/.test(html))
-    check(S, 'shows pinned models from README §3', html.includes('Claude Sonnet 5') && html.includes('Claude Opus 5') && html.includes('Claude Fable 5'))
+    check(S, 'shows pinned models from README §3', html.includes('Claude Sonnet 5') && html.includes('Claude Opus 5'))
+    // issue #111: the Reviewer left Fable 5. build-site renders only §3's role/model/effort
+    // columns (never the rationale prose, which still cites Fable 5 as history), so a
+    // "Fable" on the page can only mean the page was built from a stale §3 — the exact
+    // drift that shipped a pre-Opus-5 model table to the live site for eight PRs (#109).
+    check(S, 'no retired model pin reaches the page', !html.includes('Fable'))
     check(S, 'live-version fallback from package.json', /data-npm-version>v\d+\.\d+\.\d+/.test(html))
     check(S, 'registry live-fetch present', html.includes('registry.npmjs.org/agent-templates'))
     // issue #62: the parallel-lanes feature is surfaced on the site

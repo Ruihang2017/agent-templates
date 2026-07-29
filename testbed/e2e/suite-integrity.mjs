@@ -60,7 +60,7 @@ const UNIVERSAL_TEMPLATES = [
 const AGENT_PINS = {
   'architect.md': { model: 'claude-opus-5', effort: 'max' },
   'builder.md': { model: 'claude-opus-5', effort: 'xhigh' },
-  'reviewer.md': { model: 'claude-fable-5', effort: 'high' },
+  'reviewer.md': { model: 'claude-sonnet-5', effort: 'xhigh' },
   'triage.md': { model: 'claude-sonnet-5', effort: 'xhigh' },
 }
 
@@ -174,6 +174,23 @@ export async function run() {
   for (const f of LF_CRITICAL) {
     if (!existsSync(f)) continue
     check(S, `LF-only (no \\r): ${f.slice(REPO_ROOT.length)}`, !/\r/.test(readFileSync(f, 'utf8')))
+  }
+
+  // issue #109: the repo gated artifact CORRECTNESS hard and artifact DELIVERY not at
+  // all — suite-site asserted the generated page was right while the live page sat eight
+  // PRs stale, still advertising the pre-Opus-5 model table, because site/ is gitignored
+  // and nothing deployed it. Deleting or de-triggering the deploy workflow must fail the
+  // merge gate rather than silently re-open that hole.
+  {
+    const wf = REPO_ROOT + '.github/workflows/pages.yml'
+    check(S, 'a Pages deploy workflow exists', existsSync(wf))
+    if (existsSync(wf)) {
+      const text = readFileSync(wf, 'utf8')
+      check(S, 'pages workflow triggers on push to main', /push:\s*\n\s*branches:\s*\[main\]/.test(text))
+      check(S, 'pages workflow builds the site from the generator', /build-site\.mjs/.test(text))
+      check(S, 'pages workflow gates the deploy on the E2E suite', /npm test/.test(text))
+      check(S, 'pages workflow can write (needs contents: write to push gh-pages)', /contents:\s*write/.test(text))
+    }
   }
 
   check(S, 'snippet declares Operating mode', /Operating mode/.test(readFileSync(p('claude-md-snippet.md'), 'utf8')))

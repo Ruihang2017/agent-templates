@@ -1,0 +1,78 @@
+name: pages
+
+# Deploy = every push to main. The catalog site is GENERATED from the pattern data
+# (scripts/build-site.mjs), and site/ is gitignored, so nothing about a merge shipped it
+# before this workflow existed: gh-pages had one hand-pushed commit and the live page sat
+# eight PRs stale, still advertising the pre-Opus-5 model table (issue #109).
+#
+# The E2E gate runs first on purpose. suite-site asserts the generated page carries the
+# patterns, the commands, the model pins, and the lane demo's wave counts recomputed from
+# dag-core — deploying past a red suite would publish exactly the drift that suite exists
+# to catch.
+#
+# Pages is configured for `branch: gh-pages, path: /`, so this pushes the built output
+# there rather than using the Actions-source Pages flow; that keeps the repo setting
+# unchanged and needs no maintainer action.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# never let two deploys race the same branch
+concurrency:
+  group: pages-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: E2E gate
+        run: npm test
+
+      - name: Build the site
+        run: node scripts/build-site.mjs --out site
+
+      - name: Sanity-check the build
+        shell: bash
+        run: |
+          test -f site/index.html || { echo "::error::site/index.html was not generated"; exit 1; }
+          test -f site/.nojekyll || { echo "::error::site/.nojekyll missing — Pages would skip files"; exit 1; }
+          # a non-empty page is not proof of a correct one, but an empty/stub one is proof
+          # of a broken build, and that must not reach users
+          bytes=$(wc -c < site/index.html)
+          echo "index.html = $bytes bytes"
+          [ "$bytes" -gt 10000 ] || { echo "::error::index.html looks truncated ($bytes bytes)"; exit 1; }
+
+      - name: Deploy to gh-pages
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          work="$(mktemp -d)"
+          git clone --depth 1 --branch gh-pages \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$work"
+          # replace the published tree wholesale: a stale leftover file is indistinguishable
+          # from a current one once served
+          find "$work" -mindepth 1 -maxdepth 1 ! -name '.git' -exec rm -rf {} +
+          cp site/index.html site/.nojekyll "$work"/
+          cd "$work"
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet && git diff --cached --quiet && [ -z "$(git status --porcelain)" ]; then
+            echo "site unchanged — nothing to deploy"
+            exit 0
+          fi
+          git add -A
+          git commit -q -m "deploy: catalog site from ${GITHUB_SHA::7}"
+          git push -q origin gh-pages
+          echo "deployed ${GITHUB_SHA::7} to gh-pages"
