@@ -161,6 +161,62 @@ export async function run() {
         check(S, 'P10 edit carried the regenerated deps + prose', /edit 12/.test(bodies) && /Blocked by:\*\* #7/.test(bodies) && /updated body/.test(bodies), bodies.slice(0, 300))
       } finally { rmSync(sroot, { recursive: true, force: true }) }
     }
+
+    // P11-P15 (issue #112): issue state and post-delivery drift.
+    // /start-all drops CLOSED tickets — that is the resume filter, and it is what makes
+    // a re-run after an appended phase execute only the new work. The hole it left: edit
+    // an already-delivered ticket, re-run, and NOTHING happens and nothing says so.
+    {
+      const droot = mkdtempSync(join(tmpdir(), 'e2e-pub-state-'))
+      const dtd = join(droot, 'docs', 'prd', '00-x', 'tickets')
+      mkdirSync(dtd, { recursive: true })
+      const body = '# STA-01 — body\n\n## Goal\nDo the thing.\n'
+      writeFileSync(join(dtd, 'STA-01.md'), `---\nid: STA-01\ntitle: Stateful\nmodule: 00-x\n---\n\n${body}`)
+      const mod2 = 'docs/prd/00-x'
+      const list = (extra) => JSON.stringify([{ number: 21, title: '[STA-01] Stateful', ...extra }])
+      try {
+        // P11: state flows through to the summary, both ways
+        {
+          const open = runPub(droot, [mod2], { GH_BIN: FAKE_GH, FAKE_GH_LIST: list({ state: 'OPEN', body }) })
+          eq(S, 'P11 open issue reported as open', entry(open.summary, 'STA-01').state, 'open')
+          const closed = runPub(droot, [mod2], { GH_BIN: FAKE_GH, FAKE_GH_LIST: list({ state: 'CLOSED', body }) })
+          eq(S, 'P11 closed issue reported as closed', entry(closed.summary, 'STA-01').state, 'closed')
+        }
+
+        // P12: closed AND matching -> an ordinary skip, no drift noise
+        {
+          const r = runPub(droot, [mod2], { GH_BIN: FAKE_GH, FAKE_GH_LIST: list({ state: 'CLOSED', body }) })
+          check(S, 'P12 a delivered, unchanged ticket does NOT drift', entry(r.summary, 'STA-01').drift === undefined)
+          check(S, 'P12 and prints no drift warning', !/DRIFTED-CLOSED/.test(r.stdout))
+          // the tracker round-trips CRLF and trims; treating that as an edit would flag everything
+          const noisy = runPub(droot, [mod2], { GH_BIN: FAKE_GH, FAKE_GH_LIST: list({ state: 'CLOSED', body: body.replace(/\n/g, '\r\n') + '\n\n' }) })
+          check(S, 'P12 CRLF/trailing-whitespace round-trip is not drift', entry(noisy.summary, 'STA-01').drift === undefined)
+        }
+
+        // P13: THE case — the ticket was edited after it was delivered
+        {
+          const r = runPub(droot, [mod2], { GH_BIN: FAKE_GH, FAKE_GH_LIST: list({ state: 'CLOSED', body: '# STA-01 — the ORIGINAL delivered text\n' }) })
+          check(S, 'P13 edited-after-delivery flagged as drift', entry(r.summary, 'STA-01').drift === true)
+          check(S, 'P13 warning names the ticket and says it will be SKIPPED', /STA-01/.test(r.stderr) && /SKIP/.test(r.stderr))
+          check(S, 'P13 the run summary surfaces the count', /DRIFTED-CLOSED: 1/.test(r.stdout))
+        }
+
+        // P14: an OPEN issue with a stale body is not drift — the run will execute it
+        {
+          const r = runPub(droot, [mod2], { GH_BIN: FAKE_GH, FAKE_GH_LIST: list({ state: 'OPEN', body: 'totally different' }) })
+          check(S, 'P14 an open issue is never drift (it still runs)', entry(r.summary, 'STA-01').drift === undefined)
+        }
+
+        // P15: a CLI that cannot report a body must degrade, not manufacture drift
+        {
+          const r = runPub(droot, [mod2], { GH_BIN: FAKE_GH, FAKE_GH_LIST: list({ state: 'CLOSED' }) })
+          check(S, 'P15 no body available -> no drift claimed', entry(r.summary, 'STA-01').drift === undefined)
+          const g = runPub(droot, [mod2, '--platform', 'glab'], { GLAB_BIN: FAKE_GLAB, FAKE_GLAB_LIST: '#21 [STA-01] Stateful\n' })
+          check(S, 'P15 glab text fallback yields no state and no drift',
+            entry(g.summary, 'STA-01').state === '' && entry(g.summary, 'STA-01').drift === undefined)
+        }
+      } finally { rmSync(droot, { recursive: true, force: true }) }
+    }
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

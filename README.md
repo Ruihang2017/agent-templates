@@ -18,6 +18,18 @@ npx agent-templates@latest adopt three-agent-architect-builder-reviewer .
 3. **Gate 1** — review the breakdown, then **`/start-milestone docs/prd/00-<module> supervised`**: tickets publish as tracker issues; each ticket runs plan → build → fresh-context review to CLEAR, pausing for your merge.
 4. When it holds, flip to `autonomous` — whole milestones run hands-off. **Gate 2** = your smoke test at the end. Full guide: [ADOPTING.md](ADOPTING.md).
 
+### Adding work after Gate 2
+
+A project doesn't end at Gate 2. The next phase gets its own PRD **document** — the ticket **tree** stays single, because `/start-all` schedules one global DAG and a cross-phase dependency only resolves inside it.
+
+```
+docs/PRD-02-billing.md                       # write the next phase's PRD
+/breakdown-prd docs/PRD-02-billing.md        # appends modules; delivered work is frozen
+/start-all autonomous 4                      # phase 1's issues are closed -> only the new tickets run
+```
+
+`/breakdown-prd` hands the Architect the next module prefix and the ticket ids already in use, then enforces against git that nothing pre-existing under `docs/prd/` was modified or deleted — only added. A new ticket may be `blocked_by` a delivered one. Gate 1 and Gate 2 run again for the new phase.
+
 ### Updating an existing install
 
 Re-run adopt with `--force` to pull the latest catalog version. A plain re-run only adds new files (existing ones are skipped); `--force` overwrites changed ones. Because it overwrites (including `.claude/settings.json`), commit first, then review the diff and re-apply any local customizations:
@@ -40,7 +52,7 @@ Installed into your project by `adopt`; run them in Claude Code. Full list is ge
 
 | Command | Argument | What it does |
 |---|---|---|
-| `/breakdown-prd` | `[focus notes]` | Decompose `docs/PRD.md` into sub-PRDs + template-compliant tickets (pre-Gate-1 planning). |
+| `/breakdown-prd` | `[prd-path] [focus notes]` | Decompose a PRD (default `docs/PRD.md`) into sub-PRDs + template-compliant tickets (pre-Gate-1 planning). Point it at a phase PRD to append work after Gate 2. |
 | `/start-milestone` | `<module dir> [supervised\|autonomous] [concurrency]` | Gate 1 for one module — publish its tickets as tracker issues, then run the milestone pipeline (parallel lanes when `concurrency > 1`). |
 | `/start-all` | `[supervised\|autonomous] [concurrency]` | Gate 1 for the **whole PRD** — compute the module DAG, publish every module, run all modules in dependency order. |
 | `/plan-ticket` | `<ticket-id>` | Architect stage on a ticket. |

@@ -29,11 +29,12 @@ Preconditions: git repo + remote, authenticated tracker CLI (`gh auth login` / `
 1. `git init`, create the remote (e.g. `gh repo create`), commit `PRD.md`.
 2. Run `adopt.mjs` (above) — then commit the scaffolding.
 3. Review `CLAUDE.md`: add your project facts and non-negotiables above the pipeline section; keep **Operating mode: `supervised`** for now. Fill the **Constraint check** section of `.github/PULL_REQUEST_TEMPLATE.md` (or the GitLab MR template) from those non-negotiables.
-4. In Claude Code, in the project: **`/breakdown-prd`** — the Architect decomposes `docs/PRD.md` into `docs/prd/breakdown-plan.md` + sub-PRDs + template-compliant tickets (disjoint file-scopes, dependency DAG), then stops.
+4. In Claude Code, in the project: **`/breakdown-prd`** — the Architect decomposes `docs/PRD.md` into `docs/prd/breakdown-plan.md` + sub-PRDs + template-compliant tickets (disjoint file-scopes, dependency DAG), then stops. (It takes an optional PRD path — that is how later phases are added; see step 9.)
 5. **Gate 1 — your product judgment moment.** Review the breakdown: module boundaries, non-goals, the DAG, open questions. Edit/ask until right. Then sign off by running **`/start-milestone docs/prd/00-<module> supervised`** — tickets publish as tracker issues and the pipeline runs the first ticket to a CLEAR verdict, then stops for your merge. Re-run to continue (closed issues are skipped automatically).
 6. **Graduate**: when the supervised runs hold, flip `CLAUDE.md` to `Operating mode: autonomous` — from then on, one `/start-milestone` runs the whole module: plan → build → fresh-context review (bounce-capped) → merge on CLEAR → issue closed → Definition-of-Done verified, with no per-ticket approvals.
-7. **Gate 2**: when the PRD's tasks are done, you smoke-test the result. That is your only test duty — the agents own unit/integration/E2E throughout.
+7. **Gate 2**: when that PRD's tasks are done, you smoke-test the result. That is your only test duty — the agents own unit/integration/E2E throughout.
 8. Optional: arm the **nightly sweep** (pattern `INSTALL.md` § Nightly sweep) — overnight issue triage/fix/report while the machine is on.
+9. **The next phase.** Gate 2 ends a *delivery*, not the project. Write `docs/PRD-02-<name>.md`, run **`/breakdown-prd docs/PRD-02-<name>.md`**, then **`/start-all`** again. The new phase decomposes into the **same** `docs/prd/` tree — one root is what lets `/start-all` schedule a single global DAG and lets a new ticket be `blocked_by` a delivered one. Everything already delivered is frozen (the command checks it against git) and filtered out of the run because its issues are closed. Gates 1 and 2 repeat for the new phase.
 
 ## 3. Existing project
 
