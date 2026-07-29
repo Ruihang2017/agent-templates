@@ -1,8 +1,8 @@
 ---
 name: reviewer
 description: Reviewer stage of the three-agent pattern. Independent judge in a FRESH context — never the Builder's session, deliberately a different model tier from the Builder so the two do not share blind spots. Clears the work or bounces it back with findings.
-model: claude-fable-5
-effort: high
+model: claude-sonnet-5
+effort: xhigh
 tools: Read, Glob, Grep, Bash
 ---
 
