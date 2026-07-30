@@ -25,8 +25,22 @@ function commandCoverage(html, readme) {
   // match the site's own escaping so a description with & < > " does not false-fail
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
   let commandCount = 0
-  for (const pat of readdirSync(patternsDir, { withFileTypes: true }).filter((d) => d.isDirectory())) {
-    const cdir = join(patternsDir, pat.name, 'scaffold', '.claude', 'commands')
+  // Universal integration commands are installed into every adopted repo alongside the
+  // pattern's own, so they are part of the same user-facing surface and must clear the
+  // same gate. Enumerating only patterns/ would have let /connect-asana ship undocumented
+  // — issue #35's hole, reopened through a different directory (issue #124).
+  const integrationsDir = join(REPO, 'integrations')
+  const commandDirs = [
+    ...readdirSync(patternsDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => join(patternsDir, d.name, 'scaffold', '.claude', 'commands')),
+    ...(existsSync(integrationsDir)
+      ? readdirSync(integrationsDir, { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => join(integrationsDir, d.name, '.claude', 'commands'))
+      : []),
+  ]
+  for (const cdir of commandDirs) {
     if (!existsSync(cdir)) continue
     for (const f of readdirSync(cdir).filter((n) => n.endsWith('.md'))) {
       const name = '/' + f.replace(/\.md$/, '')

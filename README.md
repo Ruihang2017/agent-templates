@@ -60,6 +60,7 @@ Installed into your project by `adopt`; run them in Claude Code. Full list is ge
 | `/review-ticket` | `<ticket-id> [ref]` | Reviewer stage on a built ticket (fresh context required). |
 | `/verify-delivery` | `<ticket-id>` | Post-merge Definition-of-Done check — verifies delivery instead of assuming it. |
 | `/nightly-issues` | `[max-issues]` | Unattended sweep — triage open issues, auto-fix the fixable ones through the pipeline, post a morning report (headless `claude -p`). |
+| `/connect-asana` | `[asana-task-url]` | **Optional integration** (installed for every pattern, inert until run) — bind this repo to an Asana task so milestones and tickets mirror as Asana subtasks. See [integrations/asana](integrations/asana/README.md). |
 
 ### Parallel delivery (opt-in)
 
@@ -80,6 +81,16 @@ How a parallel run stays correct:
 - A failed ticket **cascades to skip its dependents**; an impossible dependency (a cycle) fails loudly instead of hanging. `supervised` is forced to `1` (it opens a PR and waits for a human merge).
 
 Two honest limits: `concurrency > 1` **multiplies concurrent token spend** (opt in per run), and real parallelism is **bounded by the DAG** — a deep dependency chain can't parallelize, a wide fan-out can — and by the harness's `min(16, cores − 2)` concurrent-agent cap. The design was validated by a sandbox git experiment before it shipped.
+
+## Integrations (universal — installed with every pattern)
+
+Optional add-ons that ship with all patterns and arrive **inert**: the files install, and nothing happens until you run their `/connect-*` command.
+
+| Integration | Command | What it does |
+|---|---|---|
+| [asana](integrations/asana/README.md) | `/connect-asana` | Mirrors milestones and tickets into Asana as subtasks of an existing Asana task, and completes a ticket's subtask when it is delivered. Needs an `ASANA_TOKEN` env var. |
+
+Asana is a **reporting mirror, never a gate** — it is deliberately not part of the Definition of Done, so an expired token can never fail a delivered ticket. All writes go through a deterministic script rather than Asana's MCP server; the reasons (headless runs, the issue #26 classifier precedent, testability) are in the integration's README.
 
 - **Applying a pattern to your project** (new — even a bare `PRD.md` — or existing): [ADOPTING.md](ADOPTING.md) — one command: `node scripts/adopt.mjs <pattern> <target-dir>`
 - Operating manual, pattern schema, grounding rules: [CLAUDE.md](CLAUDE.md)

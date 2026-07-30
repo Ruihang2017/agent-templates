@@ -260,4 +260,84 @@ export async function run() {
       norm(readFileSync(repoPath, 'utf8')) === norm(readFileSync(srcPath, 'utf8'))
     check(S, `self-hosted copy in sync: ${repoRel}`, ok, existsSync(srcPath) ? '' : `scaffold source missing: ${srcRel}`)
   }
+
+  // issue #124: universal integrations. NOT part of the scaffold -> .claude/ byte-sync
+  // above, deliberately — the catalog itself is not tracked in Asana, so there is no
+  // self-hosted copy to keep in step. They still need the same shipped-file, LF, and
+  // frontmatter guarantees as scaffold surface, because adopt.mjs installs them into
+  // every target repo.
+  {
+    const INTEGRATION_FILES = [
+      'integrations/asana/README.md',
+      'integrations/asana/claude-md-snippet.md',
+      'integrations/asana/asana.example.json',
+      'integrations/asana/.claude/scripts/asana-sync.mjs',
+      'integrations/asana/.claude/commands/connect-asana.md',
+      'integrations/asana/settings-allow.json',
+    ]
+    for (const rel of INTEGRATION_FILES) {
+      check(S, `integration file ships: ${rel}`, existsSync(REPO_ROOT + rel))
+    }
+
+    const script = REPO_ROOT + 'integrations/asana/.claude/scripts/asana-sync.mjs'
+    if (existsSync(script)) {
+      const text = readFileSync(script, 'utf8')
+      // Same LF rule as every other installed runtime file (issue #21/#23).
+      check(S, 'LF-only (no \\r): integrations/asana/.claude/scripts/asana-sync.mjs', !/\r/.test(text))
+      // The fail-soft contract is the whole safety story: Asana must never gate delivery.
+      // A stray unconditional non-zero exit would silently turn the mirror into a gate.
+      const badExits = (text.match(/process\.exit\((?!0\)|1\)\n?$)/g) || []).length
+      check(S, 'asana-sync exits only 0 or 1 (fail-soft contract)',
+        /process\.exit\(0\)/.test(text) && !/process\.exit\([^01]/.test(text), `suspicious exits: ${badExits}`)
+      // The token must never be readable from anywhere but the environment.
+      check(S, 'asana-sync reads the token ONLY from ASANA_TOKEN env',
+        /process\.env\.ASANA_TOKEN/.test(text) && !/--token/.test(text))
+      check(S, 'asana-sync never writes the token to the config', /refusing-to-write-secret/.test(text))
+      // It must not reach for Asana search — premium-only, and 10-60s stale after writes.
+      check(S, 'asana-sync does not use the Asana search endpoint', !/tasks\/search/.test(text))
+      check(S, 'asana-sync honors Retry-After on 429', /retry-after/i.test(text))
+      check(S, 'asana-sync emits the machine-readable summary line', /ASANA-SYNC-JSON: /.test(text))
+    }
+
+    const cmd = REPO_ROOT + 'integrations/asana/.claude/commands/connect-asana.md'
+    if (existsSync(cmd)) {
+      const text = readFileSync(cmd, 'utf8')
+      const fm = (text.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
+      check(S, 'connect-asana has a non-empty description', /^description:\s*\S/m.test(fm))
+      check(S, 'connect-asana declares its argument-hint', /^argument-hint:/m.test(fm))
+      // A command that told the agent to write the config itself would trip the pattern's
+      // main-session write guard, and a command that asked for the token would leak it.
+      check(S, 'connect-asana routes all writes through the script', /asana-sync\.mjs/.test(text))
+      check(S, 'connect-asana never asks for the token in-session', /[Nn]ever.{0,40}paste/.test(text))
+    }
+
+    const exampleCfg = REPO_ROOT + 'integrations/asana/asana.example.json'
+    if (existsSync(exampleCfg)) {
+      let parsed = null
+      try { parsed = JSON.parse(readFileSync(exampleCfg, 'utf8')) } catch {}
+      check(S, 'asana.example.json parses', parsed !== null)
+      check(S, 'asana.example.json carries no token-shaped key',
+        parsed !== null && !Object.keys(parsed).some((k) => /token|secret|pat/i.test(k)))
+    }
+
+    // adopt.mjs must actually install the layer and git-ignore .env, or the whole
+    // integration ships without reaching any target repo (the #109 failure class).
+    const adopt = readFileSync(REPO_ROOT + 'scripts/adopt.mjs', 'utf8')
+    check(S, 'adopt installs universal integrations', /integrations/.test(adopt) && /INTEGRATIONS/.test(adopt))
+    check(S, 'adopt git-ignores .env so a token cannot be committed', /\.env/.test(adopt))
+    check(S, 'adopt appends the integration CLAUDE.md section under its own marker',
+      /-integration:start/.test(adopt))
+    check(S, 'adopt merges integration permission rules into settings.json',
+      /settings-allow\.json/.test(adopt) && /permissions/.test(adopt))
+
+    // The allow rule must name the script that actually ships, or it grants nothing.
+    const allowFrag = REPO_ROOT + 'integrations/asana/settings-allow.json'
+    if (existsSync(allowFrag)) {
+      let frag = null
+      try { frag = JSON.parse(readFileSync(allowFrag, 'utf8')) } catch {}
+      check(S, 'asana settings-allow.json parses', frag !== null)
+      check(S, 'asana allow rule targets the installed script path',
+        frag !== null && (frag.allow || []).some((r) => r.includes('.claude/scripts/asana-sync.mjs')))
+    }
+  }
 }
