@@ -12,6 +12,8 @@ Verify — do not assume — that ticket $ARGUMENTS is actually delivered. Check
 5. **Tracker issue closed** — check via `glab issue view` / `gh issue view`. Auto-close via `Closes #N` fires only under specific conditions (GitLab: default-branch merge with the closing pattern in the MR description) — never trust it blindly; this exact gap has shipped before (MRs merged, issues left open).
 6. **Writeback** — the **ticket** is the source of truth (WHAT); the plan is HOW only, never the spec. Any Deviations or spec corrections are made in the **ticket** (a docs PR), and the issue is re-published from it (`publish-tickets.mjs --sync`) so ticket and issue stay identical — then execution resumes.
 
+**Asana mirror — reported, never gated (issue #126).** Skip this entirely when `.claude/asana.json` is absent. When present, run `node .claude/scripts/asana-sync.mjs status <the ticket's module dir>` and check the ticket's subtask shows `completed: true`. This is **not** a Definition-of-Done item: a stale mirror does not make a delivered ticket undelivered, so it can never fail this check. Report it as a separate line — "Asana: in sync" or the specific drift — and offer the repair (`asana-sync.mjs complete <ticket> --create`, or `sync <module> --create` if the subtask was never created) under the same operating-mode rules as the repairs below. A mirror that quietly stops mirroring is the failure this line exists to catch.
+
 Report every failed item plainly. If the MR is merged but the issue is still open, the repair is the exact close command (`glab issue close <N>` / `gh issue close <N>`) — behavior depends on the repo's declared operating mode (CLAUDE.md, "Operating mode"):
 
 - `supervised`: show the command and run it only after explicit human OK.
