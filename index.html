@@ -153,6 +153,7 @@
   .cmd-name{font-family:var(--mono);font-size:12px;font-weight:700;color:#8a5fd0;white-space:nowrap}
   .cmd-hint{font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--mut);white-space:nowrap}
   .cmd-desc{font-size:11.5px;font-weight:700;color:var(--sub);line-height:1.5;flex:1;min-width:180px}
+  .cmd-opt{font-size:9.5px;font-weight:800;letter-spacing:0.03em;text-transform:uppercase;color:var(--mut);background:rgba(var(--flt),0.09);border-radius:5px;padding:2px 6px;white-space:nowrap}
 
   .steps{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
   .step{border-radius:20px;background:var(--card);padding:15px 14px 17px;
@@ -233,6 +234,7 @@
           <div class="cmd"><code class="cmd-name">/start-all</code><code class="cmd-hint">[supervised|autonomous] [concurrency]</code><span class="cmd-desc">Gate 1 for the whole PRD — publish every module's tickets, then run them all through the pipeline scheduled from one dependency DAG</span></div>
           <div class="cmd"><code class="cmd-name">/start-milestone</code><code class="cmd-hint">&lt;module dir, e.g. docs/prd/01-foo&gt; [supervised|autonomous] [concurrency]</code><span class="cmd-desc">Gate 1 start signal — publish the module's tickets as tracker issues, then run the milestone pipeline (three-agent pattern)</span></div>
           <div class="cmd"><code class="cmd-name">/verify-delivery</code><code class="cmd-hint">&lt;ticket-id&gt;</code><span class="cmd-desc">Post-merge Definition-of-Done check for a ticket (three-agent pattern) — verifies delivery instead of assuming it</span></div>
+          <div class="cmd"><code class="cmd-name">/connect-asana</code><code class="cmd-hint">&quot;[asana-task-url]&quot;</code><span class="cmd-opt">asana · optional</span><span class="cmd-desc">Connect this repo to an Asana task so the pipeline mirrors milestones and tickets as Asana subtasks (optional; the pipeline runs fine without it)</span></div>
         </div>
         <div class="links">
           <a class="btn btn-green" href="https://github.com/Ruihang2017/agent-templates/tree/main/patterns/three-agent-architect-builder-reviewer">Pattern write-up</a>
