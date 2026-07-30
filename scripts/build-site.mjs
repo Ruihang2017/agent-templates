@@ -74,17 +74,36 @@ function parsePattern(dir) {
 // (and gating on them in E2E) is what keeps the site from silently omitting a shipped
 // command the way /start-all was once missing (catalog issue #35).
 function parseCommands(dir) {
-  const cdir = join(ROOT, 'patterns', dir, 'scaffold', '.claude', 'commands')
-  if (!existsSync(cdir)) return []
   const fmField = (fm, name) => ((fm.match(new RegExp(`^${name}\\s*:\\s*(.+)$`, 'm')) || [])[1] || '').trim()
-  return readdirSync(cdir)
-    .filter((f) => f.endsWith('.md'))
-    .sort()
-    .map((f) => {
+  // Universal integration commands (integrations/<name>/.claude/commands) are installed
+  // for EVERY pattern by adopt.mjs, so they are part of every pattern's user-facing
+  // surface and belong on the card. Omitting them is the issue #35 hole above, reopened
+  // through a different directory (issue #124).
+  const intRoot = join(ROOT, 'integrations')
+  const sources = [
+    { cdir: join(ROOT, 'patterns', dir, 'scaffold', '.claude', 'commands'), integration: '' },
+    ...(existsSync(intRoot)
+      ? readdirSync(intRoot, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && existsSync(join(intRoot, d.name, '.claude', 'commands')))
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .map((d) => ({ cdir: join(intRoot, d.name, '.claude', 'commands'), integration: d.name }))
+      : []),
+  ]
+  const out = []
+  for (const { cdir, integration } of sources) {
+    if (!existsSync(cdir)) continue
+    for (const f of readdirSync(cdir).filter((n) => n.endsWith('.md')).sort()) {
       const md = readFileSync(join(cdir, f), 'utf8')
       const fm = (md.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
-      return { name: '/' + f.replace(/\.md$/, ''), hint: fmField(fm, 'argument-hint'), description: fmField(fm, 'description') }
-    })
+      out.push({
+        name: '/' + f.replace(/\.md$/, ''),
+        hint: fmField(fm, 'argument-hint'),
+        description: fmField(fm, 'description'),
+        integration,
+      })
+    }
+  }
+  return out
 }
 
 const patterns = readdirSync(join(ROOT, 'patterns'), { withFileTypes: true })
@@ -301,7 +320,7 @@ const patternCards = patterns
         </div>
         ${p.commands.length ? `<div class="cmds">
           <div class="cmds-label">Commands</div>
-          ${p.commands.map((cmd) => `<div class="cmd"><code class="cmd-name">${esc(cmd.name)}</code>${cmd.hint ? `<code class="cmd-hint">${esc(cmd.hint)}</code>` : ''}<span class="cmd-desc">${esc(cmd.description)}</span></div>`).join('\n          ')}
+          ${p.commands.map((cmd) => `<div class="cmd"><code class="cmd-name">${esc(cmd.name)}</code>${cmd.hint ? `<code class="cmd-hint">${esc(cmd.hint)}</code>` : ''}${cmd.integration ? `<span class="cmd-opt">${esc(cmd.integration)} · optional</span>` : ''}<span class="cmd-desc">${esc(cmd.description)}</span></div>`).join('\n          ')}
         </div>` : ''}
         <div class="links">
           <a class="btn btn-green" href="${GITHUB}/tree/main/patterns/${esc(p.dir)}">Pattern write-up</a>
@@ -466,6 +485,7 @@ const html = `<!doctype html>
   .cmd-name{font-family:var(--mono);font-size:12px;font-weight:700;color:#8a5fd0;white-space:nowrap}
   .cmd-hint{font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--mut);white-space:nowrap}
   .cmd-desc{font-size:11.5px;font-weight:700;color:var(--sub);line-height:1.5;flex:1;min-width:180px}
+  .cmd-opt{font-size:9.5px;font-weight:800;letter-spacing:0.03em;text-transform:uppercase;color:var(--mut);background:rgba(var(--flt),0.09);border-radius:5px;padding:2px 6px;white-space:nowrap}
 
   .steps{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
   .step{border-radius:20px;background:var(--card);padding:15px 14px 17px;

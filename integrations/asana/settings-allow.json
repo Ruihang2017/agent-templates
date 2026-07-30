@@ -1,0 +1,6 @@
+{
+  "_comment": "Permission entries adopt.mjs MERGES into the target's .claude/settings.json permissions.allow. Without these, every asana-sync call prompts — which silently breaks autonomous runs and the headless nightly sweep, where there is nobody to approve. Merged additively and idempotently, so an existing customized settings.json keeps its own entries.",
+  "allow": [
+    "Bash(node .claude/scripts/asana-sync.mjs:*)"
+  ]
+}

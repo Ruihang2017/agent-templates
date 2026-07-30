@@ -39,11 +39,14 @@ export async function run() {
       'docs/adr/.gitkeep',
       'docs/plans/.gitkeep',
       'CLAUDE.md',
+      // issue #124: universal integrations install for every pattern, inert until configured
+      '.claude/scripts/asana-sync.mjs',
+      '.claude/commands/connect-asana.md',
     ]) {
       check(S, `A1 installs ${f}`, existsSync(join(t1, f)))
     }
     // issue #21: the Workflow tool rejects scripts containing \r — installs must be LF
-    for (const f of ['.claude/workflows/run-milestone.js', '.claude/workflows/nightly-issues.js', '.claude/hooks/guard-main-session-writes.mjs', '.claude/scripts/publish-tickets.mjs', '.claude/scripts/deliver-ticket.mjs']) {
+    for (const f of ['.claude/workflows/run-milestone.js', '.claude/workflows/nightly-issues.js', '.claude/hooks/guard-main-session-writes.mjs', '.claude/scripts/publish-tickets.mjs', '.claude/scripts/deliver-ticket.mjs', '.claude/scripts/asana-sync.mjs']) {
       check(S, `A1 LF-only install: ${f}`, !/\r/.test(readFileSync(join(t1, f), 'utf8')))
     }
     // issue #23: LF must SURVIVE later git checkouts on Windows — adopt pins runtime files
@@ -63,6 +66,29 @@ export async function run() {
     }
     check(S, 'A1 docs/PRD.md copied from root PRD.md', readFileSync(join(t1, 'docs', 'PRD.md'), 'utf8').includes('# My PRD'))
     check(S, 'A1 root PRD.md kept (copy, not move)', existsSync(join(t1, 'PRD.md')))
+    // issue #124: the Asana layer installs everywhere but must arrive INERT — no config
+    // file, so every verb no-ops until /connect-asana runs. And an ASANA_TOKEN parked in
+    // .env must be uncommittable, because an Asana PAT acts as the whole user.
+    {
+      const gi1 = readFileSync(join(t1, '.gitignore'), 'utf8')
+      check(S, 'A1 gitignores .env so a token cannot be committed', /^\.env$/m.test(gi1))
+      check(S, 'A1 Asana layer arrives inert (no .claude/asana.json)', !existsSync(join(t1, '.claude', 'asana.json')))
+      // An un-allowlisted deterministic script prompts on every call, which BREAKS
+      // autonomous and headless runs rather than merely annoying — so the merge is
+      // load-bearing, not cosmetic.
+      {
+        const st = JSON.parse(readFileSync(join(t1, '.claude', 'settings.json'), 'utf8'))
+        const allow = (st.permissions && st.permissions.allow) || []
+        check(S, 'A1 asana-sync is permission-allowlisted', allow.includes('Bash(node .claude/scripts/asana-sync.mjs:*)'))
+        // Merged, not replaced: the pattern's own rules must survive.
+        check(S, 'A1 the merge kept the pattern permission rules', allow.includes('Bash(node .claude/scripts/publish-tickets.mjs:*)'))
+        check(S, 'A1 settings.json has no duplicate allow entries', allow.length === new Set(allow).size)
+      }
+      const cmA = readFileSync(join(t1, 'CLAUDE.md'), 'utf8')
+      check(S, 'A1 CLAUDE.md carries the Asana section', cmA.includes('asana-integration:start'))
+      check(S, 'A1 CLAUDE.md marks Asana unconfigured', /Asana: `unconfigured`/.test(cmA))
+      check(S, 'A1 CLAUDE.md states the Asana fail-soft contract', /not\*{0,2}\s*part of the Definition of Done|never be added to it/.test(cmA))
+    }
 
     // idempotent re-run
     const r2 = runAdopt([PATTERN, t1])
@@ -71,6 +97,14 @@ export async function run() {
     const cm = readFileSync(join(t1, 'CLAUDE.md'), 'utf8')
     eq(S, 'A2 snippet present exactly once', (cm.match(/Delivery pipeline — three-agent/g) || []).length, 1)
     eq(S, 'A2 .gitattributes rules present exactly once', (readFileSync(join(t1, '.gitattributes'), 'utf8').match(/Workflow tool rejects CRLF/g) || []).length, 1)
+    // The integration section has its OWN marker, so a re-run must not duplicate it either.
+    eq(S, 'A2 Asana CLAUDE.md section present exactly once', (cm.match(/asana-integration:start/g) || []).length, 1)
+    eq(S, 'A2 .env rule present exactly once', (readFileSync(join(t1, '.gitignore'), 'utf8').match(/never commit tokens/g) || []).length, 1)
+    {
+      const allow2 = JSON.parse(readFileSync(join(t1, '.claude', 'settings.json'), 'utf8')).permissions.allow
+      eq(S, 'A2 the asana allow rule was not duplicated by the re-run',
+        allow2.filter((r) => r.includes('asana-sync')).length, 1)
+    }
   } finally {
     rmSync(t1, { recursive: true, force: true })
   }

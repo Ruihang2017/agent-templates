@@ -32,6 +32,16 @@ templates/                             # UNIVERSAL — shared by all patterns an
 patterns/<pattern-name>/               # kebab-case; one directory per pattern
   README.md                            # the write-up — MUST follow the schema below
   scaffold/                            # drop-in files a target repo copies, then adapts
+integrations/<name>/                   # UNIVERSAL optional add-ons — adopt.mjs installs them for
+                                       #   EVERY pattern, and each arrives INERT until the user runs
+                                       #   its /connect-<name> command. Cross-pattern by design:
+                                       #   never duplicate one into a pattern's scaffold/
+  README.md                            # mapping, API reference + as-of date, accepted costs, limits
+  claude-md-snippet.md                 # marker-guarded section appended to the target's CLAUDE.md
+  .claude/                             # scripts + commands, installed beside the pattern's own.
+                                       #   NOT byte-synced into this repo's .claude/ — the catalog
+                                       #   does not use them itself, so there is no copy to keep in
+                                       #   step. Their own integrity checks live in suite-integrity.
 testbed/                               # E2E for the pattern chain (see testbed/README.md)
   e2e/run-e2e.mjs                      # Level 0: deterministic, zero-token — the merge gate for scaffold changes
   app/                                 # Level 1: tiny real target project for live pipeline rehearsals

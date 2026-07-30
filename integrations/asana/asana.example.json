@@ -1,0 +1,8 @@
+{
+  "mode": "task",
+  "repoTask": "1201234567890123",
+  "repoTaskName": "my-service (repo)",
+  "workspace": "1200000000000001",
+  "addTicketsToProject": null,
+  "note": "Token lives in the ASANA_TOKEN env var, never in this file. See integrations/asana/README.md."
+}

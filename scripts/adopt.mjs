@@ -6,13 +6,21 @@
 //
 // Installs into <target-dir>:
 //   .claude/                 from the pattern's scaffold (per-file; existing files skipped)
+//   .claude/                 plus every universal integration in integrations/<name>/.claude/
+//                            (installed for all patterns; inert until its /connect-* runs).
+//                            Each integration's settings-allow.json is MERGED into
+//                            .claude/settings.json permissions.allow — additive, idempotent,
+//                            never replacing the file.
 //   templates/ticket.template.md   the universal ticket format
 //   .github/ or .gitlab/     universal tracker templates (issues + PR/MR) for the platform
 //   docs/PRD.md              copied from a root PRD.md if present and docs/PRD.md is absent
 //   docs/prd/ docs/adr/ docs/plans/   the docs skeleton the pipeline assumes
-//   CLAUDE.md                created from the snippet, or snippet appended once (marker-checked)
+//   CLAUDE.md                created from the snippet, or snippet appended once (marker-checked),
+//                            plus one marker-guarded section per integration
 //   .gitattributes           eol=lf rules for scaffold runtime files, appended once (marker-checked)
-//   .gitignore               .claude/tmp/ scratch + allow-main-writes + docs/plans/*.md, appended once (marker-checked)
+//   .gitignore               .claude/tmp/ scratch + allow-main-writes + docs/plans/*.md, appended once
+//                            (marker-checked), and .env under a SEPARATE marker so an older
+//                            install still gains the token rules on a re-adopt
 //
 // Idempotent: re-running skips everything that exists (--force overwrites files, never
 // re-appends the snippet). Exit 0 = installed/verified; exit 1 = bad invocation.
@@ -172,6 +180,60 @@ for (const src of walk(join(scaffold, '.claude'))) {
   }
 }
 
+// 1b. universal integrations (every pattern gets them). Installed unconditionally but
+// INERT: each one no-ops until the user opts in with its /connect-* command, so there is
+// no flag to pass and no way to end up with a half-installed integration later.
+const INTEGRATIONS = ['asana']
+for (const name of INTEGRATIONS) {
+  const root = join(CATALOG, 'integrations', name, '.claude')
+  if (!existsSync(root)) continue
+  for (const src of walk(root)) {
+    const rel = join('.claude', relative(root, src)).replaceAll('\\', '/')
+    copyFile(src, join(target, rel), rel)
+  }
+}
+
+// 1c. merge each integration's permission entries into the target's settings.json.
+// A deterministic script that is not allowlisted prompts on every call — which does not
+// merely annoy, it BREAKS autonomous runs and the headless nightly sweep, where no human
+// is present to approve. Merged additively (never replacing the file) and idempotently, so
+// a customized settings.json keeps its own entries and a re-adopt is a no-op.
+{
+  const settingsPath = join(target, '.claude', 'settings.json')
+  const wanted = []
+  for (const name of INTEGRATIONS) {
+    const src = join(CATALOG, 'integrations', name, 'settings-allow.json')
+    if (!existsSync(src)) continue
+    try {
+      const frag = JSON.parse(readFileSync(src, 'utf8'))
+      for (const rule of frag.allow || []) wanted.push(rule)
+    } catch {
+      note(`  (warn) ${name}: settings-allow.json is unparseable — skipped, allowlist NOT updated`)
+    }
+  }
+  if (wanted.length && existsSync(settingsPath)) {
+    try {
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf8'))
+      settings.permissions = settings.permissions || {}
+      settings.permissions.allow = settings.permissions.allow || []
+      const missing = wanted.filter((r) => !settings.permissions.allow.includes(r))
+      if (missing.length) {
+        settings.permissions.allow.push(...missing)
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2) + '\n')
+        console.log(`+ merge   .claude/settings.json (${missing.length} integration permission rule(s))`)
+        installed++
+      } else {
+        console.log('= exists  .claude/settings.json (integration permission rules already present)')
+        skipped++
+      }
+    } catch {
+      // Never leave a broken settings.json behind — a malformed one is the user's to fix.
+      note('  (warn) existing .claude/settings.json is unparseable — add these to permissions.allow by hand:')
+      for (const r of wanted) note(`           ${r}`)
+    }
+  }
+}
+
 // 2. universal ticket template
 copyFile(join(CATALOG, 'templates', 'ticket.template.md'), join(target, 'templates', 'ticket.template.md'), 'templates/ticket.template.md')
 
@@ -247,6 +309,24 @@ if (!existsSync(claudeMd)) {
   skipped++
 }
 
+// 6b. integration CLAUDE.md snippets, each marker-guarded independently of the pattern
+// block so a re-adopt on an older install still picks them up.
+for (const name of INTEGRATIONS) {
+  const src = join(CATALOG, 'integrations', name, 'claude-md-snippet.md')
+  if (!existsSync(src)) continue
+  const frag = readFileSync(src, 'utf8').replace(/\r\n/g, '\n')
+  const startMarker = `<!-- ${name}-integration:start -->`
+  const current = existsSync(claudeMd) ? readFileSync(claudeMd, 'utf8') : ''
+  if (current.includes(startMarker)) {
+    console.log(`= exists  CLAUDE.md (${name} integration section already present)`)
+    skipped++
+  } else {
+    writeFileSync(claudeMd, current.trimEnd() + '\n\n' + frag)
+    console.log(`+ append  CLAUDE.md (${name} integration section)`)
+    installed++
+  }
+}
+
 // 7. .gitattributes: pin scaffold runtime files to LF. Install-time normalization
 // (above) is not enough on Windows — a later `git checkout` with autocrlf re-CRLFs
 // them and the Workflow tool rejects the script content (catalog issue #23).
@@ -289,6 +369,22 @@ if (!existsSync(giPath)) {
   skipped++
 }
 
+// 8b. .gitignore: a SEPARATE marker for secret-bearing files, so an existing install that
+// already carries the scratch block above still gets this appended on a re-adopt. `.env` is
+// where a user is most likely to park ASANA_TOKEN; an Asana PAT acts as the whole user, so
+// it must never be committable by accident.
+const GI_SECRET_MARKER = '# agent-templates: never commit tokens (ASANA_TOKEN etc.)'
+const GI_SECRET_RULES = `${GI_SECRET_MARKER}\n.env\n.env.local\n`
+const giNow = existsSync(giPath) ? readFileSync(giPath, 'utf8') : ''
+if (!giNow.includes(GI_SECRET_MARKER)) {
+  writeFileSync(giPath, giNow ? giNow.trimEnd() + '\n\n' + GI_SECRET_RULES : GI_SECRET_RULES)
+  console.log('+ append  .gitignore (.env — never commit tokens)')
+  installed++
+} else {
+  console.log('= exists  .gitignore (token rules already present)')
+  skipped++
+}
+
 console.log(`\nadopt: ${installed} installed, ${skipped} already present. Pattern: ${pattern}, platform: ${PLATFORM}.`)
 console.log(`
 NEXT STEPS (details: ${join(CATALOG, 'ADOPTING.md')})
@@ -299,4 +395,7 @@ NEXT STEPS (details: ${join(CATALOG, 'ADOPTING.md')})
      (Architect decomposes docs/PRD.md into sub-PRDs + tickets, then stops for your review)
   4. Gate 1 — review the breakdown, then:  /start-milestone docs/prd/00-<module> supervised
   5. Graduate to autonomous when the pattern holds; optional nightly sweep:
-     see the pattern's INSTALL.md § Nightly sweep.`)
+     see the pattern's INSTALL.md § Nightly sweep.
+  6. Optional — mirror milestones/tickets into Asana:  /connect-asana
+     (needs an ASANA_TOKEN env var and an existing Asana task for this repo;
+      inert until configured. Details: ${join(CATALOG, 'integrations', 'asana', 'README.md')})`)
