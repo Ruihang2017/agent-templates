@@ -58,10 +58,10 @@ const UNIVERSAL_TEMPLATES = [
 
 // model/effort pins must match pattern README §3 exactly
 const AGENT_PINS = {
-  'architect.md': { model: 'claude-opus-5', effort: 'xhigh' },
-  'builder.md': { model: 'claude-opus-5', effort: 'high' },
-  'reviewer.md': { model: 'claude-sonnet-5', effort: 'xhigh' },
-  'triage.md': { model: 'claude-sonnet-5', effort: 'xhigh' },
+  'architect.md': { model: 'claude-opus-5', effort: 'high' },
+  'builder.md': { model: 'claude-opus-5', effort: 'medium' },
+  'reviewer.md': { model: 'claude-sonnet-5', effort: 'high' },
+  'triage.md': { model: 'claude-sonnet-5', effort: 'high' },
 }
 
 const fm = (text) => (text.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''

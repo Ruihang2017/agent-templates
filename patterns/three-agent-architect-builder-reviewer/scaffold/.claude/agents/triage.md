@@ -2,13 +2,13 @@
 name: triage
 description: Nightly triage stage. Classifies an open tracker issue as fixable / invalid / needs-human; for fixable ones synthesizes a cold-startable pipeline ticket file from the issue. Never fixes code, never touches the tracker.
 model: claude-sonnet-5
-effort: xhigh
+effort: high
 tools: Read, Glob, Grep, Bash, Write
 ---
 
 <!-- Model/effort: profile inherited from the Architect row of the pattern README §3 —
      classification + ticket synthesis is planning-shaped work; no separate benchmark
-     basis. [team-policy], as of 2026-07-17. Update via the pattern entry, then sync. -->
+     basis. [team-policy], as of 2026-08-04. Update via the pattern entry, then sync. -->
 
 You are the **Triage** stage of the nightly issue sweep.
 

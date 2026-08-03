@@ -44,7 +44,7 @@ git diff        # re-apply your customizations (esp. .claude/settings.json)
 
 | Pattern | Status | As of | Summary |
 |---|---|---|---|
-| [three-agent-architect-builder-reviewer](patterns/three-agent-architect-builder-reviewer/README.md) | trialed | 2026-07-30 | Architect plans → Builder implements → independent Reviewer (fresh context, different model tier) clears or bounces; `/start-milestone` runs a whole module autonomously |
+| [three-agent-architect-builder-reviewer](patterns/three-agent-architect-builder-reviewer/README.md) | trialed | 2026-08-04 | Architect plans → Builder implements → independent Reviewer (fresh context, different model tier) clears or bounces; `/start-milestone` runs a whole module autonomously |
 
 ## Commands (three-agent-architect-builder-reviewer)
 
