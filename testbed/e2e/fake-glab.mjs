@@ -37,7 +37,32 @@ if (process.env.FAKE_GLAB_MR_API_DENIED === '1' && joined.startsWith('mr ')) {
   process.exit(1)
 }
 
+// `issue list`. Two modes, because until catalog issue #132 this fake only ever simulated
+// the OLD glab (no --output json) — so the JSON path that EVERY current install takes had
+// never been exercised by a single test, which is precisely how the pagination bug shipped.
+//
+//   FAKE_GLAB_ISSUES_JSON  JSON array of {iid,title,state,description} -> real --output
+//                          json path, paginated with --per-page/--page
+//   FAKE_GLAB_LIST         legacy text mode; --output json exits 1 (old CLI simulation)
+//   FAKE_GLAB_IGNORE_PAGE  '1' -> honour --per-page but IGNORE --page, always serving
+//                          page 1. Models a CLI that silently does not paginate; the
+//                          script must detect it rather than truncate.
 if (joined.startsWith('issue list')) {
+  const raw = process.env.FAKE_GLAB_ISSUES_JSON
+  if (raw) {
+    if (!args.includes('--output')) {
+      // text mode against a JSON fixture: emit the same "#N  title" shape
+      const rows = JSON.parse(raw).map((i) => `#${i.iid}  ${i.title}`).join('\n')
+      process.stdout.write(rows + (rows ? '\n' : ''))
+      process.exit(0)
+    }
+    const all = JSON.parse(raw)
+    const perPage = Number(flag('--per-page') || 30)
+    const page = process.env.FAKE_GLAB_IGNORE_PAGE === '1' ? 1 : Number(flag('--page') || 1)
+    const start = (page - 1) * perPage
+    process.stdout.write(JSON.stringify(all.slice(start, start + perPage)))
+    process.exit(0)
+  }
   if (args.includes('--output')) { console.error('unknown flag: --output'); process.exit(1) }
   process.stdout.write(process.env.FAKE_GLAB_LIST || '')
   process.exit(0)

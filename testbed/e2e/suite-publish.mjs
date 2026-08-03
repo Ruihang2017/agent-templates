@@ -102,12 +102,20 @@ export async function run() {
       eq(S, 'P6 --create exit 1 without CLI', create.status, 1)
     }
 
-    // P7: glab text fallback matches the RIGHT line, not the first #N mention
+    // P7: a glab too old for `--output json` no longer silently falls back to text
+    // parsing (catalog issue #132). That fallback inherited the same 30-item window and
+    // reported no state/body, so it could only ever degrade into duplicates while
+    // disabling drift detection. It is now a fetch FAILURE: dry-run degrades and says so,
+    // --create refuses outright.
     {
       const list = '#5 Discuss [DEM-01] rollout plan\n#9 [DEM-01] Demo ticket one\n'
       const r = runPub(root, [mod, '--platform', 'glab'], { GLAB_BIN: FAKE_GLAB, FAKE_GLAB_LIST: list })
-      eq(S, 'P7 exit 0', r.status, 0)
-      eq(S, 'P7 DEM-01 matched to #9 (exact prefix line)', entry(r.summary, 'DEM-01', 'DEM-01-a').issue, 9)
+      eq(S, 'P7 dry-run with a legacy glab still exits 0', r.status, 0)
+      check(S, 'P7 it does NOT resolve issues by text-parsing', entry(r.summary, 'DEM-01', 'DEM-01-a').issue === null)
+      check(S, 'P7 the fetch failure is printed, not swallowed', /could not fetch the existing-issue list/.test(r.stdout + r.stderr))
+      const c = runPub(root, [mod, '--platform', 'glab', '--create'], { GLAB_BIN: FAKE_GLAB, FAKE_GLAB_LIST: list })
+      eq(S, 'P7 --create REFUSES rather than dedupe blind', c.status, 1)
+      check(S, 'P7 and it created nothing', !/^\+ created/m.test(c.stdout))
     }
 
     // P8: invocation edge cases
@@ -211,10 +219,146 @@ export async function run() {
         {
           const r = runPub(droot, [mod2], { GH_BIN: FAKE_GH, FAKE_GH_LIST: list({ state: 'CLOSED' }) })
           check(S, 'P15 no body available -> no drift claimed', entry(r.summary, 'STA-01').drift === undefined)
-          const g = runPub(droot, [mod2, '--platform', 'glab'], { GLAB_BIN: FAKE_GLAB, FAKE_GLAB_LIST: '#21 [STA-01] Stateful\n' })
-          check(S, 'P15 glab text fallback yields no state and no drift',
-            entry(g.summary, 'STA-01').state === '' && entry(g.summary, 'STA-01').drift === undefined)
+          // glab reporting a state but no body: state drives the resume filter, body
+          // drives drift — the two degrade independently and neither may be invented.
+          const g = runPub(droot, [mod2, '--platform', 'glab'], {
+            GLAB_BIN: FAKE_GLAB,
+            FAKE_GLAB_ISSUES_JSON: JSON.stringify([{ iid: 21, title: '[STA-01] Stateful', state: 'closed', description: '' }]),
+          })
+          check(S, 'P15 glab reports state from JSON', entry(g.summary, 'STA-01').state === 'closed')
+          check(S, 'P15 an empty body yields no drift claim', entry(g.summary, 'STA-01').drift === undefined)
         }
+      } finally { rmSync(droot, { recursive: true, force: true }) }
+    }
+    // ---------------------------------------------------------------------
+    // P16-P22: pagination + dedup correctness (catalog issue #132, field report)
+    //
+    // The headline case is P16. On the reporting repo — 44 tickets, 44 issues — a single
+    // --create produced 43 duplicates, because `glab issue list --all --output json`
+    // returns only 30 items (--all is a STATE filter; --per-page defaults to 30) and the
+    // script never paginated. Everything past the window read as "never published".
+    //
+    // Every assertion below counts the FAKE's creates, never the script's own summary:
+    // a script that created duplicates and then deduped its own report would otherwise
+    // pass. And they are only meaningful because P1/P2 above prove a normal run does
+    // create issues — otherwise "created nothing" would just mean "never works".
+    {
+      const proot = mkdtempSync(join(tmpdir(), 'e2e-pub-page-'))
+      const pdir = join(proot, 'docs', 'prd', '00-x', 'tickets')
+      mkdirSync(pdir, { recursive: true })
+      const N = 44 // the reporter's number
+      for (let i = 1; i <= N; i++) {
+        writeFileSync(join(pdir, `PAG-${i}.md`), ticket(`PAG-${i}`, `Ticket ${i}`))
+      }
+      // A tracker where all 44 are already published — far past one 30-item page.
+      const published = Array.from({ length: N }, (_, i) => ({
+        iid: i + 1, title: `[PAG-${i + 1}] Ticket ${i + 1}`, state: 'opened', description: '',
+      }))
+      const pmod = 'docs/prd/00-x'
+      try {
+        const r = runPub(proot, [pmod, '--platform', 'glab', '--create'], {
+          GLAB_BIN: FAKE_GLAB, FAKE_GLAB_ISSUES_JSON: JSON.stringify(published),
+        })
+        eq(S, 'P16 exit 0 re-publishing 44 already-published tickets', r.status, 0)
+        // THE regression: not one create, even though 14 of the 44 sit past page 1.
+        check(S, 'P16 re-run across >1 page creates NOTHING (the #132 bug)', !/^\+ created/m.test(r.stdout), (r.stdout.match(/^\+ created.*/gm) || []).slice(0, 3).join(' | '))
+        eq(S, 'P16 all 44 resolved to their existing issue', r.summary.filter((e) => e.issue !== null).length, N)
+        // Specifically the ones the old 30-item window could not see.
+        eq(S, 'P16 ticket 44 (well past page 1) resolved', entry(r.summary, 'PAG-44').issue, 44)
+        eq(S, 'P16 ticket 31 (first past the old window) resolved', entry(r.summary, 'PAG-31').issue, 31)
+      } finally { rmSync(proot, { recursive: true, force: true }) }
+    }
+
+    // P17: a CLI that ignores --page must be DETECTED, not silently truncated to page 1.
+    // Silent truncation is the original bug, so the fix may not be able to do it either.
+    {
+      const proot = mkdtempSync(join(tmpdir(), 'e2e-pub-nopage-'))
+      mkdirSync(join(proot, 'docs', 'prd', '00-x', 'tickets'), { recursive: true })
+      writeFileSync(join(proot, 'docs', 'prd', '00-x', 'tickets', 'PAG-1.md'), ticket('PAG-1', 'One'))
+      const many = Array.from({ length: 250 }, (_, i) => ({ iid: i + 1, title: `[OTHER-${i + 1}] x`, state: 'opened', description: '' }))
+      try {
+        const r = runPub(proot, ['docs/prd/00-x', '--platform', 'glab', '--create'], {
+          GLAB_BIN: FAKE_GLAB, FAKE_GLAB_ISSUES_JSON: JSON.stringify(many), FAKE_GLAB_IGNORE_PAGE: '1',
+        })
+        eq(S, 'P17 a non-advancing pager exits 1', r.status, 1)
+        check(S, 'P17 it names the cause', /--page appears to be ignored/.test(r.stdout + r.stderr))
+        check(S, 'P17 and it created nothing', !/^\+ created/m.test(r.stdout))
+      } finally { rmSync(proot, { recursive: true, force: true }) }
+    }
+
+    // P18: >1 MB of issue bodies must not ENOBUFS. Pre-fix, execFileSync's 1 MB default
+    // threw, and the throw was swallowed into the text fallback — so the buffer limit was
+    // itself a duplicate trigger.
+    {
+      const proot = mkdtempSync(join(tmpdir(), 'e2e-pub-buf-'))
+      mkdirSync(join(proot, 'docs', 'prd', '00-x', 'tickets'), { recursive: true })
+      writeFileSync(join(proot, 'docs', 'prd', '00-x', 'tickets', 'BIG-1.md'), ticket('BIG-1', 'Big'))
+      const big = Array.from({ length: 60 }, (_, i) => ({
+        iid: i + 1, title: `[BIG-${i + 1}] x`, state: 'opened', description: 'y'.repeat(40000),
+      }))
+      try {
+        const r = runPub(proot, ['docs/prd/00-x', '--platform', 'glab', '--create'], {
+          GLAB_BIN: FAKE_GLAB, FAKE_GLAB_ISSUES_JSON: JSON.stringify(big),
+        })
+        eq(S, 'P18 a >1 MB issue list is fetched without ENOBUFS', r.status, 0)
+        check(S, 'P18 no fetch failure was reported', !/could not fetch/.test(r.stdout + r.stderr))
+        eq(S, 'P18 BIG-1 resolved to its existing issue', entry(r.summary, 'BIG-1').issue, 1)
+      } finally { rmSync(proot, { recursive: true, force: true }) }
+    }
+
+    // P19: resolve to the OLDEST match, on BOTH platforms. gh returns newest-first, so
+    // before #132 the gh branch tracked the NEWEST issue — the invariant every dedup rule
+    // here assumes was false on half the branches, and untested because the fake echoed
+    // the fixture order back.
+    {
+      const droot = mkdtempSync(join(tmpdir(), 'e2e-pub-old-'))
+      mkdirSync(join(droot, 'docs', 'prd', '00-x', 'tickets'), { recursive: true })
+      writeFileSync(join(droot, 'docs', 'prd', '00-x', 'tickets', 'OLD-1.md'), ticket('OLD-1', 'Original'))
+      // #5 original (open), #90 duplicate (closed) — a repaired tracker.
+      const gh = JSON.stringify([
+        { number: 5, title: '[OLD-1] Original', state: 'OPEN', body: '' },
+        { number: 90, title: '[OLD-1] Original', state: 'CLOSED', body: '' },
+      ])
+      const gl = JSON.stringify([
+        { iid: 5, title: '[OLD-1] Original', state: 'opened', description: '' },
+        { iid: 90, title: '[OLD-1] Original', state: 'closed', description: '' },
+      ])
+      try {
+        const g = runPub(droot, ['docs/prd/00-x'], { GH_BIN: FAKE_GH, FAKE_GH_LIST: gh })
+        eq(S, 'P19 gh resolves to the OLDEST issue despite newest-first ordering', entry(g.summary, 'OLD-1').issue, 5)
+        const l = runPub(droot, ['docs/prd/00-x', '--platform', 'glab'], { GLAB_BIN: FAKE_GLAB, FAKE_GLAB_ISSUES_JSON: gl })
+        eq(S, 'P19 glab resolves to the OLDEST issue', entry(l.summary, 'OLD-1').issue, 5)
+      } finally { rmSync(droot, { recursive: true, force: true }) }
+    }
+
+    // P20-P22: the pre-create duplicate guard. One case per row of the matrix, each
+    // asserting BOTH the verdict and that nothing was created on a refusal.
+    {
+      const droot = mkdtempSync(join(tmpdir(), 'e2e-pub-guard-'))
+      mkdirSync(join(droot, 'docs', 'prd', '00-x', 'tickets'), { recursive: true })
+      writeFileSync(join(droot, 'docs', 'prd', '00-x', 'tickets', 'GRD-1.md'), ticket('GRD-1', 'Guarded'))
+      const gl = (rows) => JSON.stringify(rows.map(([iid, state]) => ({ iid, title: '[GRD-1] Guarded', state, description: '' })))
+      const run = (rows) => runPub(droot, ['docs/prd/00-x', '--platform', 'glab', '--create'], {
+        GLAB_BIN: FAKE_GLAB, FAKE_GLAB_ISSUES_JSON: gl(rows),
+      })
+      try {
+        eq(S, 'P20 single issue passes', run([[5, 'opened']]).status, 0)
+        eq(S, 'P20 oldest open + rest closed passes (a repaired tracker)', run([[5, 'opened'], [90, 'closed']]).status, 0)
+        eq(S, 'P20 all closed passes (delivered)', run([[5, 'closed'], [90, 'closed']]).status, 0)
+
+        const twoOpen = run([[5, 'opened'], [90, 'opened']])
+        eq(S, 'P21 two OPEN duplicates refuse', twoOpen.status, 1)
+        check(S, 'P21 the refusal names both issue numbers', /#5/.test(twoOpen.stderr) && /#90/.test(twoOpen.stderr))
+        check(S, 'P21 nothing was created', !/^\+ created/m.test(twoOpen.stdout))
+        check(S, 'P21 the summary carries the machine-readable reason',
+          Array.isArray(twoOpen.summary) && twoOpen.summary.some((e) => e.error === 'duplicate-issues-present'))
+
+        // The subtle one: dedup would resolve to the CLOSED oldest, the resume filter
+        // would drop the ticket, and the open issue would be orphaned forever.
+        const orphan = run([[5, 'closed'], [90, 'opened']])
+        eq(S, 'P22 oldest closed while a newer is open refuses', orphan.status, 1)
+        check(S, 'P22 the refusal explains the orphaning', /orphan/.test(orphan.stderr))
+        check(S, 'P22 nothing was created', !/^\+ created/m.test(orphan.stdout))
       } finally { rmSync(droot, { recursive: true, force: true }) }
     }
   } finally {
