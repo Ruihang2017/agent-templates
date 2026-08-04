@@ -122,9 +122,20 @@ https://app.asana.com/0/<project>/<task>            (legacy)
 <task gid>                                          (bare id)
 ```
 
+## Where it fires automatically
+
+Once `/connect-asana` has run, nothing else is manual (issue #126):
+
+| Trigger | Call | Effect |
+|---|---|---|
+| `/publish-tickets`, `/start-milestone`, `/start-all` — right after issues are published | `sync <module> --create --issues -` | module + ticket subtasks created; names pick up `#<issue>` |
+| `deliver-ticket.mjs` — right after the tracker issue closes | `complete <ticket-id> --create` | that ticket's subtask completed |
+| `/verify-delivery` | `status <module>` | drift reported as its own line, never as a DoD failure |
+
+The deliver step uses the **same landed-merge precondition** as the tracker close: an unlanded merge completes nothing, because a completed subtask would report delivery that did not happen. Every trigger is a true no-op without `.claude/asana.json` — the deliver step does not even spawn a process, so an unconnected repo pays nothing.
+
 ## Not implemented
 
-- **No pipeline wiring yet** — `/start-all`, `/start-milestone`, `deliver-ticket.mjs`, and `/verify-delivery` do not call this script. Follow-up to issue #124.
 - **No `mode: "project"`** hierarchy (see above).
 - **No Asana → repo direction.** Editing a subtask in Asana changes nothing here; the ticket file stays the source of truth, as pattern issue #53 requires.
 - **No comments, assignees, due dates, or custom fields.** An Asana custom field holding the issue URL would be filterable in Asana reporting and is the obvious next step, but it needs workspace-admin rights to create.
