@@ -67,8 +67,12 @@ if (joined.startsWith('issue list')) {
     const perPage = Number(flag('--per-page') || 30)
     const page = process.env.FAKE_GLAB_IGNORE_PAGE === '1' ? 1 : Number(flag('--page') || 1)
     const start = (page - 1) * perPage
-    process.stdout.write(JSON.stringify(all.slice(start, start + perPage)))
-    process.exit(0)
+    // Exit from the write CALLBACK, never straight after the write. Node's stdout to a
+    // pipe is async on POSIX and sync on Windows, so `write(); process.exit(0)` truncates
+    // a multi-MB payload on Linux while looking perfect on Windows — P18 was green locally
+    // and red on Linux CI for exactly this. A truncated page would then reach the script
+    // as malformed JSON, i.e. the fake would be manufacturing the failure it is testing for.
+    process.stdout.write(JSON.stringify(all.slice(start, start + perPage)), () => process.exit(0))
   }
   if (args.includes('--output')) { console.error('unknown flag: --output'); process.exit(1) }
   process.stdout.write(process.env.FAKE_GLAB_LIST || '')
