@@ -113,6 +113,31 @@ export async function run() {
     check(S, `command ${cmd} has description`, fmField(readFileSync(path, 'utf8'), 'description').length > 0)
   }
 
+  // issue #137: the pipeline authenticates as the token's OWNER, so the forge shows a
+  // human as author and merger. Two invariants follow, both mechanical because prose has
+  // already failed at one of them.
+  {
+    const deliver = readFileSync(p('.claude/scripts/deliver-ticket.mjs'), 'utf8')
+    // 1. The AI banner is added unconditionally, not per-body-path. Before the fix it
+    //    existed only on the least-used path, and as an unrendered HTML comment on another.
+    check(S, 'deliver-ticket defines an AI attribution banner', /aiMarker/.test(deliver))
+    const resolve = (deliver.match(/const resolvePrBody = \(\) => \{[\s\S]*?\n\}/) || [])[0] || ''
+    check(S, 'resolvePrBody was found to check', resolve.length > 40)
+    const returns = resolve.match(/return [^\n]+/g) || []
+    check(S, 'every resolvePrBody return path carries the AI banner',
+      returns.length >= 3 && returns.every((r) => r.includes('aiMarker()')), returns.join(' | ').slice(0, 200))
+
+    // 2. No script may read, store, or log a forge token. The user installs it into the
+    //    CLI; the scripts only ever ask whether the CLI is authenticated.
+    for (const f of ['publish-tickets.mjs', 'deliver-ticket.mjs']) {
+      const text = readFileSync(p('.claude/scripts/' + f), 'utf8')
+      const code = text.split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l)).join('\n')
+      check(S, `${f} never reads a forge token from the environment`,
+        !/process\.env\.(GITLAB|GH|GITHUB)_(TOKEN|ACCESS_TOKEN)/.test(code))
+      check(S, `${f} contains no token literal`, !/glpat-[A-Za-z0-9]/.test(code) && !/ghp_[A-Za-z0-9]/.test(code))
+    }
+  }
+
   // wiring parses and points at real things
   if (existsSync(p('.claude/settings.json'))) {
     let settings = null
