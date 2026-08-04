@@ -243,14 +243,32 @@ const ensureCloses = (text) => {
 // semantic sections — Type/Changes/Constraint-check/Evidence — issue #58) wins; else the
 // repo's own template as a skeleton (with Closes #N ensured); else the hardcoded fallback.
 // deliver-ticket stays deterministic: it only selects/assembles, never judges the diff.
+// AI attribution, prepended UNCONDITIONALLY to every body path (issue #137).
+//
+// The pipeline authenticates as whoever owns the PAT that `glab`/`gh` is logged in with,
+// so the forge shows a HUMAN as author and merger. That is the intended model — the AI
+// acts as the user — but it means nothing on the MR reveals the change is machine-made
+// unless the body says so. It previously did not: the `--body-file` path (the normal
+// autonomous route, #58) carried no marker at all, and the repo-template path carried only
+// an HTML comment, which GitLab does not render. Both are the paths adopted repos take.
+//
+// Rendered-visible and content-bearing on purpose: a reviewer must be able to tell what
+// produced this and why the author field looks human, without reading page source.
+const aiMarker = () =>
+  `> 🤖 **Automated delivery — this change was written and merged by AI.**\n` +
+  `> Produced by the three-agent Architect → Builder → Reviewer pipeline for ticket \`${ID}\`, ` +
+  `cleared by an independent reviewer in a fresh context, and merged by \`deliver-ticket.mjs\` (no human wrote or merged it).\n` +
+  `> It runs under the account whose Personal Access Token authenticated the forge CLI, so **the author and merger shown above are that token's owner, not the code's author.**\n` +
+  `> Plan: \`docs/plans/${ID}.md\` · Reviewer verdict: **CLEAR**, posted as a comment below.\n\n`
+
 const resolvePrBody = () => {
-  if (BODY_FILE && existsSync(BODY_FILE)) return readFileSync(BODY_FILE, 'utf8')
+  if (BODY_FILE && existsSync(BODY_FILE)) return aiMarker() + readFileSync(BODY_FILE, 'utf8')
   const tpl = findMrTemplate()
   if (tpl) {
     note(`MR/PR body from repo template ${tpl.path}`)
-    return `<!-- Auto-delivered by the three-agent pipeline · plan docs/plans/${ID}.md · Reviewer verdict: CLEAR -->\n\n` + ensureCloses(tpl.text)
+    return aiMarker() + ensureCloses(tpl.text)
   }
-  return buildBody()
+  return aiMarker() + buildBody()
 }
 
 // find an existing PR/MR for the branch; returns { number, url } or null

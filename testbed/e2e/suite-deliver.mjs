@@ -391,6 +391,21 @@ export async function run() {
     }
   }
 
+
+// AI attribution must be present on EVERY body path (issue #137). Before the fix the
+// --body-file path (the normal autonomous route) had no marker at all, and the repo-template
+// path had only an HTML comment, which GitLab does not render — and those are exactly the
+// two paths adopted repos take. Asserted per path, so a fix covering one cannot pass.
+// Content-bearing, not a sentinel: an empty marker must not satisfy it.
+const assertAiMarker = (label, body) => {
+  check(S, `${label} body carries a rendered-visible AI banner (not an HTML comment)`,
+    /^>.*Automated delivery/m.test(body) && !/^<!--[^>]*Auto-delivered/m.test(body), body.slice(0, 160))
+  check(S, `${label} banner says the change was written and merged by AI`,
+    /written and merged by AI/i.test(body))
+  check(S, `${label} banner explains the author shown is the token owner`,
+    /token'?s? owner|Personal Access Token/i.test(body))
+}
+
   // P12: PR/MR body resolution (issue #58) — --body-file > repo template > hardcoded fallback
   // P12a: a pre-composed --body-file is used verbatim as the PR body
   {
@@ -400,7 +415,9 @@ export async function run() {
       const bf = join(root, 'mybody.md'); writeFileSync(bf, '## Custom\nSENTINEL_BODYFILE agent-composed.\nCloses #7\n')
       const { r } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--body-file', bf], { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_BODY_LOG: log })
       eq(S, 'P12a exit 0', r.status, 0)
-      check(S, 'P12a --body-file used verbatim as the PR body', existsSync(log) && /SENTINEL_BODYFILE/.test(readFileSync(log, 'utf8')), existsSync(log) ? readFileSync(log, 'utf8').slice(0, 200) : 'no log')
+      const bodyA = existsSync(log) ? readFileSync(log, 'utf8') : ''
+      check(S, 'P12a --body-file content preserved in the PR body', /SENTINEL_BODYFILE/.test(bodyA), bodyA.slice(0, 200))
+      assertAiMarker('P12a', bodyA)
     } finally { cleanup(root) }
   }
 
@@ -418,6 +435,7 @@ export async function run() {
       const body = existsSync(log) ? readFileSync(log, 'utf8') : ''
       check(S, 'P12b PR body uses the repo template', /SENTINEL_TEMPLATE/.test(body), body.slice(0, 200))
       check(S, 'P12b Closes #7 ensured (under Related)', /Closes #7/.test(body))
+      assertAiMarker('P12b', body)
     } finally { cleanup(root) }
   }
 
@@ -429,6 +447,7 @@ export async function run() {
       deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'], { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_BODY_LOG: log })
       const body = existsSync(log) ? readFileSync(log, 'utf8') : ''
       check(S, 'P12c hardcoded fallback body when no template/body-file', /## Summary/.test(body) && /Pipeline evidence/.test(body), body.slice(0, 200))
+      assertAiMarker('P12c', body)
     } finally { cleanup(root) }
   }
 

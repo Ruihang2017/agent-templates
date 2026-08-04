@@ -16,6 +16,54 @@ From a checkout of the catalog: `node scripts/adopt.mjs three-agent-architect-bu
 6. Ensure the docs layout the pipeline assumes exists: `docs/PRD.md`, `docs/prd/<module>/README.md` (the sub-PRD — `/start-milestone` hard-requires it), `docs/prd/<module>/tickets/` (author tickets from `templates/ticket.template.md`), `docs/adr/`, and an empty `docs/plans/`.
 7. Check the pattern entry's expiry (README metadata table). If expired, re-verify the model/effort table against current official docs before adopting — do not copy an expired recommendation into a new project.
 
+## Tracker CLI + token setup
+
+Verified against **glab 1.108.0** and current GitLab docs on **2026-08-04**. Re-verify before copying into a new project.
+
+Every GitLab operation in this scaffold goes through **`glab`** — issues, MRs, comments, merges. There is no raw API call anywhere in it. That is deliberate: one authenticated surface, one place to audit, and it is what the pipeline's `permissions.allow` rules are written against.
+
+### The rule about the token
+
+**You install the token into the CLI yourself. It never goes to the agent.** Do not paste a Personal Access Token into a Claude Code session, a ticket, a command argument, or a config file. The scripts only ever run `glab auth status` — nothing in this scaffold reads, stores, prompts for, or logs a token, and nothing should be changed to.
+
+A GitLab PAT acts with your full permissions, so the pipeline runs **as you**. See [Attribution](#attribution) for what that means on the MR.
+
+### Install
+
+`glab` ships for Windows, macOS, and Linux — see the [GitLab CLI docs](https://docs.gitlab.com/cli/) for the current per-platform commands (winget/scoop/choco, Homebrew, or the distro packages and release binaries). Node ≥ 18 and `git` must also be on PATH.
+
+### Create the token
+
+GitLab → **Settings → Access tokens**. Scope:
+
+| Scope | Needed? |
+|---|---|
+| **`api`** | **Yes — this one alone is enough.** "Complete read and write access to the API", which covers issues and merge requests |
+| `write_repository` | **Only if you push over HTTPS.** An SSH remote does not need it |
+| everything else | no |
+
+**Expiry defaults to 365 days** and the token dies at **midnight UTC** on that date. Put the date in your calendar: an expired token does not fail loudly — it breaks the unattended nightly sweep on the one path nobody is watching. That is this catalog's most-repeated failure shape (README §4).
+
+### Authenticate
+
+```
+glab auth login --stdin < token.txt     # then delete token.txt
+```
+
+Read from stdin, **not** `--token glpat-…`: a token on the command line lands in your shell history and is visible in the process list to anything that can read `/proc` or run `Get-Process`. Alternatives: `--use-keyring` to store it in the OS keyring, or the `GITLAB_TOKEN` environment variable (`GITLAB_ACCESS_TOKEN` and `OAUTH_TOKEN` also work).
+
+Self-managed instance: add `--hostname gitlab.yourcompany.com`.
+
+Verify with `glab auth status`, then `glab issue list` in the target repo — if that returns, the pipeline has everything it needs.
+
+**Whatever runs the pipeline needs its own authenticated environment**, including a scheduled `/nightly-issues` run, which does not inherit your interactive shell.
+
+GitHub is the same shape: `gh auth login`, and the pipeline only checks `gh auth status`.
+
+### Attribution
+
+Because the pipeline authenticates as the token's owner, GitLab shows **you** as the author and merger of every pipeline MR. So `deliver-ticket.mjs` prepends a rendered-visible banner to **every** MR/PR body stating that the change was written and merged by AI, that an independent reviewer cleared it, and that the account shown is the token owner rather than the code's author. It is added on all three body paths — a pre-composed `--body-file`, your repo's MR template, and the built-in fallback — so it cannot go missing on the path your repo happens to take (catalog issue #137).
+
 ## Usage modes
 
 - **Mode A — one orchestrator session (default):** run `/plan-ticket` → `/build-ticket` → `/review-ticket` → `/verify-delivery` from a single main session. Each stage executes in its own subagent, so stage contexts stay isolated. The orchestrator passes only artifacts between stages — ticket path, plan path, diff ref — never transcripts or agent self-assessments, and it never does stage work itself (see "Orchestrator discipline" in `claude-md-snippet.md`; role leakage is a recorded failure mode).

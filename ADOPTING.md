@@ -24,7 +24,7 @@ Idempotent (re-runs skip what exists; `--force` overwrites). It installs the sca
 
 ## 2. New project from a bare PRD.md — end to end
 
-Preconditions: git repo + remote, authenticated tracker CLI (`gh auth login` / `glab auth login`), Node ≥ 18, Claude Code.
+Preconditions: git repo + remote, Node ≥ 18, Claude Code, and an **authenticated tracker CLI**. For GitLab that means `glab` with a Personal Access Token carrying the **`api`** scope, installed via `glab auth login --stdin < token.txt` — full walkthrough, including why not `--token` on the command line and why the 365-day expiry matters for the nightly sweep, in the pattern's [INSTALL.md § Tracker CLI + token setup](patterns/three-agent-architect-builder-reviewer/scaffold/INSTALL.md#tracker-cli--token-setup). **You install the token into the CLI yourself; it never goes to the agent.** The pipeline then acts as you on the forge, and every MR it opens carries a visible banner saying the change was written and merged by AI.
 
 1. `git init`, create the remote (e.g. `gh repo create`), commit `PRD.md`.
 2. Run `adopt.mjs` (above) — then commit the scaffolding.
