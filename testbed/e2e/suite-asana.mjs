@@ -16,9 +16,9 @@
 //   count AND on its POST count, so a script that re-created and then deduped in its own
 //   summary could not pass.
 
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -26,6 +26,10 @@ import { check, eq } from './lib.mjs'
 
 const S = 'asana'
 const SCRIPT = fileURLToPath(new URL('../../integrations/asana/.claude/scripts/asana-sync.mjs', import.meta.url))
+// The deliver->Asana wiring (issue #126) is exercised HERE rather than in suite-deliver,
+// because that suite is spawnSync-based and would deadlock against an in-process fake.
+const DELIVER = fileURLToPath(new URL('../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/deliver-ticket.mjs', import.meta.url))
+const FAKE_GH = fileURLToPath(new URL('./fake-gh.mjs', import.meta.url))
 
 const TOKEN = 'fake-pat-do-not-use'
 const WORKSPACE = '1200000000000001'
@@ -193,6 +197,98 @@ function sync(cwd, args, { base, token = TOKEN, env = {}, input = '' } = {}) {
 }
 
 const MOD = 'docs/prd/01-foundation'
+
+// ---------------------------------------------------------------------------
+// deliver-ticket wiring harness (issue #126)
+// ---------------------------------------------------------------------------
+
+const git = (cwd, args) => execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' })
+
+// A deliverable repo that ALSO carries the Asana integration installed, mirroring what
+// adopt.mjs produces. `config: false` models the overwhelmingly common case: a repo that
+// never connected Asana, which must pay nothing.
+// `conflict: true` makes the merge FAIL while still reaching deliver's step 4. That
+// distinction is load-bearing: pointing at a nonexistent branch aborts far earlier, so it
+// exercises nothing about the mirror's landed-gate (W3 was vacuous that way at first).
+function makeDeliverRepo({ config = true, conflict = false } = {}) {
+  const root = mkdtempSync(join(tmpdir(), 'e2e-asana-deliver-'))
+  const repo = join(root, 'repo')
+  mkdirSync(repo)
+  git(repo, ['init', '-q', '-b', 'main'])
+  git(repo, ['config', 'user.email', 'e2e@example.com'])
+  git(repo, ['config', 'user.name', 'E2E'])
+  git(repo, ['config', 'core.autocrlf', 'false'])
+  writeFileSync(join(repo, 'README.md'), 'base\n')
+  mkdirSync(join(repo, 'docs', 'plans'), { recursive: true })
+  writeFileSync(join(repo, 'docs', 'plans', 'FND-1.md'), 'plan\n')
+  // the module tree, so `sync` has tickets and `status` has something to report
+  mkdirSync(join(repo, 'docs', 'prd', '01-foundation', 'tickets'), { recursive: true })
+  writeFileSync(join(repo, 'docs', 'prd', '01-foundation', 'README.md'), '# Foundation\n')
+  for (const [id, title] of [['FND-1', 'Bootstrap the schema'], ['FND-2', 'Wire the health check']]) {
+    writeFileSync(join(repo, 'docs', 'prd', '01-foundation', 'tickets', `${id}.md`),
+      `---\nid: ${id}\ntitle: ${title}\nmodule: 01-foundation\nblocked_by: []\n---\n\n# ${id}\n`)
+  }
+  // the integration as installed by adopt
+  mkdirSync(join(repo, '.claude', 'scripts'), { recursive: true })
+  cpSync(SCRIPT, join(repo, '.claude', 'scripts', 'asana-sync.mjs'))
+  if (config) {
+    writeFileSync(join(repo, '.claude', 'asana.json'), JSON.stringify({
+      mode: 'task', repoTask: REPO_TASK, workspace: WORKSPACE, addTicketsToProject: null,
+    }, null, 2) + '\n')
+  }
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-q', '-m', 'base'])
+  const origin = join(root, 'origin.git')
+  execFileSync('git', ['init', '-q', '--bare', origin], { encoding: 'utf8' })
+  git(repo, ['remote', 'add', 'origin', origin])
+  git(repo, ['push', '-q', '-u', 'origin', 'main'])
+  git(repo, ['checkout', '-q', '-b', 'ticket/FND-1'])
+  writeFileSync(join(repo, 'feature.txt'), 'feature\n')
+  git(repo, ['add', '-A'])
+  git(repo, ['commit', '-q', '-m', '[FND-1] feature'])
+  git(repo, ['checkout', '-q', 'main'])
+  if (conflict) {
+    // same file, different content, on main -> the --no-ff merge cannot resolve
+    writeFileSync(join(repo, 'feature.txt'), 'conflicting content on main\n')
+    git(repo, ['add', '-A'])
+    git(repo, ['commit', '-q', '-m', 'conflicting change on main'])
+    git(repo, ['push', '-q', 'origin', 'main'])
+  }
+  return { root, repo }
+}
+
+function deliver(repo, args, { base, env = {} } = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [DELIVER, ...args], {
+      cwd: repo,
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        GH_BIN: `node ${FAKE_GH}`,
+        FAKE_GH_CLOSED_STATE: '1',
+        ASANA_API_BASE: base || '',
+        ASANA_TOKEN: TOKEN,
+        ASANA_MAX_RETRY_SLEEP_MS: '10',
+        ...env,
+      },
+    })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (c) => (stdout += c))
+    child.stderr.on('data', (c) => (stderr += c))
+    child.stdin.end('')
+    const killer = setTimeout(() => child.kill('SIGKILL'), 40000)
+    child.on('close', (status) => {
+      clearTimeout(killer)
+      const line = stdout.split('\n').reverse().find((l) => l.startsWith('DELIVER-SUMMARY-JSON: '))
+      let sum = null
+      try { sum = line ? JSON.parse(line.slice('DELIVER-SUMMARY-JSON: '.length)) : null } catch {}
+      resolve({ status, stdout, stderr, sum })
+    })
+  })
+}
+
+const DELIVER_ARGS = ['--id', 'FND-1', '--branch', 'ticket/FND-1', '--issue', '7', '--delivery', 'direct']
 
 export async function run() {
   // ---- exit-code contract: the ONLY exit 1 is bad invocation -------------
@@ -482,6 +578,98 @@ export async function run() {
 
       const none = await sync(root, ['status', 'docs/prd/99-absent'], { base: fake.base })
       check(S, 'A19 status on an unsynced module reports module-subtask-missing', none.codes.includes('module-subtask-missing'))
+    } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
+  }
+
+  // ---- deliver -> Asana wiring (issue #126) ----------------------------
+  //
+  // W2 is the one that matters: dodPassed must be BIT-IDENTICAL with Asana healthy and
+  // with Asana returning 500. Comparing the two runs is what makes "Asana is not in the
+  // DoD" a tested property instead of a promise in a comment.
+  {
+    const fake = await startFake()
+    const { root, repo } = makeDeliverRepo()
+    try {
+      await sync(repo, ['sync', MOD, '--create'], { base: fake.base })
+      check(S, 'W1 setup: the ticket subtask starts incomplete', fake.byKey('FND-1')[0].completed === false)
+
+      const d = await deliver(repo, DELIVER_ARGS, { base: fake.base })
+      eq(S, 'W1 delivery exits 0', d.status, 0)
+      check(S, 'W1 delivery merged and closed the issue', d.sum.merged === true && d.sum.issueClosed === true)
+      check(S, 'W1 dodPassed', d.sum.dodPassed === true)
+      check(S, 'W1 the Asana subtask was completed by the deliver step', fake.byKey('FND-1')[0].completed === true)
+      check(S, 'W1 the sibling ticket was NOT completed', fake.byKey('FND-2')[0].completed === false)
+      check(S, 'W1 the mirror outcome is reported in the summary', d.sum.asana && d.sum.asana.ok === true)
+      check(S, 'W1 no Asana note polluted a clean delivery', !/Asana mirror:/.test(d.sum.notes || ''))
+    } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
+  }
+  {
+    // Same delivery, Asana broken. dodPassed must not move.
+    const healthy = await startFake()
+    const a = makeDeliverRepo()
+    let dodHealthy = null
+    try {
+      await sync(a.repo, ['sync', MOD, '--create'], { base: healthy.base })
+      dodHealthy = (await deliver(a.repo, DELIVER_ARGS, { base: healthy.base })).sum
+    } finally { await healthy.stop(); rmSync(a.root, { recursive: true, force: true }) }
+
+    const broken = await startFake({ mode: 'fail500' })
+    const b = makeDeliverRepo()
+    try {
+      const d = await deliver(b.repo, DELIVER_ARGS, { base: broken.base })
+      eq(S, 'W2 delivery still exits 0 with Asana returning 500', d.status, 0)
+      check(S, 'W2 the ticket is still delivered', d.sum.merged === true && d.sum.issueClosed === true)
+      eq(S, 'W2 dodPassed is IDENTICAL to the Asana-healthy run (mirror is never a gate)',
+        d.sum.dodPassed, dodHealthy.dodPassed)
+      check(S, 'W2 dodPassed is actually true in both, so the comparison is not two falses',
+        dodHealthy.dodPassed === true)
+      check(S, 'W2 the Asana failure is reported, not swallowed', d.sum.asana && d.sum.asana.ok === false)
+      check(S, 'W2 the failure reaches notes so escalation carries it', /Asana mirror:/.test(d.sum.notes || ''))
+    } finally { await broken.stop(); rmSync(b.root, { recursive: true, force: true }) }
+  }
+  {
+    // Not delivered must not complete the subtask — the same rule closeIssue follows,
+    // for the same reason: a completed subtask would report delivery that never happened.
+    //
+    // A CONFLICTING merge, not a missing branch: the run must actually reach step 4 with
+    // landed=false, or this asserts nothing about the gate. Verified by deleting the gate
+    // and watching W3 fail.
+    const fake = await startFake()
+    const { root, repo } = makeDeliverRepo({ conflict: true })
+    try {
+      await sync(repo, ['sync', MOD, '--create'], { base: fake.base })
+      const d = await deliver(repo, DELIVER_ARGS, { base: fake.base })
+      check(S, 'W3 the conflicting merge did not land', d.sum && d.sum.merged === false)
+      check(S, 'W3 the run reached the bookkeeping stage (so the gate was exercised)',
+        d.sum !== null && /skipping tracker close/.test(d.sum.notes || ''))
+      check(S, 'W3 an unlanded merge leaves the Asana subtask INCOMPLETE', fake.byKey('FND-1')[0].completed === false)
+      check(S, 'W3 dodPassed is false, and not because of Asana', d.sum.dodPassed === false)
+    } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
+  }
+  {
+    // The common case: not connected. Must cost nothing at all.
+    const fake = await startFake()
+    const { root, repo } = makeDeliverRepo({ config: false })
+    try {
+      const before = fake.counts.total
+      const d = await deliver(repo, DELIVER_ARGS, { base: fake.base })
+      eq(S, 'W4 delivery exits 0 without an Asana config', d.status, 0)
+      check(S, 'W4 the ticket is delivered normally', d.sum.dodPassed === true)
+      eq(S, 'W4 an unconfigured repo makes ZERO Asana requests', fake.counts.total, before)
+      check(S, 'W4 summary reports asana:null, not a fabricated failure', d.sum.asana === null)
+      check(S, 'W4 no Asana note was added', !/[Aa]sana/.test(d.sum.notes || ''))
+    } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
+  }
+  {
+    // Configured, but the ticket was never synced: report it, do not invent success.
+    const fake = await startFake()
+    const { root, repo } = makeDeliverRepo()
+    try {
+      const d = await deliver(repo, DELIVER_ARGS, { base: fake.base })
+      check(S, 'W5 delivery still succeeds when the subtask was never created', d.sum.dodPassed === true)
+      check(S, 'W5 the missing subtask is reported', d.sum.asana && d.sum.asana.ok === false &&
+        d.sum.asana.errors.some((e) => e.code === 'ticket-subtask-missing'))
+      check(S, 'W5 it names the repair in notes', /asana-sync/.test(d.sum.notes || ''))
     } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
   }
 
