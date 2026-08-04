@@ -30,6 +30,7 @@ Preconditions: git repo + remote, Node ≥ 18, Claude Code, and an **authenticat
 2. Run `adopt.mjs` (above) — then commit the scaffolding.
 3. Review `CLAUDE.md`: add your project facts and non-negotiables above the pipeline section; keep **Operating mode: `supervised`** for now. Fill the **Constraint check** section of `.github/PULL_REQUEST_TEMPLATE.md` (or the GitLab MR template) from those non-negotiables.
 4. In Claude Code, in the project: **`/breakdown-prd`** — the Architect decomposes `docs/PRD.md` into `docs/prd/breakdown-plan.md` + sub-PRDs + template-compliant tickets (disjoint file-scopes, dependency DAG), then stops. (It takes an optional PRD path — that is how later phases are added; see step 9.)
+4b. Optional, *after* you have read the breakdown: **`/publish-tickets docs/prd/00-<module>`** creates the tracker issues (and Asana subtasks, if connected) and stops, so the board exists before any work starts — useful for sprint planning or handing tickets to people. It authorizes issue creation but is **not** Gate 1 sign-off to build; step 5 still is.
 5. **Gate 1 — your product judgment moment.** Review the breakdown: module boundaries, non-goals, the DAG, open questions. Edit/ask until right. Then sign off by running **`/start-milestone docs/prd/00-<module> supervised`** — tickets publish as tracker issues and the pipeline runs the first ticket to a CLEAR verdict, then stops for your merge. Re-run to continue (closed issues are skipped automatically).
 6. **Graduate**: when the supervised runs hold, flip `CLAUDE.md` to `Operating mode: autonomous` — from then on, one `/start-milestone` runs the whole module: plan → build → fresh-context review (bounce-capped) → merge on CLEAR → issue closed → Definition-of-Done verified, with no per-ticket approvals.
 7. **Gate 2**: when that PRD's tasks are done, you smoke-test the result. That is your only test duty — the agents own unit/integration/E2E throughout.
@@ -53,7 +54,7 @@ git diff
 
 
 - `CLAUDE.md` gets the snippet **appended**: read the merged result once and resolve contradictions with your existing rules (the pipeline rules assume no agent judges its own work).
-- An existing `.claude/settings.json` is kept; merge the scaffold's `hooks.PreToolUse` (write guard) and `permissions.allow` entries by hand.
+- An existing `.claude/settings.json` is kept; merge the scaffold's `hooks.PreToolUse` (write guard) and `permissions.allow` entries by hand. Integration rules are the exception — adopt merges those additively (e.g. the Asana script's allow entry), because an un-allowlisted deterministic script prompts on every call and would break autonomous and headless runs.
 - Formalize `docs/PRD.md` for the area you will pipeline first — it can cover a single module; you do not need to spec the whole codebase to start.
 - Retrofit gradually: run one small module through `supervised` mode end to end before trusting `autonomous`. Your existing test suite becomes the Builder/Reviewer suite from day one.
 

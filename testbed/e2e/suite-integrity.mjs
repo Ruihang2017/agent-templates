@@ -35,6 +35,7 @@ const EXPECTED_FILES = [
   '.claude/commands/build-ticket.md',
   '.claude/commands/review-ticket.md',
   '.claude/commands/verify-delivery.md',
+  '.claude/commands/publish-tickets.md',
   '.claude/commands/start-milestone.md',
   '.claude/commands/start-all.md',
   '.claude/commands/nightly-issues.md',
@@ -58,10 +59,10 @@ const UNIVERSAL_TEMPLATES = [
 
 // model/effort pins must match pattern README §3 exactly
 const AGENT_PINS = {
-  'architect.md': { model: 'claude-opus-5', effort: 'xhigh' },
-  'builder.md': { model: 'claude-opus-5', effort: 'high' },
-  'reviewer.md': { model: 'claude-sonnet-5', effort: 'xhigh' },
-  'triage.md': { model: 'claude-sonnet-5', effort: 'xhigh' },
+  'architect.md': { model: 'claude-opus-5', effort: 'high' },
+  'builder.md': { model: 'claude-opus-5', effort: 'medium' },
+  'reviewer.md': { model: 'claude-sonnet-5', effort: 'high' },
+  'triage.md': { model: 'claude-sonnet-5', effort: 'high' },
 }
 
 const fm = (text) => (text.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
@@ -106,7 +107,7 @@ export async function run() {
     }
   }
 
-  for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'start-milestone', 'start-all', 'nightly-issues', 'breakdown-prd']) {
+  for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'publish-tickets', 'start-milestone', 'start-all', 'nightly-issues', 'breakdown-prd']) {
     const path = p(`.claude/commands/${cmd}.md`)
     if (!existsSync(path)) continue
     check(S, `command ${cmd} has description`, fmField(readFileSync(path, 'utf8'), 'description').length > 0)
@@ -155,6 +156,36 @@ export async function run() {
     check(S, 'an unmet gate is classified as gate, not protection', /return 'gate'/.test(deliver))
     check(S, 'the classifier fails CLOSED on an unrecognised refusal',
       /if \(protection\.test\(s\)\) return 'protection'\n\s*return 'gate'/.test(deliver))
+  }
+
+  // §7 provenance rows keep getting dropped in PR conflict resolutions — four times now:
+  // PR #114 (recorded in §7 itself), then #130, #132 and #137 in one batch, all restored
+  // by hand afterwards. The code and INSTALL.md survived every time; only the change log
+  // was lost, and §7 IS the traceability chain this repo runs on, so nothing went red.
+  //
+  // Cheap mechanical tripwire for the commonest shape: the metadata As-of date and the §3
+  // heading date both move whenever a recommendation changes, and CLAUDE.md requires a §7
+  // entry in the SAME commit. So a §7 row must exist bearing that date. This does not
+  // prove the row is the right one, but it does catch "the table moved and the log did not".
+  {
+    const readme = readFileSync(REPO_ROOT + SCAFFOLD.replace('scaffold/', 'README.md'), 'utf8')
+    const asOf = (readme.match(/\|\s*\*\*As-of date\*\*\s*\|\s*(\d{4}-\d{2}-\d{2})/) || [])[1] || ''
+    check(S, 'pattern README declares an As-of date', /^\d{4}-\d{2}-\d{2}$/.test(asOf))
+    if (asOf) {
+      check(S, `§7 has a provenance row dated ${asOf} (the As-of date)`,
+        new RegExp(`^\\|\\s*${asOf}\\s*\\|`, 'm').test(readme),
+        'a recommendation moved without a change-log entry — or a row was dropped in a merge')
+    }
+    const sec3 = (readme.match(/^## 3\. Model \+ effort assignment \(as of (\d{4}-\d{2}-\d{2})\)/m) || [])[1] || ''
+    check(S, '§3 heading carries an as-of date', /^\d{4}-\d{2}-\d{2}$/.test(sec3))
+    if (sec3) {
+      check(S, `§7 has a provenance row dated ${sec3} (the §3 as-of date)`,
+        new RegExp(`^\\|\\s*${sec3}\\s*\\|`, 'm').test(readme))
+    }
+    // Guard the guard: a date nothing uses must NOT match, or the checks above would pass
+    // on any README with a §7 table at all.
+    check(S, 'the provenance-date check discriminates (sentinel absent)',
+      !/^\|\s*1999-01-01\s*\|/m.test(readme))
   }
 
   // wiring parses and points at real things
@@ -287,6 +318,7 @@ export async function run() {
     '.claude/commands/breakdown-prd.md': SCAFFOLD + '.claude/commands/breakdown-prd.md',
     '.claude/commands/nightly-issues.md': SCAFFOLD + '.claude/commands/nightly-issues.md',
     '.claude/commands/verify-delivery.md': SCAFFOLD + '.claude/commands/verify-delivery.md',
+    '.claude/commands/publish-tickets.md': SCAFFOLD + '.claude/commands/publish-tickets.md',
     '.github/ISSUE_TEMPLATE/bug-report.md': 'templates/tracker/github/ISSUE_TEMPLATE/bug-report.md',
     '.github/ISSUE_TEMPLATE/task.md': 'templates/tracker/github/ISSUE_TEMPLATE/task.md',
     '.github/ISSUE_TEMPLATE/decision-record.md': 'templates/tracker/github/ISSUE_TEMPLATE/decision-record.md',
@@ -384,5 +416,32 @@ export async function run() {
       check(S, 'asana allow rule targets the installed script path',
         frag !== null && (frag.allow || []).some((r) => r.includes('.claude/scripts/asana-sync.mjs')))
     }
+
+    // issue #126: the wiring must not turn the mirror into a gate. Asserted mechanically
+    // because "don't add Asana to the DoD" is exactly the kind of rule prose forgets.
+    const deliver = readFileSync(p('.claude/scripts/deliver-ticket.mjs'), 'utf8')
+    // Bounded by the NEXT declaration, not by a blank line: the summary object legitimately
+    // carries `asana`, and swallowing it made this check fail on correct code.
+    const dod = (deliver.match(/const dodPassed =[\s\S]*?(?=\n\s*const summary)/) || [])[0] || ''
+    check(S, 'deliver-ticket dodPassed expression was found to check', dod.length > 20)
+    check(S, 'deliver-ticket dodPassed contains NO Asana term (mirror is never a gate)',
+      dod.length > 20 && !/asana/i.test(dod))
+    // ...and the mirror is actually wired, or the feature silently does nothing (#109 class).
+    check(S, 'deliver-ticket completes the Asana subtask after the issue closes',
+      /completeAsana\(\)/.test(deliver) && /asana-sync\.mjs/.test(deliver))
+    check(S, 'deliver-ticket gates the Asana mirror on the merge having landed',
+      /if \(landed\) completeAsana\(\)/.test(deliver))
+    check(S, 'deliver-ticket reports the mirror outcome in its summary', /asana,/.test(deliver))
+
+    // Every command that publishes issues must also mirror, and must be told not to stop.
+    for (const cmd of ['publish-tickets', 'start-milestone', 'start-all']) {
+      const text = readFileSync(p(`.claude/commands/${cmd}.md`), 'utf8')
+      check(S, `${cmd} mirrors to Asana after publishing`, /asana-sync\.mjs sync/.test(text))
+      check(S, `${cmd} skips the mirror when unconfigured`, /\.claude\/asana\.json/.test(text))
+      check(S, `${cmd} is told never to stop on an Asana failure`, /[Nn]ever stop/.test(text))
+    }
+    const vd = readFileSync(p('.claude/commands/verify-delivery.md'), 'utf8')
+    check(S, 'verify-delivery checks the mirror', /asana-sync\.mjs status/.test(vd))
+    check(S, 'verify-delivery states the mirror is not a DoD item', /not\*{0,2}\s*a Definition-of-Done item/.test(vd))
   }
 }

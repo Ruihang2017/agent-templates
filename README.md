@@ -44,7 +44,7 @@ git diff        # re-apply your customizations (esp. .claude/settings.json)
 
 | Pattern | Status | As of | Summary |
 |---|---|---|---|
-| [three-agent-architect-builder-reviewer](patterns/three-agent-architect-builder-reviewer/README.md) | trialed | 2026-07-30 | Architect plans → Builder implements → independent Reviewer (fresh context, different model tier) clears or bounces; `/start-milestone` runs a whole module autonomously |
+| [three-agent-architect-builder-reviewer](patterns/three-agent-architect-builder-reviewer/README.md) | trialed | 2026-08-04 | Architect plans → Builder implements → independent Reviewer (fresh context, different model tier) clears or bounces; `/start-milestone` runs a whole module autonomously |
 
 ## Commands (three-agent-architect-builder-reviewer)
 
@@ -55,6 +55,7 @@ Installed into your project by `adopt`; run them in Claude Code. Full list is ge
 | `/breakdown-prd` | `[prd-path] [focus notes]` | Decompose a PRD (default `docs/PRD.md`) into sub-PRDs + template-compliant tickets (pre-Gate-1 planning). Point it at a phase PRD to append work after Gate 2. |
 | `/start-milestone` | `<module dir> [supervised\|autonomous] [concurrency]` | Gate 1 for one module — publish its tickets as tracker issues, then run the milestone pipeline (parallel lanes when `concurrency > 1`). |
 | `/start-all` | `[supervised\|autonomous] [concurrency]` | Gate 1 for the **whole PRD** — compute the module DAG, publish every module, run all modules in dependency order. |
+| `/publish-tickets` | `<module dir> [--all]` | Publish only — create the tracker issues (and Asana subtasks if connected), then **stop**. For populating the board before any work starts. |
 | `/plan-ticket` | `<ticket-id>` | Architect stage on a ticket. |
 | `/build-ticket` | `<ticket-id>` | Builder stage on a planned ticket. |
 | `/review-ticket` | `<ticket-id> [ref]` | Reviewer stage on a built ticket (fresh context required). |

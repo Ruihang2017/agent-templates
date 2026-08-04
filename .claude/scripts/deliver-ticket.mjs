@@ -42,9 +42,18 @@
 // diff, verdict, and CLAUDE.md constraints) is used verbatim; else the repo template is the
 // skeleton (Closes #N ensured); else a hardcoded fallback. The script only assembles/selects.
 //
+// Asana mirror (catalog issue #126, optional): when `.claude/asana.json` exists, the
+// ticket's Asana subtask is completed right after the tracker issue closes — same
+// precondition, because a completed subtask on an unlanded merge would misreport
+// delivery exactly the way a closed issue would. It is a MIRROR, so it is strictly
+// fail-soft: the result lands in `asana` in the summary and in `notes`, and it is
+// deliberately absent from the `dodPassed` expression. An expired Asana token must
+// never fail a ticket that actually shipped. With no config the step makes no process
+// call at all — no latency, no notes.
+//
 // Last line of stdout is machine-readable for run-milestone:
 //   DELIVER-SUMMARY-JSON: {"id","branch","deliveryMode","merged","issueClosed",
-//     "dodPassed","awaitingMerge","prUrl","checks":{...},"notes"}
+//     "dodPassed","awaitingMerge","prUrl","checks":{...},"asana":{...}|null,"notes"}
 // Exit codes: 0 = definitive summary printed (flags may still be false);
 //             1 = bad invocation or unexpected internal error.
 
@@ -220,10 +229,15 @@ let deliveredTo = DEFAULT_BRANCH
 let prUrl = ''
 let deliveryMode = 'direct'
 let awaitingMerge = false
+// Asana mirror outcome, or null when the repo is not connected. Reported, never gating.
+let asana = null
 const notes = []
 const note = (line) => { notes.push(line); console.log('  (note) ' + line) }
 
 const finish = (code) => {
+  // DO NOT add an Asana term here. Asana is a reporting mirror (issue #126); making the
+  // Definition of Done depend on it would let a token expiry fail a delivered ticket.
+  // The E2E integrity suite asserts this expression stays Asana-free.
   const dodPassed = !awaitingMerge &&
     checks.planExists &&
     checks.merged &&
@@ -238,10 +252,42 @@ const finish = (code) => {
     // failure class this catalog keeps recording (#109, #115, #119, #127, #132).
     outcome: checks.merged ? 'delivered' : (checks.mergedToIntegration ? 'delivered-to-integration' : 'not-delivered'),
     deliveredTo, integrationBranch: INTEGRATION_BRANCH || null,
-    awaitingMerge, prUrl, checks, notes: notes.join('; '),
+    awaitingMerge, prUrl, checks, asana, notes: notes.join('; '),
   }
   console.log('DELIVER-SUMMARY-JSON: ' + JSON.stringify(summary))
   process.exit(code)
+}
+
+// Complete the ticket's Asana subtask (issue #126). No-op with no config — and it is a
+// true no-op: no child process, so a repo that never connected Asana pays nothing and
+// sees no notes. Everything here is advisory; nothing can change the DoD.
+const ASANA_CONFIG = join('.claude', 'asana.json')
+const ASANA_SCRIPT = join('.claude', 'scripts', 'asana-sync.mjs')
+const completeAsana = () => {
+  if (!existsSync(ASANA_CONFIG)) return
+  if (!existsSync(ASANA_SCRIPT)) {
+    asana = { ok: false, errors: [{ code: 'script-missing', message: `${ASANA_SCRIPT} not found — re-run adopt to reinstall the Asana integration` }] }
+    note(`Asana configured but ${ASANA_SCRIPT} is missing — subtask NOT completed`)
+    return
+  }
+  const r = spawnSync(process.execPath, [ASANA_SCRIPT, 'complete', ID, '--create'], { encoding: 'utf8' })
+  const line = String(r.stdout || '').split('\n').find((l) => l.startsWith('ASANA-SYNC-JSON: '))
+  try {
+    asana = line ? JSON.parse(line.slice('ASANA-SYNC-JSON: '.length)) : null
+  } catch { asana = null }
+  if (!asana) {
+    // The child is contractually supposed to exit 0 with a summary; if it did not, say so
+    // rather than reporting silence as success.
+    asana = { ok: false, errors: [{ code: 'no-summary', message: `asana-sync produced no summary line (exit ${r.status})` }] }
+  }
+  if (asana.ok) {
+    const it = (asana.items || [])[0]
+    console.log(`+ asana   subtask ${it && it.alreadyCompleted ? 'already complete' : 'completed'} for ${ID}`)
+  } else {
+    // Surfaced in notes so run-milestone's escalation path carries it. Fail-soft means
+    // do not block; it never means do not mention (issue #124).
+    for (const e of asana.errors || []) note(`Asana mirror: ${e.code} — ${e.message}`)
+  }
 }
 
 // close the tracker issue and verify the transition — never assume auto-close.
@@ -657,6 +703,12 @@ try {
   const landed = (checks.merged && (!checks.pushRequired || checks.pushed)) || checks.mergedToIntegration
   if (!landed) note('skipping tracker close — merge/push did not complete, ticket is NOT delivered')
   else closeIssue()
+
+  // 4b. mirror the completion into Asana (issue #126). Same `landed` precondition as the
+  // tracker close, for the same reason: a completed subtask on an unlanded merge reports
+  // delivery that did not happen. Fail-soft by construction — asana-sync.mjs exits 0 on
+  // every Asana problem, and even a crash of the child is only a note here.
+  if (landed) completeAsana()
 
   // 5. deterministic DoD inputs
   checks.planExists = existsSync(join('docs', 'plans', `${ID}.md`))

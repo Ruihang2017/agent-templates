@@ -11,6 +11,7 @@ Asana is a **reporting mirror of the pipeline, never a gate on it.**
 - **Token:** `ASANA_TOKEN` env var only. Never a command argument, never committed, never pasted into a session — an Asana PAT acts as the whole user. Whatever runs the pipeline needs it in *its own* environment, including a scheduled nightly sweep.
 - **Fail-soft contract:** exit `1` from `asana-sync.mjs` means it was invoked wrong. **Every Asana failure exits `0`** and is reported in the `ASANA-SYNC-JSON` line's `errors`. Asana is **not** part of the Definition of Done and must never be added to it — an expired token cannot be allowed to fail a delivered ticket. In exchange, any step that calls it **must relay `errors` into its escalations**: fail-soft means do not block, never do not mention.
 - Direction is one-way. Editing a subtask in Asana changes nothing here; the ticket file stays the source of truth.
+- **Where it fires automatically** once configured: `/publish-tickets`, `/start-milestone`, and `/start-all` create the module + ticket subtasks right after publishing issues; `deliver-ticket.mjs` completes a ticket's subtask right after its issue closes (same landed-merge precondition — an unlanded merge completes nothing); `/verify-delivery` reports mirror drift as a separate line, never as a DoD failure.
 
 Details, API reference, and the accepted cost of the subtask depth: the catalog's `integrations/asana/README.md`.
 <!-- asana-integration:end -->
