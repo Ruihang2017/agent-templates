@@ -23,9 +23,14 @@
 //   labels = module:<module>, size:<size>, agent:<agent> (each only if present)
 //
 // Idempotency: the existing-issue list is fetched ONCE per run (list endpoints are
-// strongly consistent, unlike per-ticket search) and matched client-side by the
-// "[<id>]" title prefix. In --create mode a failed fetch aborts BEFORE creating
-// anything. Note: the gh path lists up to 1000 issues; beyond that, split modules.
+// strongly consistent, unlike per-ticket search), PAGINATED IN FULL, sorted ascending,
+// and matched client-side by the "[<id>]" title prefix, resolving to the OLDEST match.
+// In --create mode a failed fetch aborts BEFORE creating anything, and so does a tracker
+// that already contains duplicates.
+//
+// Every truncation path throws instead of returning a short list (catalog issue #132):
+// a truncated list is indistinguishable from "these tickets were never published", and
+// acting on that difference created 43 duplicate issues on a 44-ticket repo in the field.
 //
 // Last line of stdout is machine-readable for /start-milestone:
 //   PUBLISH-SUMMARY-JSON: [{"id","path","title","issue","state"?,"drift"?,"error"?}]
@@ -75,7 +80,10 @@ if (!ticketsDirOk) {
   process.exit(1)
 }
 
-const run = (bin, args, opts = {}) => execFileSync(bin, args, { encoding: 'utf8', ...opts })
+// maxBuffer: execFileSync defaults to 1 MB. The pre-#132 code only ever read 30 issues,
+// which fit by luck; a real paginated fetch blows ENOBUFS, and that throw used to be
+// swallowed into the text fallback — so the buffer limit was itself a duplicate trigger.
+const run = (bin, args, opts = {}) => execFileSync(bin, args, { encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, ...opts })
 
 // GH_BIN / GLAB_BIN env overrides (precedent: fx-eye-tracking's GLAB_BIN) for
 // non-PATH binaries and test doubles. The value may include leading args, e.g.
@@ -118,38 +126,78 @@ if (!cliOk) {
 }
 
 // Fetch the existing-issue list ONCE; match "[<id>]" prefixes client-side.
-// Returns [{number, title, state, body}] or null when unavailable. `state`/`body` come
-// from the SAME list call — no extra round-trip per ticket — and are absent-tolerant:
-// an older CLI that omits them yields '' and simply disables drift detection rather
-// than reporting false drift on every ticket.
+// Returns [{number, title, state, body}] sorted ASCENDING by number, or null when
+// unavailable. `state`/`body` come from the SAME list call — no extra round-trip per
+// ticket.
+//
+// PAGINATION IS LOAD-BEARING (catalog issue #132, field report 2026-08-04). The GitLab
+// branch used to be a single `glab issue list --all --output json`. `--all` is a STATE
+// filter, not a pagination flag — verified against glab 1.108.0: `-P --per-page` defaults
+// to 30. So the dedup oracle saw 30 issues and everything beyond that read as "never
+// published" and was created again. Self-reinforcing: each duplicate pushed a real issue
+// further out of the window. On the reporting repo — 44 tickets, 44 issues — one
+// `--create` produced 43 duplicates with no warning.
+//
+// Everything below therefore fails LOUDLY instead of returning a short list. A truncated
+// list is indistinguishable from "these tickets were never published", and acting on that
+// difference is the whole bug.
 const normState = (s) => (String(s || '').toLowerCase().includes('close') ? 'closed' : String(s || '') ? 'open' : '')
+// Ascending by number so findExisting resolves to the OLDEST match. `gh issue list`
+// returns newest-first, so without this the gh branch silently tracked the NEWEST issue
+// for a ticket — which breaks every dedup rule here, all of which assume the original wins.
+const byNumberAsc = (list) => list.slice().sort((a, b) => Number(a.number) - Number(b.number))
+
+const PER_PAGE = 100
+const MAX_PAGES = 100 // 10k issues; a cap that THROWS, never truncates
+const GH_LIMIT = 2000
+
 const fetchExistingIssues = () => {
   if (!cliOk) return null
   try {
     if (PLATFORM === 'gh') {
-      const out = cli('gh', ['issue', 'list', '--state', 'all', '--limit', '1000', '--json', 'number,title,state,body'])
-      return JSON.parse(out).map((i) => ({ number: i.number, title: i.title, state: normState(i.state), body: i.body || '' }))
+      // gh's --limit auto-paginates, so one call suffices — but hitting the cap exactly
+      // is indistinguishable from "there were more", so refuse rather than dedupe against
+      // a possibly-truncated list.
+      const out = cli('gh', ['issue', 'list', '--state', 'all', '--limit', String(GH_LIMIT), '--json', 'number,title,state,body'])
+      const arr = JSON.parse(out)
+      if (arr.length >= GH_LIMIT) {
+        throw new Error(`gh returned ${arr.length} issues, the --limit cap — cannot tell whether more exist. Raise GH_LIMIT in this script.`)
+      }
+      return byNumberAsc(arr.map((i) => ({ number: i.number, title: i.title, state: normState(i.state), body: i.body || '' })))
     }
-    try {
-      const out = cli('glab', ['issue', 'list', '--all', '--output', 'json'])
-      return JSON.parse(out).map((i) => ({
-        number: i.iid ?? i.id,
-        title: i.title,
-        state: normState(i.state),
-        body: i.description || '',
-      }))
-    } catch {
-      // older glab without --output json: parse per LINE so the number always
-      // belongs to the line whose title matches (never "first #N in the blob").
-      // No state/body available here — drift detection degrades off, it does not lie.
-      const out = cli('glab', ['issue', 'list', '--all'])
-      return out
-        .split('\n')
-        .map((l) => l.match(/^#(\d+)\s+(.*)$/))
-        .filter(Boolean)
-        .map((m) => ({ number: Number(m[1]), title: m[2], state: '', body: '' }))
+
+    const all = []
+    const seen = new Set()
+    for (let page = 1; page <= MAX_PAGES; page++) {
+      const out = cli('glab', ['issue', 'list', '--all', '--output', 'json', '--per-page', String(PER_PAGE), '--page', String(page)])
+      const arr = JSON.parse(out)
+      if (!Array.isArray(arr)) throw new Error('glab issue list --output json did not return an array')
+      let fresh = 0
+      for (const i of arr) {
+        const number = i.iid ?? i.id
+        if (seen.has(number)) continue
+        seen.add(number)
+        fresh++
+        all.push({ number, title: i.title, state: normState(i.state), body: i.description || '' })
+      }
+      if (arr.length < PER_PAGE) break // short page = last page
+      // A FULL page that added nothing new means --page was not honoured and we are
+      // re-reading page 1. Looping would spin; returning would silently truncate. Both
+      // are the original bug, so throw.
+      if (fresh === 0) {
+        throw new Error(`glab returned a full page ${page} with no new issues — --page appears to be ignored, so the list cannot be trusted. Check \`glab --version\`.`)
+      }
+      if (page === MAX_PAGES) {
+        throw new Error(`more than ${MAX_PAGES * PER_PAGE} issues — raise MAX_PAGES in this script rather than deduping against a truncated list.`)
+      }
     }
-  } catch {
+    return byNumberAsc(all)
+  } catch (e) {
+    // No text-parsing fallback any more (issue #132). It inherited the same 30-item
+    // window and returned no state/body, so it could only ever degrade into duplicates
+    // while silently disabling drift detection — a liability wearing a safety net's
+    // clothes. A failed fetch says so and lets --create refuse.
+    console.error(`  (warn) could not fetch the existing-issue list: ${String(e && e.message ? e.message : e).split('\n')[0]}`)
     return null
   }
 }
@@ -160,6 +208,55 @@ if (CREATE && existingIssues === null) {
   process.exit(1)
 }
 
+// Pre-create guard (issue #132): refuse to run against a tracker that ALREADY has
+// duplicates, because dedup silently picks one and the run makes the mess worse.
+// State-aware, so a tracker that was already repaired still passes:
+//   1 issue                      -> ok
+//   oldest open, rest closed     -> ok  (duplicates were closed; the original still lives)
+//   all closed                   -> ok  (delivered)
+//   >=2 open                     -> FAIL (ambiguous; a human picks)
+//   oldest closed, a newer open  -> FAIL (dedup selects the closed one and orphans the open one)
+//   state not reported           -> FAIL closed; never guess
+const auditDuplicates = (issues) => {
+  const byId = new Map()
+  for (const i of issues) {
+    const m = String(i.title).match(/^\s*\[([^\]]+)\]/)
+    if (!m) continue
+    if (!byId.has(m[1])) byId.set(m[1], [])
+    byId.get(m[1]).push(i)
+  }
+  const bad = []
+  for (const [id, group] of byId) {
+    if (group.length < 2) continue
+    const sorted = group.slice().sort((a, b) => Number(a.number) - Number(b.number))
+    const nums = sorted.map((i) => '#' + i.number).join(', ')
+    if (sorted.some((i) => i.state === '')) {
+      bad.push(`${id}: ${group.length} issues (${nums}) and the tracker did not report state — cannot verify which is canonical`)
+      continue
+    }
+    const open = sorted.filter((i) => i.state === 'open')
+    if (open.length >= 2) {
+      bad.push(`${id}: ${open.length} OPEN issues (${open.map((i) => '#' + i.number).join(', ')}) — close all but the oldest`)
+      continue
+    }
+    if (open.length === 1 && open[0].number !== sorted[0].number) {
+      bad.push(`${id}: oldest #${sorted[0].number} is closed but #${open[0].number} is open — dedup would resolve to the closed one and orphan the open one`)
+    }
+  }
+  return bad
+}
+
+if (CREATE && existingIssues) {
+  const dupes = auditDuplicates(existingIssues)
+  if (dupes.length) {
+    console.error('x refusing to create: the tracker already has duplicate issues for these ticket ids.')
+    for (const d of dupes) console.error(`  - ${d}`)
+    console.error('  Resolve them in the tracker (keep the OLDEST, close the rest), then re-run. See catalog issue #132.')
+    console.log('PUBLISH-SUMMARY-JSON: ' + JSON.stringify([{ id: null, path: null, title: null, issue: null, error: 'duplicate-issues-present', detail: dupes }]))
+    process.exit(1)
+  }
+}
+
 // id -> issue number, seeded from existing issues' "[<id>]" title prefix and grown as we
 // create this run — so the dependency line resolves ticket ids to real issue #numbers.
 const idToNum = new Map()
@@ -167,6 +264,9 @@ for (const i of existingIssues || []) {
   const m = String(i.title).match(/^\[([^\]]+)\]/)
   if (m) idToNum.set(m[1], i.number)
 }
+// `existingIssues` is sorted ascending, so `.find()` below returns the OLDEST match —
+// the original. Every rule here depends on that: a repaired tracker keeps the oldest
+// open and closes the duplicates, so resolving to a newer one would track a closed issue.
 // Returns the issue RECORD ({number,title,state,body}), null (not found), or 'ambiguous'
 // (mentions of "[<id>]" exist but none is a clean title prefix — creating would risk a
 // duplicate, guessing would risk closing the wrong issue later, so the ticket is skipped

@@ -36,7 +36,19 @@ const logBody = (label, body) => {
 
 if (joined.startsWith('auth status')) process.exit(0)
 
-if (joined.startsWith('issue list')) { process.stdout.write(process.env.FAKE_GH_LIST || '[]'); process.exit(0) }
+// Real `gh issue list` returns NEWEST FIRST. The fake used to echo the fixture verbatim,
+// so a suite could only ever see the order it wrote — which is why the "resolves to the
+// oldest issue" invariant was false on the gh branch and untested (catalog issue #132).
+// Serving descending by default makes the fake faithful and pins the script's sort.
+// FAKE_GH_LIST_ORDER=asis keeps the fixture order for tests that need it.
+if (joined.startsWith('issue list')) {
+  const arr = JSON.parse(process.env.FAKE_GH_LIST || '[]')
+  const out = process.env.FAKE_GH_LIST_ORDER === 'asis'
+    ? arr
+    : arr.slice().sort((a, b) => Number(b.number) - Number(a.number))
+  process.stdout.write(JSON.stringify(out))
+  process.exit(0)
+}
 
 if (joined.startsWith('issue create')) {
   logBody('create', args.includes('--body-file') ? readFileSync(0, 'utf8') : '')

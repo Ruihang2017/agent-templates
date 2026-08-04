@@ -37,10 +37,55 @@ if (process.env.FAKE_GLAB_MR_API_DENIED === '1' && joined.startsWith('mr ')) {
   process.exit(1)
 }
 
+// `issue list`. Two modes, because until catalog issue #132 this fake only ever simulated
+// the OLD glab (no --output json) — so the JSON path that EVERY current install takes had
+// never been exercised by a single test, which is precisely how the pagination bug shipped.
+//
+//   FAKE_GLAB_ISSUES_JSON  JSON array of {iid,title,state,description} -> real --output
+//                          json path, paginated with --per-page/--page
+//   FAKE_GLAB_ISSUES_FILE  same, read from a FILE. Required for fixtures over ~128 KB:
+//                          Linux caps a single env string at MAX_ARG_STRLEN (128 KB), so
+//                          a multi-MB fixture in the env fails to spawn at all — which is
+//                          the same "bulk data through a process boundary" limit the
+//                          script itself hits on argv (catalog issue #134)
+//   FAKE_GLAB_LIST         legacy text mode; --output json exits 1 (old CLI simulation)
+//   FAKE_GLAB_IGNORE_PAGE  '1' -> honour --per-page but IGNORE --page, always serving
+//                          page 1. Models a CLI that silently does not paginate; the
+//                          script must detect it rather than truncate.
+// Exit from the write CALLBACK, never straight after the write. Node's stdout to a pipe
+// is async on POSIX and sync on Windows, so `write(big); process.exit(0)` truncates a
+// multi-MB payload on Linux while looking perfect on Windows — P18 was green locally and
+// red on Linux CI for exactly that. A truncated page reaches the script as malformed
+// JSON, i.e. the fake would manufacture the very failure P18 exists to rule out.
+//
+// The branches below are if/ELSE rather than early-exit: write() with a callback returns
+// IMMEDIATELY, and this is an ES module so a top-level `return` is a syntax error. Falling
+// through to the legacy `--output` branch made it exit 1 before the callback ever ran.
+// Because the exit is deferred to that callback, execution continues past this block to
+// the bottom-of-file catch-all — which would exit(1) first. `handled` guards it.
+let handled = false
+const writeOut = (s) => { handled = true; process.stdout.write(s, () => process.exit(0)) }
+
 if (joined.startsWith('issue list')) {
-  if (args.includes('--output')) { console.error('unknown flag: --output'); process.exit(1) }
-  process.stdout.write(process.env.FAKE_GLAB_LIST || '')
-  process.exit(0)
+  const raw = process.env.FAKE_GLAB_ISSUES_FILE
+    ? readFileSync(process.env.FAKE_GLAB_ISSUES_FILE, 'utf8')
+    : process.env.FAKE_GLAB_ISSUES_JSON
+  if (raw && args.includes('--output')) {
+    const all = JSON.parse(raw)
+    const perPage = Number(flag('--per-page') || 30)
+    const page = process.env.FAKE_GLAB_IGNORE_PAGE === '1' ? 1 : Number(flag('--page') || 1)
+    const start = (page - 1) * perPage
+    writeOut(JSON.stringify(all.slice(start, start + perPage)))
+  } else if (raw) {
+    // text mode against a JSON fixture: emit the same "#N  title" shape
+    const rows = JSON.parse(raw).map((i) => `#${i.iid}  ${i.title}`).join('\n')
+    writeOut(rows + (rows ? '\n' : ''))
+  } else if (args.includes('--output')) {
+    console.error('unknown flag: --output')
+    process.exit(1)
+  } else {
+    writeOut(process.env.FAKE_GLAB_LIST || '')
+  }
 }
 
 if (joined.startsWith('issue create')) { logBody('create', flag('--description')); console.log('https://gitlab.example.com/acme/repo/-/issues/77'); process.exit(0) }
@@ -126,5 +171,7 @@ if (joined.startsWith('mr view')) {
   process.exit(0)
 }
 
-console.error(`fake-glab: unhandled args: ${joined}`)
-process.exit(1)
+if (!handled) {
+  console.error(`fake-glab: unhandled args: ${joined}`)
+  process.exit(1)
+}
