@@ -230,6 +230,7 @@
           <div class="cmd"><code class="cmd-name">/build-ticket</code><code class="cmd-hint">&lt;ticket-id&gt;</code><span class="cmd-desc">Run the Builder stage on a planned ticket (three-agent pattern)</span></div>
           <div class="cmd"><code class="cmd-name">/nightly-issues</code><code class="cmd-hint">[max-issues]</code><span class="cmd-desc">Nightly issue sweep — triage open issues, auto-fix the fixable ones through the three-agent pipeline, post the morning report (designed for headless `claude -p &quot;/nightly-issues&quot;`)</span></div>
           <div class="cmd"><code class="cmd-name">/plan-ticket</code><code class="cmd-hint">&lt;ticket-id or path to ticket file&gt;</code><span class="cmd-desc">Run the Architect stage on a ticket (three-agent pattern)</span></div>
+          <div class="cmd"><code class="cmd-name">/publish-tickets</code><code class="cmd-hint">&lt;module dir, e.g. docs/prd/01-foo&gt; [--all]</code><span class="cmd-desc">Publish a module's tickets as tracker issues (and Asana subtasks if connected), then STOP — no pipeline run</span></div>
           <div class="cmd"><code class="cmd-name">/review-ticket</code><code class="cmd-hint">&lt;ticket-id&gt; [branch-or-PR-ref]</code><span class="cmd-desc">Run the Reviewer stage on a built ticket (three-agent pattern) — requires a fresh context</span></div>
           <div class="cmd"><code class="cmd-name">/start-all</code><code class="cmd-hint">[supervised|autonomous] [concurrency]</code><span class="cmd-desc">Gate 1 for the whole PRD — publish every module's tickets, then run them all through the pipeline scheduled from one dependency DAG</span></div>
           <div class="cmd"><code class="cmd-name">/start-milestone</code><code class="cmd-hint">&lt;module dir, e.g. docs/prd/01-foo&gt; [supervised|autonomous] [concurrency]</code><span class="cmd-desc">Gate 1 start signal — publish the module's tickets as tracker issues, then run the milestone pipeline (three-agent pattern)</span></div>
@@ -585,7 +586,7 @@
 
   <footer>
     Generated from the pattern catalog by <a href="https://github.com/Ruihang2017/agent-templates/blob/main/scripts/build-site.mjs"><code>scripts/build-site.mjs</code></a>
-    · 2026-07-30 · <a href="https://github.com/Ruihang2017/agent-templates/blob/main/LICENSE">MIT</a>
+    · 2026-08-04 · <a href="https://github.com/Ruihang2017/agent-templates/blob/main/LICENSE">MIT</a>
     · <a href="https://github.com/Ruihang2017/agent-templates/issues/new/choose">Feedback → issues</a>
   </footer>
 </div>
