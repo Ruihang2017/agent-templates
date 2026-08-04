@@ -11,6 +11,12 @@ export const meta = {
 //   tickets: [{ id, path, issue, blockedBy: ['OTHER-ID'] }],  // blockedBy: intra-run deps (optional)
 //   mode: 'supervised' | 'autonomous',
 //   defaultBranch: 'main',        // optional, default 'main'
+//   integrationBranch: '',        // optional (issue #139). When set AND mode is autonomous,
+//                                 // a merge the default branch refuses BECAUSE IT IS
+//                                 // PROTECTED is retargeted here instead of stalling the
+//                                 // run. Never used for an unmet gate (failing pipeline,
+//                                 // missing approval) — that still escalates. Delivery
+//                                 // here closes the issue but does NOT pass the DoD.
 //   maxBounces: 2,                // optional, default 2
 //   continueOnFailure: false,     // optional; default fail-fast (tickets may depend on earlier ones)
 //   platform: 'gh' | 'glab',      // tracker CLI for the deliver step, default 'gh'
@@ -31,7 +37,7 @@ export const meta = {
 // args may arrive as a JSON string depending on the harness (catalog issue #23)
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : (args || {})
 const cfg = Object.assign(
-  { maxBounces: 2, continueOnFailure: false, defaultBranch: 'main', platform: 'gh', concurrency: 1 },
+  { maxBounces: 2, continueOnFailure: false, defaultBranch: 'main', platform: 'gh', concurrency: 1, integrationBranch: '' },
   parsedArgs
 )
 if (!Array.isArray(cfg.tickets) || cfg.tickets.length === 0) {
@@ -209,6 +215,8 @@ async function runTicket(t, opts) {
   const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
     ' --default-branch ' + cfg.defaultBranch + ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '') +
     (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : '') + ' --verdict-file ' + verdictFile + ' --body-file ' + bodyFile +
+    // supervised already stops for a human merge, so the fallback is autonomous-only
+    (cfg.mode !== 'supervised' && cfg.integrationBranch ? ' --integration-branch ' + cfg.integrationBranch : '') +
     (cfg.mode === 'supervised' ? ' --no-merge' : '')
   const deliverPrompt =
     'Delivery step. Delivery is DETERMINISTIC — you only (1) record the verdict, (2) compose the PR/MR body, and (3) run one command; never merge, push, open PRs/MRs, or close issues yourself. ' +
@@ -219,7 +227,7 @@ async function runTicket(t, opts) {
     ', the diff (`git diff ' + cfg.defaultBranch + '...' + branch + '` — summarize, do not paste it whole), the CLEAR verdict above, and the repo CLAUDE.md non-negotiables for the **Constraint check** section (tick what the diff touches, mark the rest N/A). Include `Closes #' + (t.issue || '<n>') + '`. Do not invent spec the ticket lacks. ' +
     'Then, from the repo root, run EXACTLY this command and let it do all git and tracker work: ' + deliverCmd +
     ' — this is the only sanctioned delivery path. Parse the DELIVER-SUMMARY-JSON line it prints last and return ' +
-    'merged, issueClosed, dodPassed, awaitingMerge, and prUrl EXACTLY as reported there, with notes = its notes field plus anything unusual. ' +
+    'merged, issueClosed, dodPassed, awaitingMerge, outcome, deliveredTo, and prUrl EXACTLY as reported there, with notes = its notes field plus anything unusual. ' +
     'If the command cannot run or prints no DELIVER-SUMMARY-JSON, return merged/issueClosed/dodPassed = false with the output tail in notes.'
 
   if (cfg.mode === 'supervised') {

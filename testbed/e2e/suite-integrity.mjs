@@ -138,6 +138,56 @@ export async function run() {
     }
   }
 
+  // issue #139: the integration-branch fallback must never enter the Definition of Done.
+  // Asserted mechanically because the behavioural test cannot be trusted here: dodPassed
+  // is false in that scenario for several independent reasons (pushRequired, planExists),
+  // so folding `mergedToIntegration` into the expression does NOT flip it, and the E2E
+  // assertion passes either way. This check has no such blind spot.
+  {
+    const deliver = readFileSync(p('.claude/scripts/deliver-ticket.mjs'), 'utf8')
+    const dod = (deliver.match(/const dodPassed =[\s\S]*?(?=\n\s*const summary)/) || [])[0] || ''
+    check(S, 'deliver-ticket dodPassed expression was found to check', dod.length > 20)
+    check(S, 'dodPassed contains NO integration-branch term (a side branch is not the DoD)',
+      dod.length > 20 && !/[Ii]ntegration/.test(dod), dod.slice(0, 200))
+    check(S, 'dodPassed still gates on the DEFAULT-branch merge', /checks\.merged\s*&&/.test(dod))
+    // The reroute is a different TARGET, never a bypass: nothing may force-push or
+    // admin-merge its way onto a protected branch.
+    check(S, 'the reroute never force-pushes', !/push[^\n]*--force/.test(deliver) && !/-f\b[^\n]*refs\/heads/.test(deliver))
+    check(S, 'an unmet gate is classified as gate, not protection', /return 'gate'/.test(deliver))
+    check(S, 'the classifier fails CLOSED on an unrecognised refusal',
+      /if \(protection\.test\(s\)\) return 'protection'\n\s*return 'gate'/.test(deliver))
+  }
+
+  // §7 provenance rows keep getting dropped in PR conflict resolutions — four times now:
+  // PR #114 (recorded in §7 itself), then #130, #132 and #137 in one batch, all restored
+  // by hand afterwards. The code and INSTALL.md survived every time; only the change log
+  // was lost, and §7 IS the traceability chain this repo runs on, so nothing went red.
+  //
+  // Cheap mechanical tripwire for the commonest shape: the metadata As-of date and the §3
+  // heading date both move whenever a recommendation changes, and CLAUDE.md requires a §7
+  // entry in the SAME commit. So a §7 row must exist bearing that date. This does not
+  // prove the row is the right one, but it does catch "the table moved and the log did not".
+  {
+    const readme = readFileSync(REPO_ROOT + SCAFFOLD.replace('scaffold/', 'README.md'), 'utf8')
+    const asOf = (readme.match(/\|\s*\*\*As-of date\*\*\s*\|\s*(\d{4}-\d{2}-\d{2})/) || [])[1] || ''
+    check(S, 'pattern README declares an As-of date', /^\d{4}-\d{2}-\d{2}$/.test(asOf))
+    if (asOf) {
+      check(S, `§7 has a provenance row dated ${asOf} (the As-of date)`,
+        new RegExp(`^\\|\\s*${asOf}\\s*\\|`, 'm').test(readme),
+        'a recommendation moved without a change-log entry — or a row was dropped in a merge')
+    }
+    const sec3 = (readme.match(/^## 3\. Model \+ effort assignment \(as of (\d{4}-\d{2}-\d{2})\)/m) || [])[1] || ''
+    check(S, '§3 heading carries an as-of date', /^\d{4}-\d{2}-\d{2}$/.test(sec3))
+    if (sec3) {
+      check(S, `§7 has a provenance row dated ${sec3} (the §3 as-of date)`,
+        new RegExp(`^\\|\\s*${sec3}\\s*\\|`, 'm').test(readme))
+    }
+    // Guard the guard: a date nothing uses must NOT match, or the checks above would pass
+    // on any README with a §7 table at all.
+    check(S, 'the provenance-date check discriminates (sentinel absent)',
+      !/^\|\s*1999-01-01\s*\|/m.test(readme))
+  }
+
   // wiring parses and points at real things
   if (existsSync(p('.claude/settings.json'))) {
     let settings = null
