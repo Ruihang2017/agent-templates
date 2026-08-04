@@ -65,6 +65,12 @@ const opt = (name) => {
 const ID = opt('id')
 const BRANCH = opt('branch')
 const DEFAULT_BRANCH = opt('default-branch') || 'main'
+// Integration-branch fallback (issue #139). OFF unless passed — never a silent default.
+// When the DEFAULT branch refuses the merge because it is PROTECTED (not because a check
+// failed), retarget onto this branch so an autonomous run keeps moving instead of turning
+// every ticket into the same escalation. See classifyMergeFailure below for the
+// distinction that makes this safe rather than a protection bypass.
+const INTEGRATION_BRANCH = opt('integration-branch') || ''
 const ISSUE_ARG = opt('issue')
 const PLATFORM = opt('platform') || 'gh'
 const DELIVERY = opt('delivery') || 'auto'
@@ -73,19 +79,28 @@ const VERDICT_FILE = opt('verdict-file')
 const BODY_FILE = opt('body-file') // pre-composed PR/MR body (agent-filled from the repo template)
 const TEST_CMD = opt('test-cmd')
 
-if (!ID || !BRANCH) {
-  console.error('usage: node deliver-ticket.mjs --id <ticket-id> --branch <branch> [--default-branch main] [--issue <n>] [--platform gh|glab] [--delivery pr|direct|auto] [--no-merge] [--verdict-file <path>] [--test-cmd "<command>"]')
+// Run-end handoff (issue #139): open ONE integration -> default MR/PR and stop. Never
+// merges it — landing the accumulated work on a protected branch is a human decision by
+// definition. Ticket-less, so it runs before the --id/--branch requirements.
+const OPEN_INTEGRATION_MR = has('open-integration-mr')
+
+if (!OPEN_INTEGRATION_MR && (!ID || !BRANCH)) {
+  console.error('usage: node deliver-ticket.mjs --id <ticket-id> --branch <branch> [--default-branch main] [--integration-branch ai-staging] [--issue <n>] [--platform gh|glab] [--delivery pr|direct|auto] [--no-merge] [--verdict-file <path>] [--test-cmd "<command>"]\n   or: node deliver-ticket.mjs --open-integration-mr --integration-branch <name> [--default-branch main] [--platform gh|glab]')
   process.exit(1)
 }
-if (!/^[A-Za-z0-9._-]+$/.test(ID)) {
+if (OPEN_INTEGRATION_MR && !INTEGRATION_BRANCH) {
+  console.error('--open-integration-mr requires --integration-branch <name>')
+  process.exit(1)
+}
+if (!OPEN_INTEGRATION_MR && !/^[A-Za-z0-9._-]+$/.test(ID)) {
   console.error(`invalid --id (allowed: letters, digits, . _ -): ${ID}`)
   process.exit(1)
 }
-if (!/^[A-Za-z0-9/._-]+$/.test(BRANCH) || !/^[A-Za-z0-9/._-]+$/.test(DEFAULT_BRANCH)) {
+if (!OPEN_INTEGRATION_MR && (!/^[A-Za-z0-9/._-]+$/.test(BRANCH) || !/^[A-Za-z0-9/._-]+$/.test(DEFAULT_BRANCH))) {
   console.error('invalid --branch / --default-branch (allowed: letters, digits, / . _ -)')
   process.exit(1)
 }
-if (BRANCH === DEFAULT_BRANCH) {
+if (!OPEN_INTEGRATION_MR && BRANCH === DEFAULT_BRANCH) {
   console.error(`--branch must differ from --default-branch (got ${BRANCH} for both) — nothing to deliver`)
   process.exit(1)
 }
@@ -122,12 +137,86 @@ const tryCli = (args, opts = {}) => {
   try { return { ok: true, out: cli(args, opts) } } catch (e) { return { ok: false, out: errText(e) } }
 }
 
+// Run-end handoff: open ONE integration -> default MR and STOP (issue #139). Runs before
+// any ticket logic and exits; it never merges, because landing accumulated work on a
+// protected branch is exactly the human decision the protection exists to require.
+if (OPEN_INTEGRATION_MR) {
+  const fail = (msg) => {
+    console.error(`x ${msg}`)
+    console.log('INTEGRATION-MR-JSON: ' + JSON.stringify({ integrationBranch: INTEGRATION_BRANCH, defaultBranch: DEFAULT_BRANCH, opened: false, error: msg }))
+    process.exit(0) // a missing handoff must not fail the run that produced the work
+  }
+  try { cli(['auth', 'status'], { stdio: ['ignore', 'ignore', 'ignore'] }) } catch { fail(`${PLATFORM} not authenticated`) }
+  if (!tryGit(['fetch', 'origin', INTEGRATION_BRANCH]).ok) fail(`${INTEGRATION_BRANCH} does not exist on origin — nothing was delivered to it`)
+  tryGit(['fetch', 'origin', DEFAULT_BRANCH])
+  // Nothing to hand off if the integration branch adds no commits.
+  const aheadOut = tryGit(['rev-list', '--count', `origin/${DEFAULT_BRANCH}..origin/${INTEGRATION_BRANCH}`])
+  const ahead = aheadOut.ok ? Number(String(aheadOut.out).trim()) || 0 : 0
+  if (ahead === 0) {
+    console.log(`= nothing to hand off: ${INTEGRATION_BRANCH} is not ahead of ${DEFAULT_BRANCH}`)
+    console.log('INTEGRATION-MR-JSON: ' + JSON.stringify({ integrationBranch: INTEGRATION_BRANCH, defaultBranch: DEFAULT_BRANCH, ahead: 0, opened: false }))
+    process.exit(0)
+  }
+  // Reuse an existing open handoff MR rather than opening a second one each run.
+  let existing = null
+  try {
+    if (PLATFORM === 'gh') {
+      const arr = JSON.parse(cli(['pr', 'list', '--head', INTEGRATION_BRANCH, '--state', 'open', '--json', 'number,url']))
+      existing = arr && arr[0] ? arr[0].url : null
+    } else {
+      const m = cli(['mr', 'list', '--source-branch', INTEGRATION_BRANCH]).match(/!(\d+)/)
+      existing = m ? `!${m[1]}` : null
+    }
+  } catch {}
+  if (existing) {
+    console.log(`= handoff MR already open: ${existing} (${ahead} commit(s) ahead)`)
+    console.log('INTEGRATION-MR-JSON: ' + JSON.stringify({ integrationBranch: INTEGRATION_BRANCH, defaultBranch: DEFAULT_BRANCH, ahead, opened: false, url: existing, alreadyOpen: true }))
+    process.exit(0)
+  }
+  const subjects = (tryGit(['log', '--format=%s', `origin/${DEFAULT_BRANCH}..origin/${INTEGRATION_BRANCH}`]).out || '')
+    .split('\n').map((l) => l.trim()).filter(Boolean)
+  const ids = [...new Set(subjects.map((l) => (l.match(/\[([A-Za-z0-9._-]+)\]/) || [])[1]).filter(Boolean))]
+  const title = `Land AI-delivered work: ${INTEGRATION_BRANCH} -> ${DEFAULT_BRANCH} (${ahead} commit(s))`
+  const body =
+    `> 🤖 **Automated delivery — this branch was written and merged by AI.**\n` +
+    `> The pipeline could not merge to \`${DEFAULT_BRANCH}\` (branch protection), so it delivered to \`${INTEGRATION_BRANCH}\` instead.\n` +
+    `> It runs under the account whose Personal Access Token authenticated the forge CLI, so **the author shown is that token's owner, not the code's author.**\n\n` +
+    `## Summary\n\n${ahead} commit(s) on \`${INTEGRATION_BRANCH}\` are not on \`${DEFAULT_BRANCH}\`.\n\n` +
+    (ids.length ? `## Tickets\n\n${ids.map((i) => `- \`${i}\``).join('\n')}\n\n` : '') +
+    `## Status\n\nEach ticket passed an independent AI review (CLEAR) before landing here. ` +
+    `**None of them meets the Definition of Done yet** — the DoD requires the default branch, and this MR is what would satisfy it.\n\n` +
+    `**This MR is deliberately not merged by the pipeline.** Landing accumulated work on a protected branch is a human decision.\n`
+  const tmp = mkdtempSync(join(tmpdir(), 'deliver-int-'))
+  const bodyFile = join(tmp, 'body.md')
+  writeFileSync(bodyFile, body)
+  try {
+    const out = PLATFORM === 'gh'
+      ? cli(['pr', 'create', '--base', DEFAULT_BRANCH, '--head', INTEGRATION_BRANCH, '--title', title, '--body-file', bodyFile])
+      : cli(['mr', 'create', '--source-branch', INTEGRATION_BRANCH, '--target-branch', DEFAULT_BRANCH, '--title', title, '--description', body, '--yes'])
+    const url = lastLine(out)
+    console.log(`+ handoff MR opened (NOT merged): ${url}`)
+    console.log(`  ${ahead} commit(s), ${ids.length} ticket(s) — a human lands this on ${DEFAULT_BRANCH}`)
+    console.log('INTEGRATION-MR-JSON: ' + JSON.stringify({ integrationBranch: INTEGRATION_BRANCH, defaultBranch: DEFAULT_BRANCH, ahead, tickets: ids, opened: true, url }))
+    process.exit(0)
+  } catch (e) {
+    fail(`could not open the handoff MR: ${firstLine(errText(e))}`)
+  } finally {
+    rmSync(tmp, { recursive: true, force: true })
+  }
+}
+
 const checks = {
   planExists: false, alreadyMerged: false, merged: false,
   pushRequired: false, pushed: false, branchPushed: false,
   prCreated: false, prExists: false, verdictPosted: false,
   issueClosed: false, testsPassed: null,
+  // Integration-branch delivery (issue #139). Deliberately SEPARATE from `merged`, which
+  // measures ancestry into the DEFAULT branch — so dodPassed reads false, honestly, until
+  // the integration branch lands on the default one.
+  mergedToIntegration: false,
 }
+// Which branch the work actually landed on: the default branch, or the integration branch.
+let deliveredTo = DEFAULT_BRANCH
 let prUrl = ''
 let deliveryMode = 'direct'
 let awaitingMerge = false
@@ -144,6 +233,11 @@ const finish = (code) => {
   const summary = {
     id: ID, branch: BRANCH, deliveryMode,
     merged: checks.merged, issueClosed: checks.issueClosed, dodPassed,
+    // `delivered-to-integration` is a DISTINCT outcome, never folded into `delivered`.
+    // A run that reports 20/20 delivered while the default branch has nothing is the
+    // failure class this catalog keeps recording (#109, #115, #119, #127, #132).
+    outcome: checks.merged ? 'delivered' : (checks.mergedToIntegration ? 'delivered-to-integration' : 'not-delivered'),
+    deliveredTo, integrationBranch: INTEGRATION_BRANCH || null,
     awaitingMerge, prUrl, checks, notes: notes.join('; '),
   }
   console.log('DELIVER-SUMMARY-JSON: ' + JSON.stringify(summary))
@@ -178,7 +272,10 @@ const closeIssue = () => {
   }
   if (!issueNum) { note(`no tracker issue found for [${ID}]`); return }
   try {
-    cli(['issue', 'close', String(issueNum), ...(PLATFORM === 'gh' ? ['--comment', `Delivered: ${BRANCH} merged to ${DEFAULT_BRANCH} (run-milestone, CLEAR verdict).`] : [])])
+    const closeNote = checks.mergedToIntegration
+      ? `Delivered: ${BRANCH} merged to ${deliveredTo} — NOT to ${DEFAULT_BRANCH}, which refused the merge (branch protection). The Definition of Done is not met until ${deliveredTo} lands on ${DEFAULT_BRANCH}. Closed so re-runs do not rebuild this ticket.`
+      : `Delivered: ${BRANCH} merged to ${DEFAULT_BRANCH} (run-milestone, CLEAR verdict).`
+    cli(['issue', 'close', String(issueNum), ...(PLATFORM === 'gh' ? ['--comment', closeNote] : [])])
   } catch (e) {
     note(`issue close command failed: ${firstLine(errText(e))}`) // verification below still decides
   }
@@ -269,6 +366,77 @@ const resolvePrBody = () => {
     return aiMarker() + ensureCloses(tpl.text)
   }
   return aiMarker() + buildBody()
+}
+
+// ---------------------------------------------------------------------------
+// Integration-branch fallback (issue #139)
+// ---------------------------------------------------------------------------
+
+// THE distinction this whole feature rests on: "cannot merge here" is not "must not merge".
+//
+//   protection — 403, protected branch, no merge/push rights. The change is fine; this
+//                branch is closed to us. Rerouting to another branch is legitimate.
+//   gate       — failing pipeline, missing approvals, GitLab 405 because the pipeline has
+//                not finished (#135). The change is NOT cleared to land ANYWHERE.
+//                Rerouting would launder a broken change into a branch that later gets
+//                merged wholesale, and would be a backdoor around the rule §4 sets from
+//                issue #50: a required-but-unmet check escalates rather than force-lands.
+//
+// Anything unrecognised is treated as a gate — fail closed. Guessing "probably protection"
+// is the one mistake that turns this feature into a protection bypass.
+const classifyMergeFailure = (out) => {
+  const s = String(out || '').toLowerCase()
+  const gate = /pipeline|status check|checks have not|approval|approver|unresolved|conflict|not mergeable|draft|405/
+  if (gate.test(s)) return 'gate'
+  const protection = /protected|not allowed to (merge|push)|403|forbidden|insufficient|permission|maintainer|developers cannot/
+  if (protection.test(s)) return 'protection'
+  return 'gate'
+}
+
+// Ensure the integration branch exists on origin, branched from the DEFAULT branch.
+// Idempotent: a second ticket in the same run reuses it and never resets it (resetting
+// would silently discard the previous ticket's delivery).
+const ensureIntegrationBranch = () => {
+  if (tryGit(['fetch', 'origin', INTEGRATION_BRANCH]).ok) return true
+  const base = tryGit(['fetch', 'origin', DEFAULT_BRANCH])
+  if (!base.ok) { note(`cannot create ${INTEGRATION_BRANCH}: fetching ${DEFAULT_BRANCH} failed`); return false }
+  const push = tryGit(['push', 'origin', `origin/${DEFAULT_BRANCH}:refs/heads/${INTEGRATION_BRANCH}`])
+  if (!push.ok) { note(`cannot create ${INTEGRATION_BRANCH}: ${firstLine(push.out)}`); return false }
+  console.log(`+ branch  created ${INTEGRATION_BRANCH} from ${DEFAULT_BRANCH}`)
+  return true
+}
+
+// Retarget the open MR/PR at the integration branch and merge it there.
+// checks.merged is deliberately NOT set — it measures ancestry into the DEFAULT branch,
+// so dodPassed stays false and the ticket reads as "not on main", which is the truth.
+const rerouteToIntegration = (pr, failureOut) => {
+  const kind = classifyMergeFailure(failureOut)
+  if (kind !== 'protection') {
+    note(`NOT rerouting to ${INTEGRATION_BRANCH}: the merge was refused by an unmet gate, not by branch protection — the change is not cleared to land anywhere`)
+    return
+  }
+  if (!pr || !pr.number) { note(`cannot reroute to ${INTEGRATION_BRANCH}: no MR/PR number`); return }
+  if (!ensureIntegrationBranch()) return
+
+  const rt = PLATFORM === 'gh'
+    ? tryCli(['pr', 'edit', String(pr.number), '--base', INTEGRATION_BRANCH])
+    : tryCli(['mr', 'update', String(pr.number), '--target-branch', INTEGRATION_BRANCH])
+  if (!rt.ok) { note(`retarget to ${INTEGRATION_BRANCH} failed: ${firstLine(rt.out)}`); return }
+
+  const mg = PLATFORM === 'gh'
+    ? tryCli(['pr', 'merge', String(pr.number), '--merge'])
+    : tryCli(['mr', 'merge', String(pr.number), '--yes'])
+  if (!mg.ok) { note(`merge into ${INTEGRATION_BRANCH} failed: ${firstLine(mg.out)}`); return }
+
+  tryGit(['fetch', 'origin', INTEGRATION_BRANCH])
+  if (!tryGit(['merge-base', '--is-ancestor', BRANCH, `origin/${INTEGRATION_BRANCH}`]).ok) {
+    note(`merge into ${INTEGRATION_BRANCH} reported success but the branch is not an ancestor — not counting it`)
+    return
+  }
+  checks.mergedToIntegration = true
+  deliveredTo = INTEGRATION_BRANCH
+  console.log(`+ merged  #${pr.number} -> ${INTEGRATION_BRANCH} (${DEFAULT_BRANCH} is protected)`)
+  note(`DELIVERED TO ${INTEGRATION_BRANCH}, NOT ${DEFAULT_BRANCH} — ${DEFAULT_BRANCH} refused the merge (branch protection). The Definition of Done is NOT met until ${INTEGRATION_BRANCH} lands on ${DEFAULT_BRANCH}.`)
 }
 
 // find an existing PR/MR for the branch; returns { number, url } or null
@@ -460,8 +628,11 @@ try {
       const mg = PLATFORM === 'gh'
         ? tryCli(['pr', 'merge', String(pr.number), '--merge'])
         : tryCli(['mr', 'merge', String(pr.number), '--yes'])
-      if (!mg.ok) note(`forge merge failed (required checks pending, conflict, or approval required): ${firstLine(mg.out)}`)
-      else console.log(`+ merged  #${pr.number} via ${PLATFORM} (forge-side)`)
+      if (!mg.ok) {
+        note(`forge merge failed (required checks pending, conflict, or approval required): ${firstLine(mg.out)}`)
+        // Only a PROTECTION refusal may be rerouted. Anything else stays an escalation.
+        if (INTEGRATION_BRANCH) rerouteToIntegration(pr, mg.out)
+      } else console.log(`+ merged  #${pr.number} via ${PLATFORM} (forge-side)`)
       tryGit(['fetch', 'origin', DEFAULT_BRANCH])
     }
     // confirm the merge actually landed on the remote default, then sync local
@@ -478,7 +649,12 @@ try {
   }
 
   // 4. close the tracker issue only once the work landed
-  const landed = checks.merged && (!checks.pushRequired || checks.pushed)
+  // Landing on the INTEGRATION branch counts for closing the issue, but not for the DoD
+  // (issue #139, maintainer decision). Leaving the issue open instead would make the
+  // resume filter re-run every ticket already built on the integration branch, producing
+  // duplicate and conflicting work — the larger cost. The close comment names the branch,
+  // and `dodPassed` stays false, so the ticket reads as delivered-but-not-on-main.
+  const landed = (checks.merged && (!checks.pushRequired || checks.pushed)) || checks.mergedToIntegration
   if (!landed) note('skipping tracker close — merge/push did not complete, ticket is NOT delivered')
   else closeIssue()
 

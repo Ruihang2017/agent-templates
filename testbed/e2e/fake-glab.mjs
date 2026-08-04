@@ -4,7 +4,9 @@
 // publish script's per-line text fallback. Env:
 //   FAKE_GLAB_LIST          text for `issue list --all` (one "#N  title" per line)
 //   FAKE_GLAB_CLOSED_STATE  file accumulating closed issue numbers (close/view)
-//   FAKE_GLAB_MERGE_BLOCKED "1" -> `mr merge` fails (required pipeline not passed)
+//   FAKE_GLAB_MERGE_BLOCKED "1"/"checks" -> `mr merge` fails, pipeline not passed;
+//                           "protection" -> fails because the TARGET branch is protected
+//                           (clears once the MR is retargeted — issue #139)
 // MR state lives in <repo>/.git (self-contained); `mr merge` performs a REAL merge
 // into the bare origin so deliver-ticket's post-merge ancestry check is faithful.
 
@@ -91,11 +93,27 @@ if (joined.startsWith('mr note')) {
   process.exit(0)
 }
 
-if (joined.startsWith('mr merge')) {
-  if (process.env.FAKE_GLAB_MERGE_BLOCKED === '1') { console.error('merge failed: pipeline must succeed'); process.exit(1) }
+if (joined.startsWith('mr update')) {
   const number = Number(args[2])
   const m = readMap()
   const mr = m.mrs.find((x) => x.number === number)
+  const target = flag('--target-branch')
+  if (!mr) { console.error(`no MR !${number}`); process.exit(1) }
+  if (target) { mr.base = target; writeMap(m) }
+  console.log(`Updated MR !${number}`)
+  process.exit(0)
+}
+
+if (joined.startsWith('mr merge')) {
+  const blocked = process.env.FAKE_GLAB_MERGE_BLOCKED
+  const number = Number(args[2])
+  const m = readMap()
+  const mr = m.mrs.find((x) => x.number === number)
+  if (blocked === '1' || blocked === 'checks') { console.error('merge failed: pipeline must succeed'); process.exit(1) }
+  if (blocked === 'protection' && mr && mr.base === (process.env.FAKE_GLAB_PROTECTED_BRANCH || 'main')) {
+    console.error('403 Forbidden: protected branch — you are not allowed to merge into main')
+    process.exit(1)
+  }
   if (!mr) { console.error(`no MR !${number}`); process.exit(1) }
   try {
     const origin = gitq(['remote', 'get-url', 'origin']).trim()

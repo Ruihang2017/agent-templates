@@ -485,4 +485,136 @@ const assertAiMarker = (label, body) => {
       check(S, 'P14 a fully untracked docs/ does not block delivery', sum && sum.merged && sum.dodPassed, sum && sum.notes)
     } finally { cleanup(root) }
   }
+
+  // ---------------------------------------------------------------------
+  // I1-I6: integration-branch fallback (issue #139)
+  //
+  // I2 is the one that matters. This is only safe because it fires on BRANCH PROTECTION
+  // and never on an unmet gate: rerouting a change whose pipeline failed would launder it
+  // into a branch that later gets merged wholesale, and would be a backdoor around the
+  // rule §4 sets from issue #50. I1 and I2 run the SAME fixture with only the refusal
+  // reason differing, so a change that makes one pass by breaking the other is caught.
+  // ---------------------------------------------------------------------
+
+  const INT_ARGS = ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--delivery', 'pr']
+  // the suite's git() throws on non-zero; these checks ask "does this ref exist / is this
+  // an ancestor", where a non-zero exit IS the answer
+  const gitOk = (repo, args) => { try { git(repo, args); return true } catch { return false } }
+
+  // I1: protected default branch -> reroute, deliver to the integration branch
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      const { r, sum } = deliver(repo, [...INT_ARGS, '--integration-branch', 'ai-staging'],
+        { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_MERGE_BLOCKED: 'protection' })
+      eq(S, 'I1 exit 0', r.status, 0)
+      eq(S, 'I1 outcome is delivered-to-integration, NOT delivered', sum.outcome, 'delivered-to-integration')
+      eq(S, 'I1 deliveredTo names the integration branch', sum.deliveredTo, 'ai-staging')
+      check(S, 'I1 the work landed on ai-staging', sum.checks.mergedToIntegration === true)
+      // The DoD measures the DEFAULT branch, so it must stay false — a run reporting
+      // "delivered" while main is empty is the #109/#127 failure class.
+      check(S, 'I1 merged (default branch) stays false', sum.checks.merged === false)
+      // NB: dodPassed is false here for several independent reasons, so this assertion
+      // alone would NOT catch someone folding mergedToIntegration into the expression —
+      // verified by probing it. The rule is enforced mechanically in suite-integrity
+      // ("dodPassed contains NO integration-branch term"), which has no such blind spot.
+      check(S, 'I1 dodPassed is FALSE — an integration branch is not the DoD', sum.dodPassed === false)
+      // ...but the issue closes, so a re-run does not rebuild work already on ai-staging.
+      check(S, 'I1 the issue is still closed (no rework on re-run)', sum.issueClosed === true)
+      check(S, 'I1 notes say plainly it is not on the default branch',
+        /DELIVERED TO ai-staging, NOT main/.test(sum.notes), sum.notes.slice(0, 240))
+      check(S, 'I1 ai-staging exists on origin', gitOk(repo, ['rev-parse', '--verify', 'origin/ai-staging']))
+    } finally { cleanup(root) }
+  }
+
+  // I2: THE NEGATIVE — an unmet gate must never reroute, even with the flag set
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      const { r, sum } = deliver(repo, [...INT_ARGS, '--integration-branch', 'ai-staging'],
+        { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_MERGE_BLOCKED: 'checks' })
+      eq(S, 'I2 exit 0', r.status, 0)
+      check(S, 'I2 a failed required check does NOT reroute', sum.checks.mergedToIntegration === false)
+      eq(S, 'I2 outcome is not-delivered', sum.outcome, 'not-delivered')
+      check(S, 'I2 dodPassed false', sum.dodPassed === false)
+      check(S, 'I2 the issue is NOT closed', sum.issueClosed === false)
+      check(S, 'I2 it states why it refused to reroute', /NOT rerouting/.test(sum.notes), sum.notes.slice(0, 240))
+      // Strongest form: the branch is never even created, so nothing can leak onto it.
+      check(S, 'I2 ai-staging was never created', !gitOk(repo, ['rev-parse', '--verify', 'origin/ai-staging']))
+    } finally { cleanup(root) }
+  }
+
+  // I3: without the flag, behaviour is exactly today's — no silent default-on
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      const { sum } = deliver(repo, INT_ARGS, { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_MERGE_BLOCKED: 'protection' })
+      check(S, 'I3 no integration branch configured -> no reroute', sum.checks.mergedToIntegration === false)
+      eq(S, 'I3 integrationBranch reported as null', sum.integrationBranch, null)
+      check(S, 'I3 ai-staging not created', !gitOk(repo, ['rev-parse', '--verify', 'origin/ai-staging']))
+    } finally { cleanup(root) }
+  }
+
+  // I4: a second ticket reuses the branch — never re-created, never reset (a reset would
+  // silently discard the previous ticket's delivery)
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      deliver(repo, [...INT_ARGS, '--integration-branch', 'ai-staging'],
+        { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_MERGE_BLOCKED: 'protection' })
+      const first = git(repo, ['rev-parse', 'origin/ai-staging']).trim()
+      git(repo, ['checkout', '-q', '-b', 'ticket/T-02', 'main'])
+      writeFileSync(join(repo, 'second.txt'), 'second\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', '[T-02] second'])
+      git(repo, ['checkout', '-q', 'main'])
+      const { sum } = deliver(repo, ['--id', 'T-02', '--branch', 'ticket/T-02', '--issue', '8', '--delivery', 'pr', '--integration-branch', 'ai-staging'],
+        { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_MERGE_BLOCKED: 'protection' })
+      check(S, 'I4 the second ticket also lands on ai-staging', sum.checks.mergedToIntegration === true)
+      check(S, 'I4 the branch advanced rather than being reset',
+        git(repo, ['rev-parse', 'origin/ai-staging']).trim() !== first)
+      check(S, 'I4 the first ticket is still on ai-staging',
+        gitOk(repo, ['merge-base', '--is-ancestor', 'ticket/T-01', 'origin/ai-staging']))
+    } finally { cleanup(root) }
+  }
+
+  // I5: the run-end handoff OPENS the integration -> default MR and never merges it
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      deliver(repo, [...INT_ARGS, '--integration-branch', 'ai-staging'],
+        { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_MERGE_BLOCKED: 'protection' })
+      const grab = (out) => {
+        const l = String(out || '').split('\n').find((x) => x.startsWith('INTEGRATION-MR-JSON: '))
+        try { return l ? JSON.parse(l.slice('INTEGRATION-MR-JSON: '.length)) : null } catch { return null }
+      }
+      const h = deliver(repo, ['--open-integration-mr', '--integration-branch', 'ai-staging'], { FAKE_GH_CLOSED_STATE: closed })
+      eq(S, 'I5 handoff exits 0', h.r.status, 0)
+      const j = grab(h.r.stdout)
+      check(S, 'I5 a handoff MR was opened', j && j.opened === true, String(h.r.stdout).slice(-300))
+      check(S, 'I5 it reports how far ahead of the default branch it is', j && j.ahead >= 1)
+      check(S, 'I5 it lists the tickets it carries', j && Array.isArray(j.tickets) && j.tickets.includes('T-01'))
+      // Never merged — that is the human gate this whole mode exists to preserve.
+      check(S, 'I5 the handoff MR is NOT merged; main is untouched',
+        !gitOk(repo, ['merge-base', '--is-ancestor', 'ticket/T-01', 'origin/main']))
+      const again = grab(deliver(repo, ['--open-integration-mr', '--integration-branch', 'ai-staging'], { FAKE_GH_CLOSED_STATE: closed }).r.stdout)
+      check(S, 'I5 a second run reuses the open MR instead of opening another', again && again.alreadyOpen === true)
+    } finally { cleanup(root) }
+  }
+
+  // I6: nothing delivered to the branch -> nothing to hand off, and that is not an error
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const h = deliver(repo, ['--open-integration-mr', '--integration-branch', 'ai-staging'], {})
+      eq(S, 'I6 handoff on a missing integration branch exits 0', h.r.status, 0)
+      check(S, 'I6 it reports opened:false rather than failing the run',
+        /INTEGRATION-MR-JSON: .*"opened":false/.test(String(h.r.stdout)))
+    } finally { cleanup(root) }
+  }
 }

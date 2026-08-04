@@ -137,6 +137,26 @@ export async function run() {
     }
   }
 
+  // issue #139: the integration-branch fallback must never enter the Definition of Done.
+  // Asserted mechanically because the behavioural test cannot be trusted here: dodPassed
+  // is false in that scenario for several independent reasons (pushRequired, planExists),
+  // so folding `mergedToIntegration` into the expression does NOT flip it, and the E2E
+  // assertion passes either way. This check has no such blind spot.
+  {
+    const deliver = readFileSync(p('.claude/scripts/deliver-ticket.mjs'), 'utf8')
+    const dod = (deliver.match(/const dodPassed =[\s\S]*?(?=\n\s*const summary)/) || [])[0] || ''
+    check(S, 'deliver-ticket dodPassed expression was found to check', dod.length > 20)
+    check(S, 'dodPassed contains NO integration-branch term (a side branch is not the DoD)',
+      dod.length > 20 && !/[Ii]ntegration/.test(dod), dod.slice(0, 200))
+    check(S, 'dodPassed still gates on the DEFAULT-branch merge', /checks\.merged\s*&&/.test(dod))
+    // The reroute is a different TARGET, never a bypass: nothing may force-push or
+    // admin-merge its way onto a protected branch.
+    check(S, 'the reroute never force-pushes', !/push[^\n]*--force/.test(deliver) && !/-f\b[^\n]*refs\/heads/.test(deliver))
+    check(S, 'an unmet gate is classified as gate, not protection', /return 'gate'/.test(deliver))
+    check(S, 'the classifier fails CLOSED on an unrecognised refusal',
+      /if \(protection\.test\(s\)\) return 'protection'\n\s*return 'gate'/.test(deliver))
+  }
+
   // wiring parses and points at real things
   if (existsSync(p('.claude/settings.json'))) {
     let settings = null

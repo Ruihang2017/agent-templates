@@ -8,7 +8,12 @@
 //   FAKE_GH_CLOSED_STATE file accumulating closed issue numbers (close/view)
 //   FAKE_GH_FAIL_CLOSE   "1" -> `issue close` fails
 // PR surface (deliver-ticket.mjs pr mode):
-//   FAKE_GH_MERGE_BLOCKED "1" -> `pr merge` fails (simulates a required check not met)
+//   FAKE_GH_MERGE_BLOCKED "1"/"checks" -> `pr merge` fails on an unmet required check;
+//                         "protection" -> fails because the BASE branch is protected.
+//                         The two must stay distinguishable: deliver-ticket may reroute to
+//                         an integration branch on protection and must NOT on a failed
+//                         check (issue #139). A protected base stops blocking once the PR
+//                         is retargeted at a different branch.
 // PR state (number/branch/base/comments) is self-contained in <repo>/.git so it is
 // cleaned up with the repo and needs no env wiring. `pr merge` performs a REAL merge
 // into the bare origin so deliver-ticket's post-merge ancestry check is faithful.
@@ -103,11 +108,29 @@ if (joined.startsWith('pr comment')) {
   process.exit(0)
 }
 
-if (joined.startsWith('pr merge')) {
-  if (process.env.FAKE_GH_MERGE_BLOCKED === '1') { console.error('Pull request is not mergeable: required status checks have not passed'); process.exit(1) }
+if (joined.startsWith('pr edit')) {
   const number = Number(args[2])
   const m = readMap()
   const pr = m.prs.find((p) => p.number === number)
+  const base = flag('--base')
+  if (!pr) { console.error(`no PR #${number}`); process.exit(1) }
+  if (base) { pr.base = base; writeMap(m) }
+  console.log(pr.url)
+  process.exit(0)
+}
+
+if (joined.startsWith('pr merge')) {
+  const blocked = process.env.FAKE_GH_MERGE_BLOCKED
+  const number = Number(args[2])
+  const m = readMap()
+  const pr = m.prs.find((p) => p.number === number)
+  if (blocked === '1' || blocked === 'checks') { console.error('Pull request is not mergeable: required status checks have not passed'); process.exit(1) }
+  // protection is a property of the TARGET branch, so retargeting clears it — that is what
+  // makes the reroute meaningful rather than a fake that always says yes the second time.
+  if (blocked === 'protection' && pr && pr.base === (process.env.FAKE_GH_PROTECTED_BRANCH || 'main')) {
+    console.error('GraphQL: Changes must be made through a pull request. (protected branch) — you are not allowed to merge into main')
+    process.exit(1)
+  }
   if (!pr) { console.error(`no PR #${number}`); process.exit(1) }
   // perform the real merge into the bare origin so post-merge ancestry is faithful
   try {
