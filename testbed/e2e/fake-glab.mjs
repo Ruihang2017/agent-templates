@@ -43,12 +43,19 @@ if (process.env.FAKE_GLAB_MR_API_DENIED === '1' && joined.startsWith('mr ')) {
 //
 //   FAKE_GLAB_ISSUES_JSON  JSON array of {iid,title,state,description} -> real --output
 //                          json path, paginated with --per-page/--page
+//   FAKE_GLAB_ISSUES_FILE  same, read from a FILE. Required for fixtures over ~128 KB:
+//                          Linux caps a single env string at MAX_ARG_STRLEN (128 KB), so
+//                          a multi-MB fixture in the env fails to spawn at all — which is
+//                          the same "bulk data through a process boundary" limit the
+//                          script itself hits on argv (catalog issue #134)
 //   FAKE_GLAB_LIST         legacy text mode; --output json exits 1 (old CLI simulation)
 //   FAKE_GLAB_IGNORE_PAGE  '1' -> honour --per-page but IGNORE --page, always serving
 //                          page 1. Models a CLI that silently does not paginate; the
 //                          script must detect it rather than truncate.
 if (joined.startsWith('issue list')) {
-  const raw = process.env.FAKE_GLAB_ISSUES_JSON
+  const raw = process.env.FAKE_GLAB_ISSUES_FILE
+    ? readFileSync(process.env.FAKE_GLAB_ISSUES_FILE, 'utf8')
+    : process.env.FAKE_GLAB_ISSUES_JSON
   if (raw) {
     if (!args.includes('--output')) {
       // text mode against a JSON fixture: emit the same "#N  title" shape

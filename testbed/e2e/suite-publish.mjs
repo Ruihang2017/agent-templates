@@ -296,9 +296,16 @@ export async function run() {
       const big = Array.from({ length: 60 }, (_, i) => ({
         iid: i + 1, title: `[BIG-${i + 1}] x`, state: 'opened', description: 'y'.repeat(40000),
       }))
+      // Via a FILE, not the env: Linux caps a single env string at 128 KB
+      // (MAX_ARG_STRLEN), so a 2.4 MB fixture in the env fails to spawn at all — green on
+      // Windows, red on Linux CI. Same "bulk data through a process boundary" limit the
+      // script itself hits on argv (issue #134); the fixture must not share the defect
+      // it is testing around.
+      const bigFile = join(proot, 'big.json')
+      writeFileSync(bigFile, JSON.stringify(big))
       try {
         const r = runPub(proot, ['docs/prd/00-x', '--platform', 'glab', '--create'], {
-          GLAB_BIN: FAKE_GLAB, FAKE_GLAB_ISSUES_JSON: JSON.stringify(big),
+          GLAB_BIN: FAKE_GLAB, FAKE_GLAB_ISSUES_FILE: bigFile,
         })
         eq(S, 'P18 a >1 MB issue list is fetched without ENOBUFS', r.status, 0)
         check(S, 'P18 no fetch failure was reported', !/could not fetch/.test(r.stdout + r.stderr))
