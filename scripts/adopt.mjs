@@ -184,9 +184,18 @@ for (const src of walk(join(scaffold, '.claude'))) {
 // INERT: each one no-ops until the user opts in with its /connect-* command, so there is
 // no flag to pass and no way to end up with a half-installed integration later.
 const INTEGRATIONS = ['asana']
+// A name in that list whose directory is absent is a PACKAGING BUG, never a normal
+// condition — and skipping it quietly is how issue #143 shipped: the npm tarball omitted
+// `integrations/` entirely, adopt exited 0 having installed none of it, and then printed
+// "Optional — mirror … /connect-asana" pointing at a README that was not in the package.
+// Exit 0, nothing installed, and instructions to use it. Track what actually arrived so
+// the closing guidance can only advertise what exists.
+const integrationsInstalled = new Set()
+const integrationsMissing = []
 for (const name of INTEGRATIONS) {
   const root = join(CATALOG, 'integrations', name, '.claude')
-  if (!existsSync(root)) continue
+  if (!existsSync(root)) { integrationsMissing.push(name); continue }
+  integrationsInstalled.add(name)
   for (const src of walk(root)) {
     const rel = join('.claude', relative(root, src)).replaceAll('\\', '/')
     copyFile(src, join(target, rel), rel)
@@ -406,6 +415,16 @@ if (!giNow.includes(GI_SECRET_MARKER)) {
 }
 
 console.log(`\nadopt: ${installed} installed, ${skipped} already present. Pattern: ${pattern}, platform: ${PLATFORM}.`)
+
+// Loud, not silent (issue #143). Not fatal: the pattern itself installed correctly, and
+// failing the whole adopt over an optional add-on would be disproportionate. But it must
+// never read as success, and the next steps below must not advertise it.
+if (integrationsMissing.length) {
+  console.error(`\n! PACKAGING PROBLEM — these integrations are declared but absent from this distribution: ${integrationsMissing.join(', ')}`)
+  console.error(`  Nothing was installed for them, so their /connect-* commands will NOT exist.`)
+  console.error(`  This is a bug in the agent-templates package, not in your repo — please report it.`)
+}
+
 console.log(`
 NEXT STEPS (details: ${join(CATALOG, 'ADOPTING.md')})
   1. Review CLAUDE.md — set the Operating mode line (start: supervised) and add your
@@ -415,7 +434,10 @@ NEXT STEPS (details: ${join(CATALOG, 'ADOPTING.md')})
      (Architect decomposes docs/PRD.md into sub-PRDs + tickets, then stops for your review)
   4. Gate 1 — review the breakdown, then:  /start-milestone docs/prd/00-<module> supervised
   5. Graduate to autonomous when the pattern holds; optional nightly sweep:
-     see the pattern's INSTALL.md § Nightly sweep.
+     see the pattern's INSTALL.md § Nightly sweep.` +
+  // Only advertised when it actually arrived — telling someone to run a command that was
+  // never installed is what made #143 worse than a plain omission.
+  (integrationsInstalled.has('asana') ? `
   6. Optional — mirror milestones/tickets into Asana:  /connect-asana
      (needs an ASANA_TOKEN env var and an existing Asana task for this repo;
-      inert until configured. Details: ${join(CATALOG, 'integrations', 'asana', 'README.md')})`)
+      inert until configured. Details: ${join(CATALOG, 'integrations', 'asana', 'README.md')})` : ''))
