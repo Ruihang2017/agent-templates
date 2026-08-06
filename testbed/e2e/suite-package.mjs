@@ -49,7 +49,10 @@ function requiredPaths() {
       for (const f of walk(join(ints, d.name))) out.push(rel(f))
     }
   }
-  for (const f of ['ADOPTING.md', 'CLAUDE.md', 'scripts/adopt.mjs', 'scripts/cli.mjs']) {
+  // CHANGELOG is the only place an npm user sees what changed and what they must do by
+  // hand on upgrade — and npm does NOT auto-include it once a `files` whitelist exists,
+  // which is how it was silently absent from the first 0.10.0 tarball.
+  for (const f of ['ADOPTING.md', 'CLAUDE.md', 'CHANGELOG.md', 'scripts/adopt.mjs', 'scripts/cli.mjs']) {
     if (existsSync(join(ROOT, f))) out.push(f)
   }
   return out
