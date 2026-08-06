@@ -373,6 +373,26 @@ if (!existsSync(giPath)) {
 // already carries the scratch block above still gets this appended on a re-adopt. `.env` is
 // where a user is most likely to park ASANA_TOKEN; an Asana PAT acts as the whole user, so
 // it must never be committable by accident.
+// 8c. .gitignore: harness worktrees (issue #141). At concurrency > 1 the Workflow tool
+// puts each isolated agent's worktree at `.claude/worktrees/wf_<runId>-<agentIndex>/` —
+// INSIDE the repo, and the pattern does not choose that path. Untracked, so
+// `git status --porcelain -uall` reports them and deliver-ticket's clean-tree guard
+// refuses to merge: every delivery blocked. Its own marker, so a repo adopted before this
+// rule existed gains it on a re-adopt rather than being skipped by the block above.
+// NOTE this only silences git. It does NOT stop test runners, linters or bundlers from
+// walking into those checkouts — see INSTALL.md § Parallel runs for the per-tool ignores.
+const GI_WT_MARKER = '# agent-templates: harness worktrees (concurrency > 1) — never commit, never scan'
+const GI_WT_RULES = `${GI_WT_MARKER}\n.claude/worktrees/\n`
+const giBefore = existsSync(giPath) ? readFileSync(giPath, 'utf8') : ''
+if (!giBefore.includes(GI_WT_MARKER)) {
+  writeFileSync(giPath, giBefore ? giBefore.trimEnd() + '\n\n' + GI_WT_RULES : GI_WT_RULES)
+  console.log('+ append  .gitignore (.claude/worktrees/ — harness worktrees)')
+  installed++
+} else {
+  console.log('= exists  .gitignore (worktree rules already present)')
+  skipped++
+}
+
 const GI_SECRET_MARKER = '# agent-templates: never commit tokens (ASANA_TOKEN etc.)'
 const GI_SECRET_RULES = `${GI_SECRET_MARKER}\n.env\n.env.local\n`
 const giNow = existsSync(giPath) ? readFileSync(giPath, 'utf8') : ''

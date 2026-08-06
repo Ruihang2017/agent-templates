@@ -516,7 +516,19 @@ try {
   // tracked under docs/, the Architect's plan makes git print `?? docs/` — which this
   // path-anchored allowlist cannot match, so delivery refused every ticket as "dirty".
   // Observed on the catalog's own Level-1 rehearsal, 2026-07-27 (issue #75).
-  const dirty = git(['status', '--porcelain', '-uall']).split('\n').filter((l) => l.trim() && !/\.claude\/tmp\/|docs\/plans\//.test(l))
+  //
+  // `.claude/worktrees/` is exempt too (issue #141). At concurrency > 1 the HARNESS puts
+  // each isolated agent's worktree at `.claude/worktrees/wf_<runId>-<agentIndex>/` —
+  // inside the repo, and the pattern does not choose that path. Those are untracked, so
+  // `-uall` reports them and every delivery refused to merge. Field report: 7 tickets
+  // produced 16 worktrees (Builder and Reviewer are isolated; the Architect is not, since
+  // it must write docs/plans/ on the main tree), and delivery was blocked throughout.
+  // adopt.mjs also git-ignores the path, but this exemption is deliberate belt-and-braces:
+  // the .gitignore block is marker-guarded, so a repo adopted earlier never gains the rule
+  // unless someone re-adopts.
+  const dirty = git(['status', '--porcelain', '-uall'])
+    .split('\n')
+    .filter((l) => l.trim() && !/\.claude\/tmp\/|\.claude\/worktrees\/|docs\/plans\//.test(l))
   if (dirty.length) { note('working tree not clean — refusing to merge'); finish(0) }
 
   // 2. refs must exist locally

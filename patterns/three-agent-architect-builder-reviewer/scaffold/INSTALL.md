@@ -64,6 +64,51 @@ GitHub is the same shape: `gh auth login`, and the pipeline only checks `gh auth
 
 Because the pipeline authenticates as the token's owner, GitLab shows **you** as the author and merger of every pipeline MR. So `deliver-ticket.mjs` prepends a rendered-visible banner to **every** MR/PR body stating that the change was written and merged by AI, that an independent reviewer cleared it, and that the account shown is the token owner rather than the code's author. It is added on all three body paths — a pre-composed `--body-file`, your repo's MR template, and the built-in fallback — so it cannot go missing on the path your repo happens to take (catalog issue #137).
 
+## Parallel runs: harness worktrees
+
+Only relevant at `concurrency > 1`. Read it before your first parallel run — the first half bit a downstream project on every single delivery (catalog issue #141).
+
+At `concurrency > 1` the Builder and Reviewer each run in an isolated git worktree. **The pattern does not create or place these** — it passes `isolation: 'worktree'` to the Workflow tool and the **harness** owns the path, observed as:
+
+```
+.claude/worktrees/wf_<runId>-<agentIndex>/
+```
+
+Note what that name is **not**: it is scoped to the run and the agent index, **not to a ticket**. The directory tells you nothing about which ticket it holds — read the checked-out branch with `git worktree list`. The Architect is *not* isolated (it must write `docs/plans/` on the main tree), so expect roughly **2 worktrees per ticket**, plus 2 more for each bounce. One field run: 7 tickets → 16 worktrees.
+
+### 1. Git — handled for you
+
+`adopt` git-ignores `.claude/worktrees/`, and `deliver-ticket.mjs` exempts it from the clean-tree guard. Without both, those untracked directories read as a dirty tree and **delivery refuses to merge on every ticket**.
+
+If you adopted before this rule existed, the `.gitignore` block is marker-guarded and will not gain it: re-run `adopt` (the rule has its own marker, so a re-adopt appends it), or add `.claude/worktrees/` by hand.
+
+### 2. Test runners and linters — **you must do this**
+
+`.gitignore` is invisible to jest, vitest, pytest, eslint, tsc, bundlers, and file watchers. With N full checkouts of your repo living inside your repo, a root-level test command can discover test files **inside** them. That is worse than noise:
+
+- the Builder's test run picks up **other in-flight tickets' tests**, destroying the isolation worktrees exist to provide;
+- `--test-cmd` runs the suite on the merged default branch as a DoD input, so it would be measuring the wrong tree;
+- an unrelated ticket's failure can fail your ticket's delivery, coupling parallel lanes in a way that is very hard to diagnose.
+
+Add the ignore for whatever you actually run:
+
+```jsonc
+// jest.config      testPathIgnorePatterns: ['/\\.claude/worktrees/']
+// vitest.config    exclude: ['**/.claude/worktrees/**']
+// pytest.ini       norecursedirs = .claude
+// .eslintignore    .claude/worktrees/
+// tsconfig.json    "exclude": [".claude/worktrees"]
+```
+
+### 3. Cleaning up
+
+The harness removes a worktree that ends unchanged; ones with changes can survive a run.
+
+- **Never clean during a live run.** A `LOCKED` worktree generally means the harness still holds it — force-removing it pulls the floor out from under a running agent.
+- **You cannot delete by ticket name** — the directory names are run-scoped. Map them first with `git worktree list`.
+- Remove with `git worktree remove <path>` (add `--force` for a locked or dirty one), then `git worktree prune`.
+- **Do not run `git clean -fdx`** in a repo with live worktrees: they are git-ignored now, so it deletes them and strands their `.git/worktrees/` metadata.
+
 ## Usage modes
 
 - **Mode A — one orchestrator session (default):** run `/plan-ticket` → `/build-ticket` → `/review-ticket` → `/verify-delivery` from a single main session. Each stage executes in its own subagent, so stage contexts stay isolated. The orchestrator passes only artifacts between stages — ticket path, plan path, diff ref — never transcripts or agent self-assessments, and it never does stage work itself (see "Orchestrator discipline" in `claude-md-snippet.md`; role leakage is a recorded failure mode).

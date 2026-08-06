@@ -486,6 +486,40 @@ const assertAiMarker = (label, body) => {
     } finally { cleanup(root) }
   }
 
+  // P15: harness worktrees must not block delivery (issue #141, field report).
+  // At concurrency > 1 the Workflow tool puts each isolated agent's worktree inside the
+  // repo at `.claude/worktrees/wf_<runId>-<agentIndex>/`. Untracked, so `-uall` reports
+  // them and the clean-tree guard refused to merge — every delivery blocked. Reported
+  // from a run where 7 tickets produced 16 such directories.
+  //
+  // The second half is the point: the exemption must stay NARROW. Both assertions live in
+  // one test so "fix" cannot mean "stop checking the tree".
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const closed = join(root, 'closed.txt')
+      // shaped like the real thing, including the second checkout of one branch that a
+      // bounce produces, and a nested file so this is not just an empty directory
+      mkdirSync(join(repo, '.claude', 'worktrees', 'wf_c9071538-f0e-8', 'src'), { recursive: true })
+      writeFileSync(join(repo, '.claude', 'worktrees', 'wf_c9071538-f0e-8', 'src', 'app.js'), 'work in progress\n')
+      mkdirSync(join(repo, '.claude', 'worktrees', 'wf_c9071538-f0e-30'), { recursive: true })
+      writeFileSync(join(repo, '.claude', 'worktrees', 'wf_c9071538-f0e-30', '.git'), 'gitdir: ../../../.git/worktrees/x\n')
+      const porcelain = git(repo, ['status', '--porcelain', '-uall'])
+      check(S, 'P15 fixture is actually visible to git (the test would be vacuous otherwise)',
+        /\.claude\/worktrees\//.test(porcelain), porcelain)
+
+      const { r, sum } = deliver(repo, BASE_ARGS, { FAKE_GH_CLOSED_STATE: closed })
+      eq(S, 'P15 exit 0', r.status, 0)
+      check(S, 'P15 harness worktrees do not block delivery', sum && sum.merged && sum.dodPassed, sum && sum.notes)
+
+      // ...and the guard still works for anything else.
+      writeFileSync(join(repo, 'stray.txt'), 'not part of the pipeline\n')
+      const blocked = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--delivery', 'direct'], { FAKE_GH_CLOSED_STATE: closed })
+      check(S, 'P15 an unrelated untracked file STILL blocks the merge (exemption stays narrow)',
+        blocked.sum && /not clean/.test(blocked.sum.notes), blocked.sum && blocked.sum.notes)
+    } finally { cleanup(root) }
+  }
+
   // ---------------------------------------------------------------------
   // I1-I6: integration-branch fallback (issue #139)
   //
