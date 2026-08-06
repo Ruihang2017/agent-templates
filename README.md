@@ -110,7 +110,17 @@ git tag vX.Y.Z && git push origin vX.Y.Z   # X.Y.Z = the version in package.json
 
 CI re-runs the E2E gate, checks the tag matches `package.json`, and publishes to npm.
 
-**Track record, so you know what to expect:** as of 2026-07-29 this workflow has run twice and **published nothing** — `v0.8.0` and `v0.9.0` both failed with `npm error code EOTP`. Both times the workflow was correct (gates passed, tarball built, registry refused the token) and the version shipped by the manual fallback below. Treat the tag path as the intended route, not a proven one, until a run goes green.
+**Track record, so you know what to expect.** As of 2026-08-06 this workflow has **published nothing**: `v0.8.0` and `v0.9.0` both failed with `npm error code EOTP`, and `0.10.0` never went through it. Every release since 0.7.0 shipped by the manual fallback below — 0.8.1, 0.9.0, 0.10.0, **3/3**. Both CI failures were the workflow behaving correctly (gates passed, tarball built, the registry refused the token). Treat the tag path as the intended route, not a proven one, until a run goes green.
+
+Because manual publishing is the path that actually works, pushing a tag for a version **already on the registry** is now the normal case. A tag push therefore has three possible outcomes, and they mean different things:
+
+| Outcome | Meaning |
+|---|---|
+| **published** | the tag path worked — first time, if it happens |
+| **skipped** | the version was already on the registry, so there was nothing to do. Green, with a notice. This is what tagging after a manual publish looks like, and it is **not** a failure |
+| **failed** | a real problem. If the log says `npm error code EOTP`, it is the token type — see below |
+
+The skip is checked only *after* the E2E and tag-matches-version gates, so a mismatched tag still fails closed rather than being waved through. A registry lookup that errors also fails the run: "cannot tell" and "already published" are different answers, and treating the first as the second would silently skip a real publish.
 
 **One-time setup:** add an `NPM_TOKEN` repo secret (Settings → Secrets and variables → Actions). It must be a **Granular Access Token** with *Read and write* on this package — **not** a Classic token. npm restricts classic tokens that bypass 2FA for direct publishing, so with the wrong type CI passes both gates, builds the tarball, and only then fails with `npm error code EOTP` ("requires a one-time password"), which no CI runner can supply. That is the single most likely cause of a tagged release failing at the last step — and it is not detectable earlier: `npm whoami` succeeds for both token types and `npm publish --dry-run` never touches auth.
 

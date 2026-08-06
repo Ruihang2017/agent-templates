@@ -283,6 +283,23 @@ export async function run() {
       check(S, 'publish workflow gates on the E2E suite', /npm test/.test(text))
       check(S, 'publish workflow refuses a tag/version mismatch', /does not match package\.json/.test(text))
       check(S, 'publish workflow reads the token from a secret, never a literal', /secrets\.NPM_TOKEN/.test(text) && !/npm_[A-Za-z0-9]{20,}/.test(text))
+
+      // issue #147: manual publishing is the path that actually works (0.8.1, 0.9.0,
+      // 0.10.0), so a tag is routinely pushed for a version already on the registry.
+      // Without the skip that is a 403 and the run goes RED for a release that succeeded.
+      check(S, 'publish workflow skips a version already on the registry', /Already published\?/.test(text) && /skip=true/.test(text))
+      check(S, 'the publish step is conditional on that skip', /if:\s*steps\.already\.outputs\.skip\s*!=\s*'true'/.test(text))
+      // Ordering is load-bearing: the skip must come AFTER both gates, or a mismatched
+      // tag could be waved through as a green "nothing to do".
+      const iGate = text.indexOf('Tag must match package.json version')
+      const iE2E = text.indexOf('E2E gate')
+      const iSkip = text.indexOf('Already published?')
+      check(S, 'the skip is evaluated after the tag-match and E2E gates',
+        iGate !== -1 && iE2E !== -1 && iSkip !== -1 && iSkip > iGate && iSkip > iE2E)
+      // "cannot tell" must not be treated as "already done" — that would silently skip
+      // a real publish.
+      check(S, 'a registry lookup failure fails the run instead of skipping',
+        /refusing to guess whether/.test(text))
     }
   }
 

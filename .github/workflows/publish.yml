@@ -56,7 +56,33 @@ jobs:
           fi
       - name: E2E gate
         run: npm test
+      # Manual publishing is the ACTUAL release path here (0.8.1, 0.9.0, 0.10.0 — 3/3),
+      # so a tag is routinely pushed for a version that is already on the registry. Left
+      # alone, `npm publish` returns a 403 duplicate and this run goes red for a release
+      # that in fact succeeded — a red X that means the opposite of what a reader assumes.
+      # Deliberately placed AFTER both gates above, so a mismatched tag still fails closed
+      # rather than being short-circuited into a green skip.
+      - name: Already published?
+        id: already
+        shell: bash
+        run: |
+          pkg=$(node -p "require('./package.json').name")
+          ver=$(node -p "require('./package.json').version")
+          # A lookup FAILURE is not an answer. "cannot tell" and "already done" are
+          # different, and treating the first as the second would silently skip a real
+          # publish — so this only proceeds on a successful query.
+          if ! versions=$(npm view "$pkg" versions --json 2>/dev/null); then
+            echo "::error::could not query the registry for $pkg — refusing to guess whether $ver is published"
+            exit 1
+          fi
+          if node -e "process.exit(JSON.parse(process.argv[1]).includes(process.argv[2])?0:1)" "$versions" "$ver"; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$pkg@$ver is already on the registry — nothing to publish. This is the expected outcome when the version was published by hand and the tag was pushed afterwards (see README § CI & releasing)."
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish to npm
+        if: steps.already.outputs.skip != 'true'
         run: npm publish
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
