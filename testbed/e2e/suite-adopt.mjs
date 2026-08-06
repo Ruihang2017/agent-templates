@@ -72,6 +72,11 @@ export async function run() {
     {
       const gi1 = readFileSync(join(t1, '.gitignore'), 'utf8')
       check(S, 'A1 gitignores .env so a token cannot be committed', /^\.env$/m.test(gi1))
+      // issue #141: at concurrency > 1 the harness puts each isolated agent's worktree at
+      // .claude/worktrees/wf_<runId>-<agentIndex>/ INSIDE the repo. Untracked, they trip
+      // deliver's clean-tree guard and blocked every delivery in the field. Its own marker,
+      // so a repo adopted before this rule existed gains it on a re-adopt.
+      check(S, 'A1 gitignores .claude/worktrees/ (harness worktrees)', /^\.claude\/worktrees\/$/m.test(gi1))
       check(S, 'A1 Asana layer arrives inert (no .claude/asana.json)', !existsSync(join(t1, '.claude', 'asana.json')))
       // An un-allowlisted deterministic script prompts on every call, which BREAKS
       // autonomous and headless runs rather than merely annoying — so the merge is
@@ -100,6 +105,7 @@ export async function run() {
     // The integration section has its OWN marker, so a re-run must not duplicate it either.
     eq(S, 'A2 Asana CLAUDE.md section present exactly once', (cm.match(/asana-integration:start/g) || []).length, 1)
     eq(S, 'A2 .env rule present exactly once', (readFileSync(join(t1, '.gitignore'), 'utf8').match(/never commit tokens/g) || []).length, 1)
+    eq(S, 'A2 worktree rule present exactly once', (readFileSync(join(t1, '.gitignore'), 'utf8').match(/harness worktrees/g) || []).length, 1)
     {
       const allow2 = JSON.parse(readFileSync(join(t1, '.claude', 'settings.json'), 'utf8')).permissions.allow
       eq(S, 'A2 the asana allow rule was not duplicated by the re-run',
