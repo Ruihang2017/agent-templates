@@ -11,6 +11,7 @@
   "files": [
     "scripts/",
     "patterns/",
+    "integrations/",
     "templates/",
     "ADOPTING.md",
     "CLAUDE.md"
