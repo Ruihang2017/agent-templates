@@ -110,14 +110,18 @@ git tag vX.Y.Z && git push origin vX.Y.Z   # X.Y.Z = the version in package.json
 
 CI re-runs the E2E gate, checks the tag matches `package.json`, and publishes to npm.
 
-**Track record, so you know what to expect.** As of 2026-08-06 this workflow has **published nothing**: `v0.8.0` and `v0.9.0` both failed with `npm error code EOTP`, and `0.10.0` never went through it. Every release since 0.7.0 shipped by the manual fallback below — 0.8.1, 0.9.0, 0.10.0, **3/3**. Both CI failures were the workflow behaving correctly (gates passed, tarball built, the registry refused the token). Treat the tag path as the intended route, not a proven one, until a run goes green.
+**Track record, so you know what to expect.** As of 2026-08-06 this workflow has **published nothing — 0/3**. `v0.8.0`, `v0.9.0` and `v0.10.0` all failed with `npm error code EOTP`. Every release since 0.7.0 shipped by the manual fallback below — 0.8.1, 0.9.0, 0.10.0, **3/3**. All three CI failures were the workflow behaving correctly: the tag-match and E2E gates passed, and the registry refused the token at the last step. Treat the tag path as the intended route, not a proven one, until a run goes green.
+
+Three consecutive `EOTP` failures is no longer a suspicion about the `NPM_TOKEN` secret — it is evidence. It is still a Classic token, and only a repo admin can replace it (see **One-time setup** below).
+
+**A tag push runs the workflow from the *tagged commit*, not from `main`.** That is why `v0.10.0` failed even though the already-published skip had already merged: the tag deliberately points at the released tree, which predates the fix. Later tags will use it.
 
 Because manual publishing is the path that actually works, pushing a tag for a version **already on the registry** is now the normal case. A tag push therefore has three possible outcomes, and they mean different things:
 
 | Outcome | Meaning |
 |---|---|
 | **published** | the tag path worked — first time, if it happens |
-| **skipped** | the version was already on the registry, so there was nothing to do. Green, with a notice. This is what tagging after a manual publish looks like, and it is **not** a failure |
+| **skipped** | the version was already on the registry, so there was nothing to do. Green, with a notice. This is what tagging after a manual publish looks like, and it is **not** a failure. It works **even while the token is broken**: the check uses `npm view`, which needs no auth on a public package, and it runs before `npm publish` — which is exactly why a broken-token run reports `EOTP` rather than a duplicate-version error. Tagging is therefore decoupled from the token entirely |
 | **failed** | a real problem. If the log says `npm error code EOTP`, it is the token type — see below |
 
 The skip is checked only *after* the E2E and tag-matches-version gates, so a mismatched tag still fails closed rather than being waved through. A registry lookup that errors also fails the run: "cannot tell" and "already published" are different answers, and treating the first as the second would silently skip a real publish.
