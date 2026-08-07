@@ -27,6 +27,11 @@ scripts/
 templates/                             # UNIVERSAL — shared by all patterns and by this repo itself
   pattern-README.template.md           # mandatory starting point for every new pattern
   ticket.template.md                   # the ticket format (field-proven: fx / PIL-15 / FND-9 standard)
+  breakdown-prd-standalone.md          # reference text, wired into nothing — a portable
+                                       #   /breakdown-prd for projects that CANNOT adopt the
+                                       #   pattern (own subagents / layout / no Workflow tool).
+                                       #   Derived from ticket.template.md; re-derive if that
+                                       #   changes. Prefer /breakdown-prd when adoption is possible
   tracker/                             # tracker-native templates: github/ + gitlab/ — issues (bug-report,
                                        #   task, decision-record) and the PR/MR template
 patterns/<pattern-name>/               # kebab-case; one directory per pattern
