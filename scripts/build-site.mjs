@@ -19,6 +19,11 @@ import { fileURLToPath } from 'node:url'
 // dag-report.mjs use — never hand-authored — so the site cannot advertise a schedule the
 // pipeline would not actually produce.
 import { simulate } from '../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/dag-core.mjs'
+// The hub pane's brief anatomy and wave board are rendered from the REAL briefs committed
+// at testbed/hub-rehearsal/, parsed with the pattern's own parser. The page therefore
+// cannot advertise a brief shape the validator would reject, or a wave order the driver
+// would not schedule (catalog issue #165).
+import { parseBrief, readyBriefs } from '../patterns/hub-and-spoke-orchestrator-executors/scaffold/.claude/scripts/brief.mjs'
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const argv = process.argv.slice(2)
@@ -334,6 +339,75 @@ const HUB_STEPS = [
   [TILE_BLUE, dotGlyph(5), 'Collect &amp; Gate 2',
     `<code>/hub-collect</code> — re-audit, re-test, review, merge. <b>quarantined</b> outranks green tests; <b>unverified</b> never merges. Then your smoke test.`],
 ]
+
+// ---------------------------------------------------------------------------
+// Hub-and-spoke: what a brief IS, and how the briefs schedule.
+//
+// Read from the committed rehearsal briefs rather than written by hand, so the page shows
+// an artifact that really passed the dispatch gate and really ran. The wave order is
+// recomputed here with the pattern's own readyBriefs(), which is what the driver calls —
+// the page cannot show a schedule the driver would not produce.
+// ---------------------------------------------------------------------------
+const REHEARSAL_BRIEFS = (() => {
+  const dir = join(ROOT, 'testbed', 'hub-rehearsal', 'docs', 'briefs')
+  if (!existsSync(dir)) return []
+  return readdirSync(dir).filter((f) => f.endsWith('.md')).sort()
+    .map((f) => {
+      const raw = readFileSync(join(dir, f), 'utf8')
+      const b = parseBrief(raw, f)
+      b.lines = raw.replace(/\r\n/g, '\n').split('\n').length
+      return b
+    })
+})()
+
+const hubWaves = (() => {
+  const out = []
+  const done = []
+  for (let guard = 0; guard < 10; guard++) {
+    const wave = readyBriefs(REHEARSAL_BRIEFS, done)
+    if (!wave.length) break
+    out.push(wave)
+    for (const b of wave) done.push(b.data.id)
+  }
+  return out
+})()
+
+const BRIEF_FIELDS = [
+  ['id', 'Stable and never reused. Names the branch (<code>spoke/&lt;id&gt;</code>) and the worktree.'],
+  ['blocked_by', 'The machine-readable DAG. Dangling ids and cycles fail the whole set before any worktree exists.'],
+  ['file_scope', 'The write-set this brief <b>owns</b>. Audited against the committed diff, so straying is detected, not trusted. A repo-wide or firewall-denied scope is rejected at decomposition time.'],
+  ['test_cmd', 'Scoped to <b>this brief’s module</b>, never the whole suite — the full suite cannot pass until the last brief lands, so a whole-suite command fails every brief but that one.'],
+]
+const BRIEF_SECTIONS = [
+  ['## Contract', 'The interfaces, types, signatures and <b>exact error messages</b> the executor transcribes. This is the section that makes low effort safe: nothing is left to decide.'],
+  ['## Deliverables', 'Code-level precision — exact exports, call sites, ordering constraints.'],
+  ['## Done when', 'The observable outcome, so completion is checkable independently of the tests passing.'],
+  ['## Out of scope', 'Each exclusion <b>names its owner</b>: &ldquo;no schema changes — that is FND-01&rdquo;. Unowned exclusions read as oversights and get helpfully implemented.'],
+]
+
+const briefAnatomy = REHEARSAL_BRIEFS.length ? `
+    <div class="fact" style="display:block;margin-bottom:15px">
+      <p style="margin:0 0 8px"><b>One brief = one disjoint write-set.</b> Not a feature, not an effort estimate. Two briefs may run at once exactly when the files they own do not overlap, so the decomposition is a partition of the filesystem — and the audit checks it against what the executor actually wrote.</p>
+      <p style="margin:0 0 10px">In the committed rehearsal a <b>${esc(String(readFileSync(join(ROOT, 'testbed', 'hub-rehearsal', 'docs', 'PRD.md'), 'utf8').replace(/\r\n/g, '\n').split('\n').length))}-line PRD</b> with ${REHEARSAL_BRIEFS.length} requirements became <b>${REHEARSAL_BRIEFS.length} briefs of ${Math.min(...REHEARSAL_BRIEFS.map((b) => b.lines))}&ndash;${Math.max(...REHEARSAL_BRIEFS.map((b) => b.lines))} lines</b>, each owning exactly one file. A brief is <em>longer</em> than the PRD section it implements, on purpose: the executor starts cold and is forbidden to design, so the contract has to be in the brief.</p>
+      <div class="cmds">
+        <div class="cmds-label">Frontmatter — the machine-readable half</div>
+        ${BRIEF_FIELDS.map(([k, d]) => `<div class="cmd"><code class="cmd-name">${esc(k)}</code><span class="cmd-desc">${d}</span></div>`).join('\n        ')}
+      </div>
+      <div class="cmds" style="margin-top:10px">
+        <div class="cmds-label">Body — every section required, empty ones rejected</div>
+        ${BRIEF_SECTIONS.map(([k, d]) => `<div class="cmd"><code class="cmd-name">${esc(k)}</code><span class="cmd-desc">${d}</span></div>`).join('\n        ')}
+      </div>
+    </div>` : ''
+
+const hubBoard = hubWaves.length ? `
+    <div class="fact" style="display:block;margin-bottom:15px">
+      <p style="margin:0 0 4px"><b>${REHEARSAL_BRIEFS.length} briefs, ${hubWaves.length} waves</b> — the real schedule from the committed rehearsal, recomputed here by the driver's own scheduler. Wave 2 cannot start until wave 1 is merged, because its worktrees fork from the default branch.</p>
+      <!-- deliberately NOT data-board=: the lane demo's wave-count check splits the page on
+           that attribute, and a fifth board would silently break its arithmetic -->
+      <div class="lane-board" data-hub-board="1">
+        ${hubWaves.map((wave, i) => `<div class="lw"><span class="lw-n">wave ${i + 1}</span>${wave.map((b) => `<span class="lt"><span class="lt-m">${esc(String(b.data.file_scope[0] || ''))}</span>${esc(b.data.id)}</span>`).join('')}</div>`).join('\n        ')}
+      </div>
+    </div>` : ''
 
 // Use-when bullets are intentionally gone (parse + render): the approved mock's
 // pattern card is title + status chip + summary + role chips + links only.
@@ -687,6 +761,17 @@ const html = `<!doctype html>
     </div>
     <div class="steps">
       ${HUB_STEPS.map(([tile, glyph, t, d], i) => `<div class="step"><span class="step-ico" style="${tile}">${glyph}</span><h3>${i + 1}. ${t}</h3><p>${d}</p></div>`).join('\n      ')}
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="gx" style="width:20px;height:18px;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="position:absolute;left:0;top:0;width:14px;height:18px;border-radius:3px;background:#fffaf2;box-shadow:0 1px 3px rgba(var(--amb),0.3)"></span><span style="position:absolute;left:3px;top:4px;width:8px;height:2px;border-radius:1px;background:#9ed095"></span><span style="position:absolute;left:3px;top:8px;width:8px;height:2px;border-radius:1px;background:#f6a5bb"></span><span style="position:absolute;left:3px;top:12px;width:5px;height:2px;border-radius:1px;background:#b3cdf0"></span></span><h2>What a brief is, and how big</h2></div>
+    ${briefAnatomy}
+    ${hubBoard}
+    <div class="steps">
+      <div class="step"><span class="step-ico" style="${TILE_GREEN}">${dotGlyph(1)}</span><h3>Cut on file ownership</h3><p>Not on features. Two briefs run at once exactly when their write-sets are disjoint, so the question at every boundary is <b>who writes these files</b> — never &ldquo;do these belong together&rdquo;.</p></div>
+      <div class="step"><span class="step-ico" style="${TILE_YELLOW}">${dotGlyph(2)}</span><h3>Shared things go first</h3><p>Schemas, types, contracts and config land in <b>one foundation brief</b> everything else is <code>blocked_by</code>. Duplicating a shared contract to dodge a dependency produces two incompatible versions of it.</p></div>
+      <div class="step"><span class="step-ico" style="${TILE_BLUE}">${dotGlyph(3)}</span><h3>A serial module is a bug now</h3><p>If a module's briefs form one straight chain it can never use more than one lane. That is a decomposition problem to fix while briefs are still cheap — not a scheduling detail to discover mid-run.</p></div>
     </div>
   </section>
 

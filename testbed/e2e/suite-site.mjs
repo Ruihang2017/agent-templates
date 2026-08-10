@@ -10,10 +10,17 @@ import { fileURLToPath } from 'node:url'
 import { check, eq } from './lib.mjs'
 // same scheduler model the site and the runner use, so the demo cannot drift
 import { simulate } from '../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/dag-core.mjs'
+// the hub board is re-derived with the pattern's own scheduler, so the page cannot show
+// an order the driver would not produce
+import { parseBrief, readyBriefs } from '../../patterns/hub-and-spoke-orchestrator-executors/scaffold/.claude/scripts/brief.mjs'
 
 const S = 'site'
 const REPO = fileURLToPath(new URL('../../', import.meta.url))
 const SCRIPT = join(REPO, 'scripts', 'build-site.mjs')
+
+// Mirror build-site's own escaping, so a value containing & < > " is compared in the form
+// it actually reaches the page rather than false-failing.
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 // Every shipped slash command must surface in BOTH the generated site and the npm
 // README — otherwise a command ships undiscoverable, the way /start-all once did
@@ -233,6 +240,63 @@ export async function run() {
       // includes() checks above discriminate rather than passing on any page
       check(S, 'tab coverage is non-vacuous (sentinel absent)',
         !html.includes('data-tab="definitely-not-a-pattern"') && !html.includes('data-pane="definitely-not-a-pattern"'))
+    }
+
+    // The hub pane must SHOW its artifact, not just name its commands (issue #165). The
+    // three-agent pane renders a real dag.html miniature; without an equivalent the hub
+    // pane described a flow whose central artifact — the brief — a reader never saw, and
+    // "what granularity?" had no answer on the page.
+    {
+      check(S, 'the hub pane explains what a brief is', /What a brief is, and how big/.test(html))
+      check(S, 'the granularity rule is stated, not implied',
+        /One brief = one disjoint write-set/.test(html))
+      // every frontmatter field a reader must fill is named
+      for (const field of ['id', 'blocked_by', 'file_scope', 'test_cmd']) {
+        check(S, `brief anatomy names the ${field} field`, html.includes(`>${field}<`))
+      }
+      // and every required body section, since an empty one is rejected by the validator
+      for (const sec of ['## Contract', '## Deliverables', '## Done when', '## Out of scope']) {
+        check(S, `brief anatomy names ${sec}`, html.includes(esc(sec)))
+      }
+      // The scoped-test_cmd finding from the 4-brief rehearsal must reach the page: it is
+      // the mistake most likely to be made, and it fails every brief but the last.
+      check(S, 'the page warns that test_cmd is per-brief, not whole-suite',
+        /never the whole suite/i.test(html))
+
+      // The wave board is recomputed here from the SAME committed briefs with the pattern's
+      // own scheduler, so the page cannot advertise an order the driver would not produce.
+      const briefsDir = join(REPO, 'testbed', 'hub-rehearsal', 'docs', 'briefs')
+      check(S, 'the rehearsal briefs the page renders exist', existsSync(briefsDir))
+      if (existsSync(briefsDir)) {
+        const briefs = readdirSync(briefsDir).filter((f) => f.endsWith('.md')).sort()
+          .map((f) => parseBrief(readFileSync(join(briefsDir, f), 'utf8'), f))
+        const waves = []
+        const done = []
+        for (let g = 0; g < 10; g++) {
+          const w = readyBriefs(briefs, done)
+          if (!w.length) break
+          waves.push(w)
+          for (const b of w) done.push(b.data.id)
+        }
+        const chunk = (html.split('data-hub-board')[1] || '').split('</section>')[0]
+        eq(S, 'hub board renders one row per wave', (chunk.match(/class="lw"/g) || []).length, waves.length)
+        eq(S, 'hub board schedules every brief', (chunk.match(/class="lt"/g) || []).length, briefs.length)
+        check(S, 'hub board has more than one wave — it must show a real dependency',
+          waves.length >= 2)
+        for (const b of briefs) {
+          check(S, `hub board shows brief ${b.data.id}`, chunk.includes(esc(b.data.id)))
+          check(S, `hub board shows the write-set for ${b.data.id}`, chunk.includes(esc(b.data.file_scope[0])))
+        }
+        // wave 1 must contain exactly the briefs with no dependencies — if this ever
+        // matched everything, the board would be a flat list pretending to be a schedule
+        const firstRow = chunk.split('class="lw"')[1] || ''
+        for (const b of waves[0]) check(S, `wave 1 contains ${b.data.id}`, firstRow.includes(esc(b.data.id)))
+        for (const b of (waves[1] || [])) check(S, `wave 1 does NOT contain the blocked ${b.data.id}`, !firstRow.includes(esc(b.data.id)))
+      }
+      // the hub board must not disturb the lane demo's arithmetic, which splits the page
+      // on data-board= and counts waves per chunk
+      check(S, 'the hub board does not register as a lane-demo board',
+        !/data-board="hub/.test(html))
     }
 
     // clay restyle contract (issue #19)
