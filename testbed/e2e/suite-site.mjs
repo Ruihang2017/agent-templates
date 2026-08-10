@@ -299,6 +299,70 @@ export async function run() {
         !/data-board="hub/.test(html))
     }
 
+    // Containment (issue #166). Tabs only help if the pattern-specific content is actually
+    // INSIDE them. Everything outside the panes — hero, stats, footer — is read by someone
+    // looking at either pattern, so a claim there must hold for BOTH. This is the gate:
+    // no pattern's own command may appear outside that pattern's pane.
+    {
+      const patternDirs = readdirSync(join(REPO, 'patterns'), { withFileTypes: true })
+        .filter((d) => d.isDirectory() && existsSync(join(REPO, 'patterns', d.name, 'scaffold')))
+        .map((d) => d.name)
+
+      // pane boundaries, in document order
+      const bounds = patternDirs.map((dir) => {
+        const start = html.indexOf(`id="pane-${dir}"`)
+        return { dir, start }
+      }).filter((b) => b.start !== -1).sort((a, b) => a.start - b.start)
+      check(S, 'containment gate found every pane', bounds.length === patternDirs.length)
+      // Every pane must also be CLOSED. A missing </div> nests the next pane inside the
+      // previous one, so hiding one hides both and the tabs half-work — and the boundary
+      // arithmetic below, which keys off the id= positions, cannot see it. The closing
+      // marker comment is what makes this checkable.
+      eq(S, 'every pane is explicitly closed',
+        (html.match(/<\/div><!-- \/pane /g) || []).length, patternDirs.length)
+      for (let i = 0; i < bounds.length; i++) {
+        bounds[i].end = i + 1 < bounds.length ? bounds[i + 1].start : html.indexOf('<footer>')
+      }
+
+      // the closing script block re-states pattern dirs (the quickstart map); commands are
+      // what we police, and they never appear there
+      let policed = 0
+      for (const { dir, start, end } of bounds) {
+        const cdir = join(REPO, 'patterns', dir, 'scaffold', '.claude', 'commands')
+        if (!existsSync(cdir)) continue
+        for (const f of readdirSync(cdir).filter((n) => n.endsWith('.md'))) {
+          const name = '/' + f.replace(/\.md$/, '')
+          // the mapping section inside the hub pane deliberately names three-agent
+          // commands to explain what replaced them — that is inside a pane, so it is fine.
+          // What must not happen is a command appearing OUTSIDE every pane.
+          const outside = [...html.matchAll(new RegExp(name.replace(/[/]/g, '\\/') + '(?![a-z-])', 'g'))]
+            .map((m) => m.index)
+            .filter((i) => !bounds.some((b) => i >= b.start && i < b.end))
+          policed++
+          eq(S, `command ${name} never appears outside the pattern panes`, outside.length, 0)
+          // and it must appear inside its OWN pane at least once, or the pane is not
+          // actually documenting the pattern it claims to
+          check(S, `command ${name} appears inside its own pane`,
+            html.slice(start, end).includes(name))
+        }
+      }
+      check(S, 'containment gate policed some commands', policed >= 6)
+
+      // Claims that sit outside the tabs must be true of every pattern. These two were
+      // three-agent mechanisms stated as catalog facts.
+      const outsidePanes = html.slice(0, bounds.length ? bounds[0].start : html.length)
+      check(S, 'the hero does not claim hooks enforce boundaries (three-agent only)',
+        !/enforced by hooks/i.test(outsidePanes))
+      check(S, 'the hero does not advertise the nightly sweep (three-agent only)',
+        !/nightly sweep/i.test(outsidePanes))
+      // guard the guard: the nightly sweep IS still on the page, inside its own pane —
+      // otherwise the two checks above would pass by the feature having been deleted
+      check(S, 'the nightly sweep is still documented, inside the three-agent pane',
+        /nightly sweep/i.test(html.slice(
+          html.indexOf('id="pane-three-agent-architect-builder-reviewer"'),
+          html.indexOf('id="pane-hub-and-spoke-orchestrator-executors"'))))
+    }
+
     // clay restyle contract (issue #19)
     check(S, 'loads Baloo 2 + Nunito from Google Fonts', html.includes('fonts.googleapis.com/css2') && html.includes('Baloo+2') && html.includes('Nunito'))
     check(S, 'Baloo 2 on headings, Nunito on body', /h1\{[^}]*Baloo 2/.test(html.replace(/\n/g, '')) && /body\{[^}]*Nunito/.test(html.replace(/\n/g, '')))

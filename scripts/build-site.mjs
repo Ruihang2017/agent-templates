@@ -282,10 +282,17 @@ const FACTS = [
     'Every model/effort claim carries a source label and an expiry date'],
   ['background:#b3cdf0;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(40,80,150,0.2)',
     `<span style="width:16px;height:18px;background:#fffaf2;border-radius:5px 5px 50% 50% / 5px 5px 75% 75%;box-shadow:inset 0 -3px 4px rgba(40,80,150,0.25),0 2px 4px rgba(40,80,150,0.3);display:inline-block"></span>`,
-    'Role boundaries enforced by hooks, not prose'],
+    // Kept CATALOG-true. This used to say "enforced by hooks", which is the three-agent
+    // pattern's mechanism (a PreToolUse write guard); hub-and-spoke enforces its boundary
+    // with permission deny rules instead. The hero sits outside the tabs, so anything
+    // stated here must hold for every pattern (catalog issue #166).
+    'Role boundaries enforced by config, not prose'],
   ['background:#f9d66e;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(180,120,20,0.25)',
     `<span class="gx" style="width:17px;height:17px"><span style="position:absolute;inset:0;border-radius:50%;background:#fffaf2;box-shadow:0 2px 4px rgba(160,100,20,0.3)"></span><span style="position:absolute;left:6px;top:-2px;width:14px;height:14px;border-radius:50%;background:#f9d66e"></span></span>`,
-    'Nightly sweep triages and fixes issues while you sleep'],
+    // Also catalog-true. The nightly sweep is three-agent only — it needs a tracker, and
+    // hub-and-spoke has none — so that claim moved into its own pane and this states what
+    // every pattern in the catalog actually ships.
+    'Deterministic, zero-token E2E gates every scaffold change'],
 ]
 
 // pipeline steps: [icon-tile style, glyph markup, title, description]
