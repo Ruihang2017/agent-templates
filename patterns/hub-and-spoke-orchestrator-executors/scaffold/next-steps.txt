@@ -1,0 +1,12 @@
+  1. Review CLAUDE.md — add your project facts above the pipeline section, and read the
+     "Known limit" paragraph before you rely on this pattern for anything expensive.
+  2. Install the executor and check it answers:  codex --version
+     (this pattern does the implementation work with headless `codex exec`; without it
+      the hub has nothing to dispatch to). Node >= 18 on PATH.
+  3. In Claude Code, in the target repo:  /hub-brief
+     (the hub decomposes docs/PRD.md into contract-first briefs in docs/briefs/, then stops)
+  4. Gate 1 — review the briefs, then:  /hub-dispatch docs/briefs 4
+     (validate-all-or-dispatch-nothing, then N parallel executors in isolated worktrees)
+  5. /hub-collect docs/briefs --all        then, for what clears the gate:
+     /hub-collect docs/briefs --all --merge
+  6. Gate 2 — your smoke test, once the last brief is delivered.

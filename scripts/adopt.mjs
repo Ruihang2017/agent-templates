@@ -279,7 +279,10 @@ if (existsSync(rootPrd) && !existsSync(docsPrd)) {
   console.log('= exists  docs/PRD.md')
   skipped++
 } else {
-  note('  (note) no PRD.md found — write docs/PRD.md before running /breakdown-prd')
+  // Pattern-agnostic wording: every pattern starts from docs/PRD.md, but they start it
+  // with different commands, and naming the wrong one sends the user to a command that
+  // was never installed.
+  note('  (note) no PRD.md found — write docs/PRD.md before running the pattern\'s first command (see NEXT STEPS below)')
 }
 
 // 6. CLAUDE.md: create from the snippet, or append it once (marker-checked, never duplicated).
@@ -302,7 +305,17 @@ if (UPSTREAM) {
   snippet = snippet.replace(UP_RE, '')
   console.log('upstream escalation: off (enable with --upstream [owner/repo])')
 }
-const MARKER = '## Delivery pipeline — three-agent Architect / Builder / Reviewer'
+// Derived from the snippet, never hardcoded. This used to be the literal three-agent
+// heading, which was correct only while the catalog had exactly one pattern: adopting any
+// other pattern would look for a marker its snippet does not contain, find it missing on
+// every re-run, and append the whole block again each time (catalog issue #156). The
+// snippet's own first `## ` heading is the marker by construction, so it cannot drift.
+const MARKER = (snippet.match(/^## .+$/m) || [])[0]
+if (!MARKER) {
+  console.error(`error: ${join(scaffold, 'claude-md-snippet.md')} has no '## ' heading to use as its idempotency marker.`)
+  console.error('Without one, re-running adopt would append the snippet again every time. Add a heading to the snippet.')
+  process.exit(1)
+}
 const claudeMd = join(target, 'CLAUDE.md')
 if (!existsSync(claudeMd)) {
   const header = `# ${basename(target)} — Project Constitution\n\n> Auto-loaded into every session. Installed by agent-templates adopt.mjs on ${new Date().toISOString().slice(0, 10)}.\n> Add your project facts and non-negotiable constraints above the pipeline section.\n\n`
@@ -425,19 +438,27 @@ if (integrationsMissing.length) {
   console.error(`  This is a bug in the agent-templates package, not in your repo — please report it.`)
 }
 
+// Per-pattern, because the steps ARE the pattern: the three-agent flow starts at
+// /breakdown-prd and needs an authenticated tracker CLI, hub-and-spoke starts at
+// /hub-brief and needs the codex binary instead. Printing one pattern's steps after
+// installing another is worse than printing none — it names commands that do not exist.
+const stepsFile = join(scaffold, 'next-steps.txt')
+const nextSteps = existsSync(stepsFile)
+  ? readFileSync(stepsFile, 'utf8').replace(/\r\n/g, '\n').trimEnd()
+      .split('{{PLATFORM}}').join(PLATFORM)
+      .split('{{CATALOG}}').join(CATALOG)
+  : `  1. Review CLAUDE.md and add your project facts.
+  2. Run the pattern's first slash command in Claude Code — see
+     ${join(scaffold, 'INSTALL.md')} for the full flow.`
+
 console.log(`
 NEXT STEPS (details: ${join(CATALOG, 'ADOPTING.md')})
-  1. Review CLAUDE.md — set the Operating mode line (start: supervised) and add your
-     project facts; fill the Constraint check section of the PR/MR template.
-  2. Tracker: git remote + authenticated CLI (${PLATFORM} auth login). Node >= 18 on PATH.
-  3. In Claude Code, in the target repo:  /breakdown-prd
-     (Architect decomposes docs/PRD.md into sub-PRDs + tickets, then stops for your review)
-  4. Gate 1 — review the breakdown, then:  /start-milestone docs/prd/00-<module> supervised
-  5. Graduate to autonomous when the pattern holds; optional nightly sweep:
-     see the pattern's INSTALL.md § Nightly sweep.` +
+${nextSteps}` +
   // Only advertised when it actually arrived — telling someone to run a command that was
   // never installed is what made #143 worse than a plain omission.
+  // Unnumbered: the steps above are per-pattern now, so there is no fixed number to
+  // follow on from without silently mislabelling one pattern's list.
   (integrationsInstalled.has('asana') ? `
-  6. Optional — mirror milestones/tickets into Asana:  /connect-asana
+  Optional — mirror milestones/tickets into Asana:  /connect-asana
      (needs an ASANA_TOKEN env var and an existing Asana task for this repo;
       inert until configured. Details: ${join(CATALOG, 'integrations', 'asana', 'README.md')})` : ''))
