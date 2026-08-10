@@ -475,6 +475,28 @@ export async function run() {
       !deny.some((d) => d.startsWith('Read(.claude/worktrees')))
 
     const driver = readFileSync(join(SCAFFOLD, '.claude', 'scripts', 'dispatch-spokes.mjs'), 'utf8')
+
+    // The provider validates the output schema in STRICT mode and rejects the request
+    // with a 400 `invalid_json_schema` unless `required` lists every key in `properties`.
+    // An optional field must therefore be a nullable type, never an omission from
+    // `required`. This shipped broken and was caught only by the first real run
+    // (2026-08-10); the literal is checked here so it cannot regress silently, since no
+    // amount of stand-in-executor testing reaches the provider's validator.
+    const literal = driver.match(/const RESULT_SCHEMA = (\{[\s\S]*?\n\})\n/)
+    check(S, 'the result schema literal is extractable', Boolean(literal))
+    if (literal) {
+      const schema = new Function('return ' + literal[1])()
+      const props = Object.keys(schema.properties || {})
+      const required = schema.required || []
+      check(S, 'result schema has properties to check', props.length >= 3)
+      eq(S, 'every schema property is listed in `required` (provider strict mode)',
+        props.filter((p) => !required.includes(p)), [])
+      // the optional field must be expressed as nullable, which is what makes listing it
+      // in `required` correct rather than a lie about the executor's obligations
+      check(S, 'the optional field is nullable rather than omitted',
+        Array.isArray(schema.properties.blocked_reason?.type) && schema.properties.blocked_reason.type.includes('null'))
+      check(S, 'the schema is closed', schema.additionalProperties === false)
+    }
     check(S, 'driver uses the current sandbox flag, not the deprecated --full-auto',
       driver.includes("'--sandbox', 'workspace-write'") && !driver.includes('--full-auto'))
     check(S, 'driver reads completion from the artifact, not the exit code',

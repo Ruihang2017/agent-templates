@@ -29,7 +29,7 @@ npx agent-templates@latest adopt hub-and-spoke-orchestrator-executors .
 |---|---|
 | Node | >= 18 on `PATH` |
 | Git | a repo with at least one commit; `git worktree` available (git >= 2.5) |
-| Executor | the Codex CLI on `PATH`. Verify with `codex --version` |
+| Executor | the Codex CLI on `PATH`. Verify with `codex --version` (rehearsed against `codex-cli 0.147.0`) |
 | Test command | the project must have a real one-line test command — it goes in each brief's `test_cmd` and is the pipeline's only correctness gate before review |
 
 **The executor is a hard dependency, not an optional accelerator.** Without it there is no pattern here — just one Claude session doing all the work, which is what the three-agent pattern already does better.

@@ -47,14 +47,23 @@ const TEST_CMD_FILE = '.test_cmd'
 // the driver needs to know "did you finish, and what did you not do", nothing more. Rich
 // self-reports invite the executor to grade its own work, which is exactly what the
 // firewall audit exists to avoid depending on.
+// EVERY key in `properties` must also appear in `required`. That is not a style choice:
+// the provider validates this schema in strict mode and rejects the request outright with
+// `invalid_json_schema` ("'required' is required to be supplied and to be an array
+// including every key in properties") — a 400 before the model runs at all. An optional
+// field is expressed as a nullable type, never by omission from `required`.
+//
+// Found on the first real run against codex-cli 0.147.0 on 2026-08-10, with
+// `blocked_reason` omitted from `required`. No amount of documentation-checking would
+// have caught it; only invoking the real executor did.
 const RESULT_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['status', 'summary'],
+  required: ['status', 'summary', 'blocked_reason'],
   properties: {
     status: { type: 'string', enum: ['done', 'blocked'] },
     summary: { type: 'string' },
-    blocked_reason: { type: 'string' },
+    blocked_reason: { type: ['string', 'null'] },
   },
 }
 
@@ -133,9 +142,11 @@ function run(cmd, args, opts = {}) {
  * exercised against a stand-in executor in tests, with no tokens and no network — the
  * alternative is an untested driver, which is the more expensive option.
  *
- * On Windows an npm-installed CLI is usually a `.cmd` shim, which `spawn` will not
- * resolve without a shell; pass `--codex codex.cmd` there rather than making every
- * invocation go through a shell, which would require quoting paths that contain spaces.
+ * The official Windows installer ships a real `codex.exe`, which `spawn` resolves with no
+ * shell — verified on codex-cli 0.147.0, 2026-08-10. If you installed the CLI some other
+ * way and it landed as a `.cmd`/`.ps1` shim, `spawn` will not resolve it; pass the shim's
+ * full name via `--codex` rather than routing every invocation through a shell, which
+ * would require quoting paths that contain spaces.
  */
 function executorCommand(bin, args) {
   return /\.(mjs|js)$/i.test(bin) ? { cmd: process.execPath, args: [bin, ...args] } : { cmd: bin, args }
@@ -276,7 +287,13 @@ async function runSpoke(o, b, base) {
     rec.repairs = round
     const exec = await runExecutor(o, wt, prompt)
     if (!exec.result) {
+      // The executor's own stderr is the ONLY diagnosis available here, so it is carried
+      // into the report rather than swallowed. Found the hard way: the first real run
+      // failed this way and the report said nothing about why, which made a one-line
+      // configuration mistake look like a broken pattern.
+      const why = (exec.raw.err || exec.raw.out || '').trim().split('\n').slice(-8).join('\n')
       rec.reason = `executor produced no parseable result artifact (${RESULT_FILE}) — treating as failure regardless of its exit code (${exec.raw.status})`
+        + (why ? `\n               executor said: ${why}` : '')
       break
     }
     if (exec.result.status === 'blocked') {
