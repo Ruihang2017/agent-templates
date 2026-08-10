@@ -50,6 +50,10 @@ integrations/<name>/                   # UNIVERSAL optional add-ons — adopt.mj
 testbed/                               # E2E for the pattern chain (see testbed/README.md)
   e2e/run-e2e.mjs                      # Level 0: deterministic, zero-token — the merge gate for scaffold changes
   app/                                 # Level 1: tiny real target project for live pipeline rehearsals
+  hub-rehearsal/                       # Level 1 for hub-and-spoke: a 4-brief PRD + tests, no src/.
+                                       #   `node testbed/hub-rehearsal/rehearse.mjs` runs the real
+                                       #   Codex executor in a TEMP clone — SPENDS TOKENS, never
+                                       #   called by run-e2e.mjs, never writes this repo
 .claude/                               # self-hosted pattern machinery — byte-synced scaffold copies (see "How this repo develops itself")
 .github/ISSUE_TEMPLATE/                # issue templates (from the scaffold) — pattern-tweak requests from other projects land here
 ```

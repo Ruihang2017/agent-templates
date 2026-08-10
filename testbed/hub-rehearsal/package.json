@@ -1,0 +1,8 @@
+{
+  "name": "spend",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Level-1 rehearsal target for hub-and-spoke-orchestrator-executors. Not useful software.",
+  "scripts": { "test": "node --test" }
+}
