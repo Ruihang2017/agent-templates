@@ -2,6 +2,35 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
+## Unreleased
+
+### New pattern: `hub-and-spoke-orchestrator-executors` (status `proposed`)
+
+A second point on the cost/assurance curve. One Claude Opus 5 **hub** decomposes a PRD into contract-first briefs, N headless `codex exec` **spokes** implement one brief each at low reasoning effort in isolated git worktrees, and the *same* hub session then audits, reviews and merges.
+
+```
+npx agent-templates@latest adopt hub-and-spoke-orchestrator-executors .
+```
+
+**Read this before adopting it.** The hub reviews diffs written against a contract the hub itself wrote, in the same context. That review is **not independent** — it is the thing this pattern trades away for cost and throughput, and it will not catch a wrong brief that was faithfully implemented. If a bad merge is expensive, keep using `three-agent-architect-builder-reviewer`, whose independent reviewer exists for exactly that case. The comparison table is in the README.
+
+Requires the **Codex CLI** on `PATH`; there is no fallback without it.
+
+What is mechanical rather than advisory:
+
+- **All-or-nothing dispatch** — one invalid brief dispatches nothing (missing/empty contract section, repo-wide or denied `file_scope`, missing `test_cmd`, duplicate ids, dangling `blocked_by`, cycles, unordered briefs with overlapping scopes).
+- **A global file firewall** — no spoke may write dependency, lock, build, CI, secret, or agent-config files, whatever its brief says. Deny is checked before scope, so a `**` scope cannot launder a lockfile edit.
+- **`quarantined` outranks green tests** — a spoke that passed its tests while writing outside its scope does not merge.
+- **`unverified` is not a pass** — a branch whose tests could not be re-run does not merge.
+- **Executor completion is read from its result artifact, never from its exit code** — `codex exec`'s exit codes are undocumented (checked 2026-08-10), so trusting them would be an assumption.
+
+Covered by a new E2E suite (`testbed/e2e/suite-hub.mjs`, 100 checks) driving the real scripts against a controllable stand-in executor.
+
+### Fixed — affects existing installs
+
+- **`adopt` derives the CLAUDE.md idempotency marker from the snippet** instead of hardcoding the three-agent heading. The hardcoded marker was correct only while the catalog had one pattern; adopting any other one would fail to find it and re-append the whole pipeline section on **every** re-run.
+- **`adopt`'s NEXT STEPS are now per-pattern** (`scaffold/next-steps.txt`). Printing one pattern's steps after installing another names commands that do not exist.
+
 ## 0.10.0 — 2026-08-06
 
 ### Upgrading from 0.9.0 — read this first

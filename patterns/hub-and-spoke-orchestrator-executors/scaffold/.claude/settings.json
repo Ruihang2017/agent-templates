@@ -1,0 +1,33 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node .claude/scripts/dispatch-spokes.mjs:*)",
+      "Bash(node .claude/scripts/collect.mjs:*)",
+      "Bash(codex --version)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git diff:*)",
+      "Bash(git show:*)",
+      "Bash(git branch:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(git merge-base:*)",
+      "Bash(git worktree list:*)",
+      "Bash(git worktree remove:*)",
+      "Bash(npm test:*)",
+      "Bash(npm run test:*)",
+      "Bash(node --test:*)"
+    ],
+    "deny": [
+      "Edit(.claude/worktrees/**)",
+      "Write(.claude/worktrees/**)",
+      "NotebookEdit(.claude/worktrees/**)"
+    ]
+  }
+}

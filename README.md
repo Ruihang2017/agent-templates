@@ -45,6 +45,19 @@ git diff        # re-apply your customizations (esp. .claude/settings.json)
 | Pattern | Status | As of | Summary |
 |---|---|---|---|
 | [three-agent-architect-builder-reviewer](patterns/three-agent-architect-builder-reviewer/README.md) | trialed | 2026-08-04 | Architect plans → Builder implements → independent Reviewer (fresh context, different model tier) clears or bounces; `/start-milestone` runs a whole module autonomously |
+| [hub-and-spoke-orchestrator-executors](patterns/hub-and-spoke-orchestrator-executors/README.md) | proposed | 2026-08-10 | One Opus hub writes contract-first briefs → N headless `codex exec` spokes implement one each in isolated worktrees → the same hub audits, reviews and merges. Optimised for cost and throughput; **the review is deliberately not independent** |
+
+**Which one.** They are different points on a cost/assurance curve, not versions of each other:
+
+| | three-agent | hub-and-spoke |
+|---|---|---|
+| Reviewer | independent — fresh context, different model tier | the same hub session that wrote the contract |
+| Implementers | one Claude Builder per ticket | N headless Codex executors in parallel |
+| Optimised for | predictable, reviewable delivery | throughput and token cost |
+| Use it when | a bad merge is expensive | a bad merge is cheap to revert, and the work fans out |
+| Tracker integration | issues + PRs, full evidence trail | none — briefs and branches are the record |
+
+If a bad merge would hurt, use the three-agent pattern. Its independent reviewer is the thing hub-and-spoke trades away.
 
 ## Commands (three-agent-architect-builder-reviewer)
 
@@ -62,6 +75,22 @@ Installed into your project by `adopt`; run them in Claude Code. Full list is ge
 | `/verify-delivery` | `<ticket-id>` | Post-merge Definition-of-Done check — verifies delivery instead of assuming it. |
 | `/nightly-issues` | `[max-issues]` | Unattended sweep — triage open issues, auto-fix the fixable ones through the pipeline, post a morning report (headless `claude -p`). |
 | `/connect-asana` | `[asana-task-url]` | **Optional integration** (installed for every pattern, inert until run) — bind this repo to an Asana task so milestones and tickets mirror as Asana subtasks. See [integrations/asana](integrations/asana/README.md). |
+
+## Commands (hub-and-spoke-orchestrator-executors)
+
+Installed by `npx agent-templates@latest adopt hub-and-spoke-orchestrator-executors .`. This pattern needs the **Codex CLI** on `PATH` — it is a hard dependency, not an accelerator.
+
+| Command | Argument | What it does |
+|---|---|---|
+| `/hub-brief` | `[prd-path] [focus notes]` | Hub stage 1 — decompose a PRD into contract-first task briefs in `docs/briefs/`, then stop at Gate 1. |
+| `/hub-dispatch` | `[briefs-dir] [concurrency] [--dry-run]` | Hub stage 2 — validate every brief, then fan the ready ones out to headless `codex exec`, one isolated worktree each. |
+| `/hub-collect` | `[briefs-dir] [--all \| ID ...] [--merge]` | Hub stage 3 — re-audit each spoke branch, re-run its tests, review the diff, merge only what clears the deterministic gate. |
+
+Three properties worth knowing before adopting it:
+
+- **All-or-nothing dispatch.** One invalid brief dispatches nothing. A bad decomposition is a hub problem, and low-effort executors will not notice it.
+- **`quarantined` outranks green tests.** A spoke that passed its tests while writing outside its declared file-scope does not merge — passing tests is exactly what would otherwise wave it through.
+- **`unverified` is not a pass.** A branch whose tests could not be re-run does not merge.
 
 ### Parallel delivery (opt-in)
 

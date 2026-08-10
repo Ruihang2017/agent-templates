@@ -1,0 +1,8 @@
+  1. Review CLAUDE.md — set the Operating mode line (start: supervised) and add your
+     project facts; fill the Constraint check section of the PR/MR template.
+  2. Tracker: git remote + authenticated CLI ({{PLATFORM}} auth login). Node >= 18 on PATH.
+  3. In Claude Code, in the target repo:  /breakdown-prd
+     (Architect decomposes docs/PRD.md into sub-PRDs + tickets, then stops for your review)
+  4. Gate 1 — review the breakdown, then:  /start-milestone docs/prd/00-<module> supervised
+  5. Graduate to autonomous when the pattern holds; optional nightly sweep:
+     see the pattern's INSTALL.md § Nightly sweep.
