@@ -47,6 +47,9 @@ const REPO_ROOT = fileURLToPath(new URL('../../', import.meta.url))
 const UNIVERSAL_TEMPLATES = [
   'templates/pattern-README.template.md',
   'templates/ticket.template.md',
+  // issue #154: a reference text nothing imports, so nothing else would notice it going
+  // missing — and files have vanished in merge-conflict resolutions here four times.
+  'templates/breakdown-prd-standalone.md',
   'templates/tracker/github/ISSUE_TEMPLATE/bug-report.md',
   'templates/tracker/github/ISSUE_TEMPLATE/task.md',
   'templates/tracker/github/ISSUE_TEMPLATE/decision-record.md',
