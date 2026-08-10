@@ -58,7 +58,11 @@ pass" alone, since a test suite can pass for reasons unrelated to this brief.
 Each exclusion names its owner: "no schema changes — that is FND-01".
 ```
 
-`test_cmd` is the project's **own** one-line test command (`npm test`, `go test ./...`, `pytest -q`, `cargo test`). The driver runs it blind and gates on its exit code, which is what makes the pipeline language-agnostic. Never invent a command the project does not have.
+`test_cmd` is a real one-line command from the project, run blind by the driver, which gates on its exit code alone — that is what makes the pipeline language-agnostic. Never invent a command the project does not have.
+
+**Scope it to the brief, not to the whole project.** `node --test test/money.test.mjs`, `pytest tests/test_money.py`, `go test ./money/...` — *not* `npm test`. In any decomposition with more than one brief, the full suite cannot pass until the **last** brief lands, so a whole-suite `test_cmd` fails every brief but that one, burns the repair cap on each, and reports the entire wave as failed. Each brief verifies its own module; the full suite is a post-merge check, and the human's Gate 2 smoke test.
+
+If a module has no test of its own yet, writing one is part of that brief's deliverables — not a reason to point `test_cmd` at the whole suite.
 
 ## 4. Check your own decomposition mechanically
 

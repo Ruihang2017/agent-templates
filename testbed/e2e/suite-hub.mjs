@@ -8,7 +8,7 @@
 // and a green check over an artifact that never arrived is its recurring failure class.
 
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -421,6 +421,39 @@ export async function run() {
       eq(S, 'a branch with no brief is blocked', rep.blocked, ['FND-01'])
       check(S, 'the reason names the missing brief', /no brief defines/.test(rep.records[0].reasons.join(' ')))
     } finally { rmSync(dir, { recursive: true, force: true }) }
+  }
+
+  // ======================================================= committed rehearsal briefs
+
+  {
+    // The Level-1 rehearsal target is committed, and its briefs are the artifact a reader
+    // will copy as an example of what a good brief looks like. Validate them here — for
+    // free — so they cannot rot silently between the (token-spending) rehearsal runs that
+    // are the only other thing that reads them.
+    const briefsDir = join(REPO, 'testbed', 'hub-rehearsal', 'docs', 'briefs')
+    check(S, 'the rehearsal target ships briefs', existsSync(briefsDir))
+    if (existsSync(briefsDir)) {
+      const parsed = readdirSync(briefsDir).filter((f) => f.endsWith('.md'))
+        .map((f) => parseBrief(readFileSync(join(briefsDir, f), 'utf8'), f))
+      eq(S, 'the rehearsal ships four briefs', parsed.length, 4)
+      for (const b of parsed) eq(S, `rehearsal brief ${b.data.id || b.source} validates clean`, validateBrief(b), [])
+      eq(S, 'rehearsal briefs have no dangling dependency', danglingDeps(parsed), [])
+      eq(S, 'rehearsal briefs have no cycle', findCycle(parsed), null)
+      eq(S, 'rehearsal brief scopes never collide', scopeConflicts(parsed), [])
+      // the graph must actually fan out, or the target stops exercising what it exists for
+      eq(S, 'wave 1 dispatches two independent briefs', readyBriefs(parsed, []).map((b) => b.data.id).sort(), ['CAT-01', 'MNY-01'])
+      eq(S, 'wave 2 opens once wave 1 is done',
+        readyBriefs(parsed, ['MNY-01', 'CAT-01']).map((b) => b.data.id).sort(), ['CLI-01', 'RPT-01'])
+      // the finding from the first 4-brief run: a whole-suite command fails every brief
+      // but the last, so no brief here may use one
+      for (const b of parsed) {
+        check(S, `rehearsal brief ${b.data.id} scopes test_cmd to its own module`,
+          !/^(npm|yarn|pnpm) (run )?test\s*$/.test(String(b.data.test_cmd).trim()) && /test[\/\\]/.test(String(b.data.test_cmd)))
+      }
+    }
+    // the implementation must NOT be committed — a rehearsal that starts green proves nothing
+    check(S, 'the rehearsal target ships no implementation',
+      !existsSync(join(REPO, 'testbed', 'hub-rehearsal', 'src')))
   }
 
   // ============================================================== adopt idempotency
