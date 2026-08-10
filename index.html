@@ -203,7 +203,7 @@
   </div>
 
   <div class="stats">
-    <div class="stat stat-green"><span class="big">1</span><p>pattern in the catalog</p></div>
+    <div class="stat stat-green"><span class="big">2</span><p>patterns in the catalog</p></div>
     <div class="stat stat-orange"><span class="big" data-npm-version>v0.10.0</span><p>on npm · MIT</p></div>
     <div class="stat stat-yellow"><span class="big">E2E</span><p>gated merges — deterministic, zero-token tests</p></div>
     <div class="stat stat-blue"><span class="big">2</span><p>human gates per phase: sign-off &amp; smoke test</p></div>
@@ -212,6 +212,30 @@
   <section>
     <div class="sec-head"><span style="display:inline-grid;grid-template-columns:9px 9px;gap:2.5px;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="width:9px;height:9px;border-radius:3px;background:#9ed095"></span><span style="width:9px;height:9px;border-radius:3px;background:#f6a5bb"></span><span style="width:9px;height:9px;border-radius:3px;background:#f4cd6d"></span><span style="width:9px;height:9px;border-radius:3px;background:#c3abe9"></span></span><h2>Patterns</h2></div>
     
+      <article class="panel pattern">
+        <div class="pattern-head">
+          <h3>Hub-and-Spoke Orchestrator + Headless Executors</h3>
+          <span class="chip" style="background:linear-gradient(180deg,#f792ab,#ef6f92);color:#fff;text-shadow:0 1px 2px rgba(170,30,80,0.35);box-shadow:inset 0 2px 2px rgba(255,255,255,0.5),inset 0 -3px 4px rgba(170,30,80,0.3),0 5px 10px rgba(199,100,110,0.3)"><span class="chip-dot" style="box-shadow:inset -1px -1px 2px rgba(170,30,80,0.35)"></span>proposed · as of 2026-08-10</span>
+        </div>
+        <p class="summary">One long-lived hub (Claude Opus 5) decomposes a PRD into contract-first task briefs, N spokes (headless codex exec, low reasoning effort, one isolated git worktree each) implement one brief apiece, and the *same* hub session then audits, reviews and merges each branch. The pyramid is flattened into a pipeline: exactly one expensive context for the whole run, and no agent-to-agent conversation anywhere.</p>
+        <div class="roles">
+          <span class="role"><span class="dot" style="background:#f2c44e;box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px rgba(180,120,20,0.35)"></span><b>Hub — decompose</b><span class="sep">·</span><code>Claude Opus 5 <span class="eff">@high</span></code></span>
+          <span class="role"><span class="dot" style="background:#f2c44e;box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px rgba(180,120,20,0.35)"></span><b>Spoke — execute</b><span class="sep">·</span><code>Codex CLI (codex exec) <span class="eff">@low</span></code></span>
+          <span class="role"><span class="dot" style="background:#f2c44e;box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px rgba(180,120,20,0.35)"></span><b>Hub — collect / review</b><span class="sep">·</span><code>Claude Opus 5, the same session as the decompose stage <span class="eff">@high</span></code></span>
+        </div>
+        <div class="cmds">
+          <div class="cmds-label">Commands</div>
+          <div class="cmd"><code class="cmd-name">/hub-brief</code><code class="cmd-hint">[prd-path] [focus notes, e.g. how many briefs or what to defer]</code><span class="cmd-desc">Hub stage 1 — decompose a PRD into contract-first task briefs that a low-effort headless executor can implement without designing anything</span></div>
+          <div class="cmd"><code class="cmd-name">/hub-collect</code><code class="cmd-hint">[briefs-dir] [--all | ID ...] [--merge]</code><span class="cmd-desc">Hub stage 3 — re-audit each spoke branch, re-run its tests, review the diff, and merge only what clears the deterministic gate</span></div>
+          <div class="cmd"><code class="cmd-name">/hub-dispatch</code><code class="cmd-hint">[briefs-dir] [concurrency] [--dry-run]</code><span class="cmd-desc">Hub stage 2 — fan the ready briefs out to headless Codex executors, one isolated worktree each, and report what came back</span></div>
+          <div class="cmd"><code class="cmd-name">/connect-asana</code><code class="cmd-hint">&quot;[asana-task-url]&quot;</code><span class="cmd-opt">asana · optional</span><span class="cmd-desc">Connect this repo to an Asana task so the pipeline mirrors milestones and tickets as Asana subtasks (optional; the pipeline runs fine without it)</span></div>
+        </div>
+        <div class="links">
+          <a class="btn btn-green" href="https://github.com/Ruihang2017/agent-templates/tree/main/patterns/hub-and-spoke-orchestrator-executors">Pattern write-up</a>
+          <a class="btn btn-purple" href="https://github.com/Ruihang2017/agent-templates/tree/main/patterns/hub-and-spoke-orchestrator-executors/scaffold">Scaffold</a>
+        </div>
+      </article>
+
       <article class="panel pattern">
         <div class="pattern-head">
           <h3>Three-Agent Architect–Builder–Reviewer</h3>
