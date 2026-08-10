@@ -2,7 +2,16 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
-## Unreleased
+## 0.11.0 — 2026-08-10
+
+### Upgrading from 0.10.0 — read this first
+
+**If you use `three-agent-architect-builder-reviewer`, nothing about your pipeline changed.** No agent, command, script or effort pin was touched. A plain re-adopt picks up the new `next-steps.txt` and nothing else; you do not need `--force`.
+
+The whole release is a **second pattern** plus the tooling and catalog-site work that having two patterns forced. Two of those fixes were latent bugs that only a second pattern could expose, and both affect anyone adopting anything:
+
+- **`adopt` no longer re-appends the CLAUDE.md pipeline section on every re-run.** The idempotency marker was the hardcoded three-agent heading, so adopting any *other* pattern never found it and appended the whole block again each time. Now derived from the snippet's own first heading.
+- **`adopt`'s NEXT STEPS are per-pattern.** They named three-agent commands regardless of what was installed — i.e. told you to run commands that did not exist.
 
 ### New pattern: `hub-and-spoke-orchestrator-executors` (status `proposed`)
 
@@ -24,12 +33,43 @@ What is mechanical rather than advisory:
 - **`unverified` is not a pass** — a branch whose tests could not be re-run does not merge.
 - **Executor completion is read from its result artifact, never from its exit code** — `codex exec`'s exit codes are undocumented (checked 2026-08-10), so trusting them would be an assumption.
 
-Covered by a new E2E suite (`testbed/e2e/suite-hub.mjs`, 100 checks) driving the real scripts against a controllable stand-in executor.
+Covered by a new E2E suite (`testbed/e2e/suite-hub.mjs`) driving the real scripts against a controllable stand-in executor.
+
+### It has actually been run — and what that did and did not prove
+
+`testbed/hub-rehearsal/` is a committed, re-runnable Level-1 target: a 4-module PRD, four briefs, a strict test suite written before any implementation, and no `src/`. `node testbed/hub-rehearsal/rehearse.mjs` drives it against the **real** Codex CLI in a temp clone. It spends real tokens and is never called by the free, deterministic Level-0 gate.
+
+First full run — `codex-cli 0.147.0`, `--concurrency 2`: **4/4 briefs delivered across 2 waves, 0 repair rounds, 0 quarantines, 19/19 project tests green**, every spoke writing exactly one file inside its declared scope.
+
+It found four real defects before you could:
+
+1. **The output schema violated the provider's strict-mode rule**, so *every* dispatch failed with HTTP 400 before the model ran. `required` must list every key in `properties`; an optional field has to be nullable. A stand-in executor can never reach the provider's validator, so only a real run could find this.
+2. **A failing executor was undiagnosable** — its stderr was discarded, so a one-line schema mistake surfaced as "no parseable result artifact" with no cause.
+3. **A whole-suite `test_cmd` is wrong for multi-brief work.** The full suite cannot pass until the last brief lands, so every earlier brief burns its repair cap on failures that are not its fault. `/hub-brief` now requires `test_cmd` scoped to the brief's own module.
+4. **The Windows `.cmd`-shim advice was wrong** for the official installer, which ships a real `codex.exe` that `spawn` resolves with no shell.
+
+**What it did not prove, stated because the pattern's whole risk lives here:** the same session wrote the PRD, the tests and the briefs, so every contract agreed with itself by construction. That is exactly the circularity described above. This is evidence about the *machinery*, never about the *judgement* — which is why the status stays `proposed` and why promotion needs a real project.
+
+### Catalog site — patterns are now tabs
+
+Everything below the pattern cards used to be three-agent only, unlabelled. With two patterns that actively misled: you could read the hub-and-spoke card and scroll into `/breakdown-prd`, `/start-milestone`, a lane demo and a nightly sweep — none of which exist in the pattern whose card you just read, and worse, all of which imply a review guarantee it does not provide.
+
+- One tab per pattern, one visible pane; the quickstart command follows the tab.
+- Tab order is by **status**, so a `proposed` pattern is never the landing tab — placement reads as a recommendation.
+- The hub pane now **shows** its artifact: what a brief contains, how big one is, and the real 2-wave schedule — rendered from the committed rehearsal briefs using the pattern's own parser and scheduler, so the page cannot show a brief shape the validator would reject or an order the driver would not produce.
+- A mapping section for people switching: what each three-agent command maps to, and which have **no** equivalent (`/plan-ticket`, `/review-ticket`, `/publish-tickets`, `/nightly-issues`).
+
+**Command names are deliberately not reused across patterns.** Someone who knows `/breakdown-prd` expects an independent reviewer downstream; reusing the name would import that expectation into a pipeline that has none.
 
 ### Fixed — affects existing installs
 
 - **`adopt` derives the CLAUDE.md idempotency marker from the snippet** instead of hardcoding the three-agent heading. The hardcoded marker was correct only while the catalog had one pattern; adopting any other one would fail to find it and re-append the whole pipeline section on **every** re-run.
-- **`adopt`'s NEXT STEPS are now per-pattern** (`scaffold/next-steps.txt`). Printing one pattern's steps after installing another names commands that do not exist.
+- **`adopt`'s NEXT STEPS are now per-pattern** (`scaffold/next-steps.txt`). Printing one pattern's steps after installing another names commands that do not exist. The no-PRD note is pattern-agnostic for the same reason.
+- **The site's shared hero no longer states things that are true of only one pattern.** "Role boundaries enforced by hooks" is the three-agent mechanism; hub-and-spoke uses permission deny rules. "Nightly sweep" needs a tracker, which hub-and-spoke has none of. Both were correct with one pattern in the catalog and silently became false with two.
+
+### Known rough edge
+
+`adopt` still requires a tracker platform (`--platform gh|glab`, or an inferable git remote) even for `hub-and-spoke-orchestrator-executors`, which has no tracker integration and never reads the value. Pass `--platform gh` in a repo with no remote. Tracked as catalog issue #158.
 
 ## 0.10.0 — 2026-08-06
 
