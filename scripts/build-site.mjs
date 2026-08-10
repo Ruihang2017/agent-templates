@@ -302,10 +302,42 @@ const STEPS = [
     'Gate 2 — smoke test', 'Agents own unit/integration/E2E all along; you test once per phase, when that PRD is done. A nightly sweep fixes issues while you sleep.'],
 ]
 
+// ---------------------------------------------------------------------------
+// Tab order is deliberate, not alphabetical. A reader landing here should see the
+// pattern that is signed off and has run, not whichever directory name sorts first —
+// `proposed` means "drafted, not signed off", and putting it in front would recommend it
+// by placement. Within a rank, name order keeps the output stable.
+// ---------------------------------------------------------------------------
+const STATUS_RANK = { adopted: 0, trialed: 1, proposed: 2, deprecated: 3 }
+const ordered = [...patterns].sort((a, b) =>
+  (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9) || a.dir.localeCompare(b.dir))
+
+const TILE_GREEN = 'background:#9ed095;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(30,90,40,0.2),0 6px 10px rgba(var(--amb),0.22)'
+const TILE_YELLOW = 'background:#f4cd6d;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(180,120,20,0.25),0 6px 10px rgba(var(--amb),0.22)'
+const TILE_BLUE = 'background:#b3cdf0;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(40,80,150,0.22),0 6px 10px rgba(var(--amb),0.22)'
+const TILE_PURPLE = 'background:#c9b6ee;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(80,50,150,0.22),0 6px 10px rgba(var(--amb),0.22)'
+const TILE_PINK = 'background:#f6a5bb;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(170,30,80,0.2),0 6px 10px rgba(var(--amb),0.22)'
+const dotGlyph = (n) => `<span style="display:flex;gap:2.5px;align-items:center">${Array.from({ length: n }, () => '<span style="width:5px;height:5px;border-radius:50%;background:#fffaf2"></span>').join('')}</span>`
+
+// The hub-and-spoke flow. Deliberately NOT reusing the three-agent step copy: the two
+// pipelines produce different artifacts and carry different guarantees, and matching prose
+// would be the thing hiding that.
+const HUB_STEPS = [
+  [TILE_GREEN, dotGlyph(1), 'Adopt',
+    `<code>npx agent-templates@latest adopt hub-and-spoke-orchestrator-executors .</code> — scaffold, CLAUDE.md, permission rules. Needs the <b>Codex CLI</b> on PATH; it is a hard dependency, not an accelerator.`],
+  [TILE_YELLOW, dotGlyph(2), 'Brief',
+    `<code>/hub-brief</code> — the hub turns your PRD into <b>contract-first briefs</b>. Every interface, type and error shape is fixed here, because the executors are told not to design.`],
+  [TILE_PINK, dotGlyph(3), 'Gate 1 — you decide',
+    `Review the briefs. This gate carries more weight than its three-agent counterpart: there is <b>no independent reviewer downstream</b> to catch a wrong contract.`],
+  [TILE_PURPLE, dotGlyph(4), 'Dispatch',
+    `<code>/hub-dispatch</code> — one invalid brief dispatches <b>nothing</b>. The rest fan out to headless <code>codex exec</code>, one isolated worktree each, self-repairing under a capped loop.`],
+  [TILE_BLUE, dotGlyph(5), 'Collect &amp; Gate 2',
+    `<code>/hub-collect</code> — re-audit, re-test, review, merge. <b>quarantined</b> outranks green tests; <b>unverified</b> never merges. Then your smoke test.`],
+]
+
 // Use-when bullets are intentionally gone (parse + render): the approved mock's
 // pattern card is title + status chip + summary + role chips + links only.
-const patternCards = patterns
-  .map((p) => {
+const cardFor = (p) => {
     const c = STATUS_CHIP[p.status] || STATUS_CHIP.proposed
     const summary = esc(p.summary).replace(/→/g, '<span class="arr">→</span>')
     return `
@@ -327,8 +359,16 @@ const patternCards = patterns
           <a class="btn btn-purple" href="${GITHUB}/tree/main/patterns/${esc(p.dir)}/scaffold">Scaffold</a>
         </div>
       </article>`
-  })
-  .join('\n')
+}
+
+const tabButtons = ordered.map((p, i) =>
+  `<button class="tab" type="button" role="tab" id="tab-${esc(p.dir)}" aria-controls="pane-${esc(p.dir)}" aria-selected="${i === 0 ? 'true' : 'false'}" data-tab="${esc(p.dir)}">${esc(p.title)}<span class="tab-sub">${esc(p.status)} · as of ${esc(p.asOf)}</span></button>`).join('\n      ')
+
+const paneOpen = (dir, first) => `<div class="pane" role="tabpanel" id="pane-${esc(dir)}" aria-labelledby="tab-${esc(dir)}" data-pane="${esc(dir)}"${first ? '' : ' hidden'}>`
+const byDir = (dir) => ordered.find((p) => p.dir === dir)
+const THREE = 'three-agent-architect-builder-reviewer'
+const HUB = 'hub-and-spoke-orchestrator-executors'
+const isFirst = (dir) => ordered.length > 0 && ordered[0].dir === dir
 
 const html = `<!doctype html>
 <html lang="en">
@@ -498,6 +538,23 @@ const html = `<!doctype html>
   footer{margin-top:30px;text-align:center;font-size:12.5px;font-weight:700;color:var(--mut)}
   footer code{font-family:var(--mono);font-size:11.5px;color:#8a5fd0}
 
+  /* Pattern tabs (catalog issue #163). The catalog now ships more than one pattern, and
+     they are NOT variants of each other — one has an independent reviewer, one deliberately
+     does not. Rendering both flows on one scroll invited a reader to mix commands and
+     guarantees between them. Each pattern gets its own pane; only one is ever visible. */
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}
+  .tab{font-family:var(--head);font-weight:700;font-size:14px;cursor:pointer;border:0;
+       padding:9px 16px;border-radius:14px;color:var(--ink);background:var(--card);
+       box-shadow:0 3px 0 rgba(var(--amb),0.18),0 6px 12px rgba(var(--amb),0.14);
+       transition:transform .12s ease,box-shadow .12s ease}
+  .tab:hover{transform:translateY(-2px)}
+  .tab:active{transform:translateY(1px)}
+  .tab[aria-selected=true]{background:#9ed095;color:#1f4526;
+       box-shadow:inset 2px 3px 5px rgba(255,255,255,0.45),inset -3px -4px 7px rgba(30,90,40,0.22),0 5px 11px rgba(var(--amb),0.2)}
+  .tab .tab-sub{display:block;font-family:var(--body);font-weight:700;font-size:11px;opacity:.72;margin-top:1px}
+  /* Restated because an author display rule must beat the UA [hidden] rule; without it
+     every pane renders at once and the tabs do nothing. */
+  .pane[hidden]{display:none}
   @media (max-width:912px){.wrap{padding-left:16px;padding-right:16px}}
   @media (max-width:860px){.hero{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.steps{grid-template-columns:repeat(2,1fr)}}
   @media (max-width:540px){.stats,.steps{grid-template-columns:1fr}.pattern-head h3{flex-basis:100%}}
@@ -541,7 +598,18 @@ const html = `<!doctype html>
 
   <section>
     <div class="sec-head">${PATTERNS_ICON}<h2>Patterns</h2></div>
-    ${patternCards}
+    <div class="fact" style="margin-bottom:16px">
+      <div class="fact-ico" style="${TILE_PINK}"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:1px;top:1px;width:6px;height:14px;border-radius:3px;background:#fffaf2"></span><span style="position:absolute;right:1px;top:4px;width:6px;height:11px;border-radius:3px;background:#fffaf2"></span></span></div>
+      <p><b>These are not versions of each other.</b> They are two points on a cost/assurance curve, and the commands, artifacts and guarantees do <em>not</em> carry across. Pick a tab and stay in it — <code>adopt</code> installs exactly one pattern's commands.</p>
+    </div>
+    <div class="tabs" role="tablist" aria-label="Patterns">
+      ${tabButtons}
+    </div>
+  </section>
+
+  ${paneOpen(THREE, isFirst(THREE))}
+  <section>
+    ${byDir(THREE) ? cardFor(byDir(THREE)) : ''}
   </section>
 
   <section>
@@ -604,6 +672,44 @@ const html = `<!doctype html>
       <div class="step"><span class="step-ico" style="background:#f4cd6d;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(180,120,20,0.25)"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:6.5px;top:1px;width:3px;height:9px;border-radius:2px;background:#7a5a15"></span><span style="position:absolute;left:6.5px;bottom:1px;width:3px;height:3px;border-radius:50%;background:#7a5a15"></span></span></span><h3>Nothing is skipped silently</h3><p>The run reports every ticket it dropped as already delivered. Edit a ticket <i>after</i> it shipped and it comes back as <b>drift</b> for a human to judge — the scheduler never re-runs it, and never hides it either.</p></div>
     </div>
   </section>
+  </div><!-- /pane three-agent -->
+
+  ${paneOpen(HUB, isFirst(HUB))}
+  <section>
+    ${byDir(HUB) ? cardFor(byDir(HUB)) : ''}
+  </section>
+
+  <section>
+    <div class="sec-head">${PIPELINE_ICON}<h2>From a bare PRD.md to shipped</h2></div>
+    <div class="fact" style="margin-bottom:15px">
+      <div class="fact-ico" style="${TILE_PINK}"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:6.5px;top:1px;width:3px;height:9px;border-radius:2px;background:#fffaf2"></span><span style="position:absolute;left:6.5px;bottom:1px;width:3px;height:3px;border-radius:50%;background:#fffaf2"></span></span></div>
+      <p><b>Read this before adopting.</b> The hub reviews diffs written against a contract <em>it wrote itself</em>, in the same session. That review is <b>not independent</b> — it is what this pattern trades away for cost and throughput, and it will not catch a wrong brief that was faithfully implemented. If a bad merge is expensive, use the three-agent pattern instead.</p>
+    </div>
+    <div class="steps">
+      ${HUB_STEPS.map(([tile, glyph, t, d], i) => `<div class="step"><span class="step-ico" style="${tile}">${glyph}</span><h3>${i + 1}. ${t}</h3><p>${d}</p></div>`).join('\n      ')}
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="gx" style="width:22px;height:18px;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="position:absolute;left:0;top:1px;width:6px;height:16px;border-radius:3px;background:#9ed095"></span><span style="position:absolute;left:8px;top:4px;width:6px;height:10px;border-radius:3px;background:#f6a5bb"></span><span style="position:absolute;left:16px;top:0;width:6px;height:18px;border-radius:3px;background:#b3cdf0"></span></span><h2>Coming from the three-agent pattern?</h2></div>
+    <div class="fact" style="display:block;margin-bottom:15px">
+      <p style="margin:0 0 8px">The commands do <b>not</b> carry across — <code>adopt</code> installs one pattern's commands, and the scripts the other pattern's commands call are not present. The names differ on purpose: a reader who knows <code>/breakdown-prd</code> expects an independent reviewer downstream, and reusing the name would import that expectation into a pipeline that deliberately has none.</p>
+      <div class="cmds">
+        <div class="cmd"><code class="cmd-name">/breakdown-prd</code><code class="cmd-hint">→ /hub-brief</code><span class="cmd-desc">Same purpose, different artifact: a <b>brief</b> carries the full interface contract, its file-scope, and a per-module test command, because its implementer is forbidden to design.</span></div>
+        <div class="cmd"><code class="cmd-name">/start-milestone · /start-all</code><code class="cmd-hint">→ /hub-dispatch + /hub-collect</code><span class="cmd-desc">Split in two, because the hub must come back into the loop between fanning out and merging.</span></div>
+        <div class="cmd"><code class="cmd-name">/plan-ticket</code><code class="cmd-hint">→ no equivalent</code><span class="cmd-desc">The contract is already fixed in the brief; the executor does not plan.</span></div>
+        <div class="cmd"><code class="cmd-name">/review-ticket</code><code class="cmd-hint">→ no equivalent</code><span class="cmd-desc">There is no independent reviewer. This is the trade, stated plainly.</span></div>
+        <div class="cmd"><code class="cmd-name">/verify-delivery</code><code class="cmd-hint">→ collect.mjs gate</code><span class="cmd-desc">Runs <b>before</b> the merge rather than after it.</span></div>
+        <div class="cmd"><code class="cmd-name">/publish-tickets · /nightly-issues</code><code class="cmd-hint">→ no equivalent</code><span class="cmd-desc">No tracker integration: the briefs and the branches are the record.</span></div>
+      </div>
+    </div>
+    <div class="steps">
+      <div class="step"><span class="step-ico" style="${TILE_GREEN}">${dotGlyph(1)}</span><h3>All-or-nothing dispatch</h3><p>One invalid brief dispatches <b>nothing</b>. A bad decomposition is a hub problem, and low-effort executors will not notice it — so the gate runs before any worktree exists.</p></div>
+      <div class="step"><span class="step-ico" style="${TILE_YELLOW}">${dotGlyph(2)}</span><h3>A global file firewall</h3><p>No spoke writes dependency, lock, build, CI, secret or agent-config files — whatever its brief says. Deny is checked <b>before</b> scope, so a wide scope cannot launder a lockfile edit.</p></div>
+      <div class="step"><span class="step-ico" style="${TILE_BLUE}">${dotGlyph(3)}</span><h3>Two verdicts that outrank success</h3><p><b>quarantined</b> beats a green test run — passing tests is exactly what would otherwise wave an out-of-scope write through. <b>unverified</b> never merges: "could not check" is not "it is fine".</p></div>
+    </div>
+  </section>
+  </div><!-- /pane hub-and-spoke -->
 
   <footer>
     Generated from the pattern catalog by <a href="${GITHUB}/blob/main/scripts/build-site.mjs"><code>scripts/build-site.mjs</code></a>
@@ -612,6 +718,22 @@ const html = `<!doctype html>
   </footer>
 </div>
 <script>
+(function(){
+  // Pattern tabs. The quickstart in the hero follows the selected tab: leaving it pinned
+  // to one pattern while a different pane is open is how someone copies the wrong adopt
+  // command, which installs the wrong commands and the wrong guarantees.
+  var QS={${ordered.map((p) => `${JSON.stringify(p.dir)}:${JSON.stringify('npx agent-templates@latest adopt ' + p.dir + ' .')}`).join(',')}}
+  var qs=document.getElementById('qs'),note=document.querySelector('.update-note code')
+  function pick(dir){
+    document.querySelectorAll('.pane').forEach(function(p){p.hidden=p.dataset.pane!==dir})
+    document.querySelectorAll('.tab').forEach(function(t){t.setAttribute('aria-selected',String(t.dataset.tab===dir))})
+    if(qs&&QS[dir])qs.textContent=QS[dir]
+    if(note&&QS[dir])note.textContent=QS[dir]+' --force'
+  }
+  document.querySelectorAll('.tab').forEach(function(t){
+    t.addEventListener('click',function(){pick(t.dataset.tab)})
+  })
+})();
 (function(){
   // lane demo: every board is pre-rendered at build time, so switching is a
   // show/hide -- no client-side scheduling, nothing that can disagree with the runner

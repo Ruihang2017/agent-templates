@@ -178,6 +178,63 @@ export async function run() {
         !html.includes('PRD-99-definitely-not-a-phase') && !html.includes('data-phase="7"'))
     }
 
+    // Pattern tabs (issue #163). The catalog ships patterns that are NOT variants of each
+    // other — one has an independent reviewer, one deliberately does not — so the page must
+    // never present both flows on one scroll. These assertions are that guarantee.
+    {
+      const patternDirs = readdirSync(join(REPO, 'patterns'), { withFileTypes: true })
+        .filter((d) => d.isDirectory() && existsSync(join(REPO, 'patterns', d.name, 'scaffold')))
+        .map((d) => d.name)
+      check(S, 'tab coverage gate saw the patterns', patternDirs.length >= 2)
+      for (const dir of patternDirs) {
+        check(S, `pattern ${dir} has a tab`, html.includes(`data-tab="${dir}"`))
+        check(S, `pattern ${dir} has a pane`, html.includes(`data-pane="${dir}"`))
+      }
+      const panes = (html.match(/class="pane"/g) || []).length
+      eq(S, 'one pane per pattern', panes, patternDirs.length)
+      // exactly one visible: every pane but the default carries [hidden]
+      eq(S, 'exactly one pane is visible by default',
+        (html.match(/class="pane"[^>]*hidden/g) || []).length, patternDirs.length - 1)
+      // an author rule must beat the UA [hidden] rule or every pane renders at once
+      check(S, 'the [hidden] rule is restated for panes', /\.pane\[hidden\]\{display:none\}/.test(html))
+
+      // Order is by status, not alphabetical: `proposed` must not be the landing tab,
+      // because placement reads as a recommendation. hub-and-spoke sorts FIRST
+      // alphabetically, so this assertion fails the moment the ordering is dropped.
+      check(S, 'the signed-off pattern is the default tab, not the alphabetical first',
+        html.indexOf('pane-three-agent-architect-builder-reviewer') < html.indexOf('pane-hub-and-spoke-orchestrator-executors'))
+      // exactly one tab is pre-selected, and it is the one whose pane is visible
+      eq(S, 'exactly one tab is pre-selected', (html.match(/aria-selected="true"/g) || []).length, 1)
+      const selectedTab = (html.match(/<button class="tab"[^>]*aria-selected="true"[^>]*data-tab="([^"]+)"/) || [])[1]
+      const visiblePane = (html.match(/<div class="pane"[^>]*data-pane="([^"]+)">/) || [])[1]
+      eq(S, 'the pre-selected tab matches the visible pane', selectedTab, visiblePane)
+      eq(S, 'the default tab is the signed-off pattern', selectedTab, 'three-agent-architect-builder-reviewer')
+
+      // The adopt command must follow the tab. A quickstart pinned to one pattern while a
+      // different pane is open is how somebody copies the wrong command and installs the
+      // wrong guarantees.
+      for (const dir of patternDirs) {
+        check(S, `the tab script carries the adopt command for ${dir}`,
+          html.includes(`adopt ${dir} .`))
+      }
+      check(S, 'switching a tab rewrites the quickstart', /qs\.textContent=QS\[dir\]/.test(html))
+
+      // Content separation: each pattern's own commands appear, and the page states that
+      // they do not carry across.
+      check(S, 'the page says the patterns are not versions of each other',
+        /not versions of each other/i.test(html))
+      check(S, 'the page carries the old-to-new command mapping',
+        /Coming from the three-agent pattern/.test(html) && html.includes('/hub-brief') && html.includes('/breakdown-prd'))
+      check(S, 'the mapping names the commands with no equivalent',
+        (html.match(/no equivalent/g) || []).length >= 3)
+      check(S, 'the hub pane states the non-independent review',
+        /not independent/i.test(html))
+      // guard the guard: a pattern that does not exist must have no tab, proving the
+      // includes() checks above discriminate rather than passing on any page
+      check(S, 'tab coverage is non-vacuous (sentinel absent)',
+        !html.includes('data-tab="definitely-not-a-pattern"') && !html.includes('data-pane="definitely-not-a-pattern"'))
+    }
+
     // clay restyle contract (issue #19)
     check(S, 'loads Baloo 2 + Nunito from Google Fonts', html.includes('fonts.googleapis.com/css2') && html.includes('Baloo+2') && html.includes('Nunito'))
     check(S, 'Baloo 2 on headings, Nunito on body', /h1\{[^}]*Baloo 2/.test(html.replace(/\n/g, '')) && /body\{[^}]*Nunito/.test(html.replace(/\n/g, '')))
