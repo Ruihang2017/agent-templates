@@ -10,10 +10,17 @@ import { fileURLToPath } from 'node:url'
 import { check, eq } from './lib.mjs'
 // same scheduler model the site and the runner use, so the demo cannot drift
 import { simulate } from '../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/dag-core.mjs'
+// the hub board is re-derived with the pattern's own scheduler, so the page cannot show
+// an order the driver would not produce
+import { parseBrief, readyBriefs } from '../../patterns/hub-and-spoke-orchestrator-executors/scaffold/.claude/scripts/brief.mjs'
 
 const S = 'site'
 const REPO = fileURLToPath(new URL('../../', import.meta.url))
 const SCRIPT = join(REPO, 'scripts', 'build-site.mjs')
+
+// Mirror build-site's own escaping, so a value containing & < > " is compared in the form
+// it actually reaches the page rather than false-failing.
+const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
 // Every shipped slash command must surface in BOTH the generated site and the npm
 // README — otherwise a command ships undiscoverable, the way /start-all once did
@@ -176,6 +183,120 @@ export async function run() {
       // checks above are shown to discriminate rather than pass on any page
       check(S, 'phase coverage is non-vacuous (sentinel absent)',
         !html.includes('PRD-99-definitely-not-a-phase') && !html.includes('data-phase="7"'))
+    }
+
+    // Pattern tabs (issue #163). The catalog ships patterns that are NOT variants of each
+    // other — one has an independent reviewer, one deliberately does not — so the page must
+    // never present both flows on one scroll. These assertions are that guarantee.
+    {
+      const patternDirs = readdirSync(join(REPO, 'patterns'), { withFileTypes: true })
+        .filter((d) => d.isDirectory() && existsSync(join(REPO, 'patterns', d.name, 'scaffold')))
+        .map((d) => d.name)
+      check(S, 'tab coverage gate saw the patterns', patternDirs.length >= 2)
+      for (const dir of patternDirs) {
+        check(S, `pattern ${dir} has a tab`, html.includes(`data-tab="${dir}"`))
+        check(S, `pattern ${dir} has a pane`, html.includes(`data-pane="${dir}"`))
+      }
+      const panes = (html.match(/class="pane"/g) || []).length
+      eq(S, 'one pane per pattern', panes, patternDirs.length)
+      // exactly one visible: every pane but the default carries [hidden]
+      eq(S, 'exactly one pane is visible by default',
+        (html.match(/class="pane"[^>]*hidden/g) || []).length, patternDirs.length - 1)
+      // an author rule must beat the UA [hidden] rule or every pane renders at once
+      check(S, 'the [hidden] rule is restated for panes', /\.pane\[hidden\]\{display:none\}/.test(html))
+
+      // Order is by status, not alphabetical: `proposed` must not be the landing tab,
+      // because placement reads as a recommendation. hub-and-spoke sorts FIRST
+      // alphabetically, so this assertion fails the moment the ordering is dropped.
+      check(S, 'the signed-off pattern is the default tab, not the alphabetical first',
+        html.indexOf('pane-three-agent-architect-builder-reviewer') < html.indexOf('pane-hub-and-spoke-orchestrator-executors'))
+      // exactly one tab is pre-selected, and it is the one whose pane is visible
+      eq(S, 'exactly one tab is pre-selected', (html.match(/aria-selected="true"/g) || []).length, 1)
+      const selectedTab = (html.match(/<button class="tab"[^>]*aria-selected="true"[^>]*data-tab="([^"]+)"/) || [])[1]
+      const visiblePane = (html.match(/<div class="pane"[^>]*data-pane="([^"]+)">/) || [])[1]
+      eq(S, 'the pre-selected tab matches the visible pane', selectedTab, visiblePane)
+      eq(S, 'the default tab is the signed-off pattern', selectedTab, 'three-agent-architect-builder-reviewer')
+
+      // The adopt command must follow the tab. A quickstart pinned to one pattern while a
+      // different pane is open is how somebody copies the wrong command and installs the
+      // wrong guarantees.
+      for (const dir of patternDirs) {
+        check(S, `the tab script carries the adopt command for ${dir}`,
+          html.includes(`adopt ${dir} .`))
+      }
+      check(S, 'switching a tab rewrites the quickstart', /qs\.textContent=QS\[dir\]/.test(html))
+
+      // Content separation: each pattern's own commands appear, and the page states that
+      // they do not carry across.
+      check(S, 'the page says the patterns are not versions of each other',
+        /not versions of each other/i.test(html))
+      check(S, 'the page carries the old-to-new command mapping',
+        /Coming from the three-agent pattern/.test(html) && html.includes('/hub-brief') && html.includes('/breakdown-prd'))
+      check(S, 'the mapping names the commands with no equivalent',
+        (html.match(/no equivalent/g) || []).length >= 3)
+      check(S, 'the hub pane states the non-independent review',
+        /not independent/i.test(html))
+      // guard the guard: a pattern that does not exist must have no tab, proving the
+      // includes() checks above discriminate rather than passing on any page
+      check(S, 'tab coverage is non-vacuous (sentinel absent)',
+        !html.includes('data-tab="definitely-not-a-pattern"') && !html.includes('data-pane="definitely-not-a-pattern"'))
+    }
+
+    // The hub pane must SHOW its artifact, not just name its commands (issue #165). The
+    // three-agent pane renders a real dag.html miniature; without an equivalent the hub
+    // pane described a flow whose central artifact — the brief — a reader never saw, and
+    // "what granularity?" had no answer on the page.
+    {
+      check(S, 'the hub pane explains what a brief is', /What a brief is, and how big/.test(html))
+      check(S, 'the granularity rule is stated, not implied',
+        /One brief = one disjoint write-set/.test(html))
+      // every frontmatter field a reader must fill is named
+      for (const field of ['id', 'blocked_by', 'file_scope', 'test_cmd']) {
+        check(S, `brief anatomy names the ${field} field`, html.includes(`>${field}<`))
+      }
+      // and every required body section, since an empty one is rejected by the validator
+      for (const sec of ['## Contract', '## Deliverables', '## Done when', '## Out of scope']) {
+        check(S, `brief anatomy names ${sec}`, html.includes(esc(sec)))
+      }
+      // The scoped-test_cmd finding from the 4-brief rehearsal must reach the page: it is
+      // the mistake most likely to be made, and it fails every brief but the last.
+      check(S, 'the page warns that test_cmd is per-brief, not whole-suite',
+        /never the whole suite/i.test(html))
+
+      // The wave board is recomputed here from the SAME committed briefs with the pattern's
+      // own scheduler, so the page cannot advertise an order the driver would not produce.
+      const briefsDir = join(REPO, 'testbed', 'hub-rehearsal', 'docs', 'briefs')
+      check(S, 'the rehearsal briefs the page renders exist', existsSync(briefsDir))
+      if (existsSync(briefsDir)) {
+        const briefs = readdirSync(briefsDir).filter((f) => f.endsWith('.md')).sort()
+          .map((f) => parseBrief(readFileSync(join(briefsDir, f), 'utf8'), f))
+        const waves = []
+        const done = []
+        for (let g = 0; g < 10; g++) {
+          const w = readyBriefs(briefs, done)
+          if (!w.length) break
+          waves.push(w)
+          for (const b of w) done.push(b.data.id)
+        }
+        const chunk = (html.split('data-hub-board')[1] || '').split('</section>')[0]
+        eq(S, 'hub board renders one row per wave', (chunk.match(/class="lw"/g) || []).length, waves.length)
+        eq(S, 'hub board schedules every brief', (chunk.match(/class="lt"/g) || []).length, briefs.length)
+        check(S, 'hub board has more than one wave — it must show a real dependency',
+          waves.length >= 2)
+        for (const b of briefs) {
+          check(S, `hub board shows brief ${b.data.id}`, chunk.includes(esc(b.data.id)))
+          check(S, `hub board shows the write-set for ${b.data.id}`, chunk.includes(esc(b.data.file_scope[0])))
+        }
+        // wave 1 must contain exactly the briefs with no dependencies — if this ever
+        // matched everything, the board would be a flat list pretending to be a schedule
+        const firstRow = chunk.split('class="lw"')[1] || ''
+        for (const b of waves[0]) check(S, `wave 1 contains ${b.data.id}`, firstRow.includes(esc(b.data.id)))
+        for (const b of (waves[1] || [])) check(S, `wave 1 does NOT contain the blocked ${b.data.id}`, !firstRow.includes(esc(b.data.id)))
+      }
+      // the hub board must not disturb the lane demo's arithmetic, which splits the page
+      // on data-board= and counts waves per chunk
+      check(S, 'the hub board does not register as a lane-demo board',
+        !/data-board="hub/.test(html))
     }
 
     // clay restyle contract (issue #19)
