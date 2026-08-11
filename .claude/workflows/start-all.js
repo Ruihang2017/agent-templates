@@ -105,6 +105,21 @@ const DELIVERY = {
   properties: { merged: { type: 'boolean' }, issueClosed: { type: 'boolean' }, dodPassed: { type: 'boolean' }, awaitingMerge: { type: 'boolean' }, prUrl: { type: 'string' }, notes: { type: 'string' } },
   required: ['merged', 'issueClosed', 'dodPassed'],
 }
+// Post-run cleanup report (catalog issue #151). `branchesKept` is not an afterthought:
+// what could NOT be cleaned is the part that matters, because a leftover ticket branch is
+// what later opens a merge request that reverts the default branch.
+const CLEANUP = {
+  type: 'object',
+  properties: {
+    ok: { type: 'boolean' },
+    detail: { type: 'string' },
+    worktreesPruned: { type: 'boolean' },
+    branchesDeleted: { type: 'array', items: { type: 'string' } },
+    branchesKept: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['ok'],
+}
+
 const SCAN = {
   type: 'object',
   properties: {
@@ -114,7 +129,13 @@ const SCAN = {
       type: 'array',
       items: {
         type: 'object',
-        properties: { id: { type: 'string' }, module: { type: 'string' }, path: { type: 'string' }, issue: { type: 'number' }, blockedBy: { type: 'array', items: { type: 'string' } } },
+        // `state` is load-bearing, not decoration (catalog issue #136). Step 4 filters out
+        // tickets whose issue is CLOSED -- that is the resume filter, and what makes a
+        // re-run after a pause or a new PRD phase execute only the new work. The mid-run
+        // rescan never had it, so an already-delivered ticket was pulled straight back
+        // into the running schedule: re-planned and re-built against a codebase that
+        // already contains its work, and if it reached deliver, merged a second time.
+        properties: { id: { type: 'string' }, module: { type: 'string' }, path: { type: 'string' }, issue: { type: 'number' }, state: { type: 'string' }, blockedBy: { type: 'array', items: { type: 'string' } } },
         required: ['id', 'path'],
       },
     },
@@ -303,6 +324,10 @@ const pendingCycle = function () {
 let scans = 0
 let settledSinceScan = 0
 let growthStopped = false
+// Tickets a RESCAN dropped because their issue is already closed. Kept separate from the
+// launch-time drops so the final report can distinguish them: "filtered at launch" and
+// "filtered mid-run" mean different things to whoever reads it.
+const rescanDroppedClosed = []
 
 // Merge a fresh scan into the live graph. Returns true if anything became schedulable.
 const mergeScan = function (scanned) {
@@ -315,6 +340,18 @@ const mergeScan = function (scanned) {
     seen.add(s.id)
     const known = tickets.get(s.id)
     if (!known) {
+      // The SAME closed-issue rule step 4 applies at launch (catalog issue #136). Without
+      // it the rescan re-admitted delivered tickets, and the reporter's workaround was
+      // rescanEvery: 0 -- disabling the live-DAG feature outright. That the workaround
+      // worked is itself evidence the two paths had diverged instead of sharing one rule.
+      //
+      // Reported, never silent: step 4 already carries that obligation, because a filter
+      // that removes work without saying so is indistinguishable from work that ran.
+      if (String(s.state || '').toLowerCase() === 'closed') {
+        rescanDroppedClosed.push(s.id)
+        log('rescan: - ' + s.id + ' (already delivered; its issue is closed)')
+        continue
+      }
       if (tickets.size >= cfg.maxTickets) {
         if (!growthStopped) {
           growthStopped = true
@@ -395,6 +432,10 @@ const rescan = async function (reason) {
     '2. For every scanned ticket whose id is NOT in this already-known list [' + known + '], publish it so delivery can close its issue: ' +
     'run `node .claude/scripts/publish-tickets.mjs <its module dir under ' + cfg.prdRoot + '> --create --platform ' + cfg.platform + '` ' +
     'once per affected module dir (idempotent -- the [<id>] title prefix dedupes), and read the issue numbers from its PUBLISH-SUMMARY-JSON line. Skip this step entirely if there are no new ids.\n' +
+    '2b. You MUST report each ticket\'s issue `state` ("open" or "closed") exactly as PUBLISH-SUMMARY-JSON reports it. ' +
+    'For a module you did not publish in step 2, run the SAME command WITHOUT --create (a dry run creates nothing) purely to read the states. ' +
+    'This is not optional bookkeeping: a ticket whose issue is closed has already been delivered, and re-admitting it re-plans and re-builds against a codebase that already contains its work. ' +
+    'If you genuinely cannot determine a state, omit the field rather than guessing "open".\n' +
     '3. `node .claude/scripts/dag-report.mjs ' + cfg.prdRoot + '` -- refresh the Gate 1 visualization so it shows the live DAG.\n' +
     'Return ok=true and `tickets` = the SCAN-JSON ticket list, each with id, module, path and blockedBy exactly as scanned, ' +
     'plus `issue` (a number) for any ticket whose issue number you saw in a PUBLISH-SUMMARY-JSON line.',
@@ -495,9 +536,68 @@ for (const t of tickets.values()) {
   results.push({ id: t.id, status: 'not-started', detail: stopRun ? 'run stopped before this ticket' : 'never scheduled' })
 }
 
+// ---- post-run cleanup (catalog issue #151) --------------------------------------------
+// The run creates a `ticket/<ID>` branch per ticket and, at concurrency > 1, a worktree
+// per isolated agent. Neither was ever cleaned up: one observed run left 16 worktrees, a
+// later one 21, on top of the previous leftovers.
+//
+// Left alone the branches are not merely untidy. On a squash-on-merge project the
+// delivered commit is a NEW commit, so the ticket tip is never an ancestor of the default
+// branch — and any later deliver invocation for that ticket re-pushes the branch and opens
+// a merge request against a default branch that has moved on, proposing to revert
+// everything merged since. Four such merge requests sat open in a real repo, one of them
+// -12,095 lines, all conflict-free, found only because a human scrolled the list.
+//
+// Only DELIVERED tickets are cleaned. A failed or skipped ticket's branch is evidence and
+// stays. And what could not be cleaned is REPORTED rather than dropped — the whole failure
+// mode is that nothing said anything.
+const cleanupReport = { branchesDeleted: [], branchesKept: [], worktreesPruned: false }
+{
+  const deliveredIds = results
+    .filter(function (r) { return r.status === 'delivered' })
+    .map(function (r) { return r.id })
+  if (deliveredIds.length || concurrency > 1) {
+    const clean = await agent(
+      'Post-run cleanup for /start-all. You are NOT implementing anything and you must NOT touch any ticket, plan, or source file.\n' +
+      '1. `git worktree prune` — drop administrative entries for worktrees whose directories are already gone.\n' +
+      (concurrency > 1
+        ? '2. `git worktree list` — for every worktree under .claude/worktrees/, run `git worktree remove --force <path>`. These belong to THIS finished run.\n'
+        : '2. (skip — this run used concurrency 1 and created no worktrees)\n') +
+      '3. Delete the local branch of each DELIVERED ticket, and ONLY these: ' + (deliveredIds.join(', ') || '(none)') + '. ' +
+      'For each id run `git branch -D ticket/<id>`. A leftover ticket branch is what later opens a merge request that REVERTS the default branch, ' +
+      'so this step is the point of the cleanup — but a branch for a ticket NOT in that list is evidence of a failure and must be left alone.\n' +
+      '4. Report exactly what you deleted and what you could not, verbatim. Do not delete any REMOTE branch, and do not touch the default branch.',
+      { label: 'cleanup', phase: 'Deliver', effort: 'low', schema: CLEANUP }
+    )
+    if (clean && clean.ok) {
+      cleanupReport.branchesDeleted = clean.branchesDeleted || []
+      cleanupReport.branchesKept = clean.branchesKept || []
+      cleanupReport.worktreesPruned = clean.worktreesPruned === true
+      log('cleanup: deleted ' + cleanupReport.branchesDeleted.length + ' delivered ticket branch(es)' +
+        (cleanupReport.worktreesPruned ? ', pruned run worktrees' : ''))
+      if (cleanupReport.branchesKept.length) {
+        escalations.push('cleanup could not remove: ' + cleanupReport.branchesKept.join(', ') +
+          ' — delete them by hand; a stale ticket branch can later open a merge request that reverts ' + cfg.defaultBranch)
+      }
+    } else {
+      // Never silent. An uncleaned run is exactly the state that produced the reverting
+      // merge requests, so it has to reach the operator.
+      escalations.push('post-run cleanup did not complete' + (clean && clean.detail ? ': ' + clean.detail : '') +
+        ' — ticket branches and any run worktrees are still present; a stale ticket branch can later open a merge request that reverts ' + cfg.defaultBranch)
+      log('cleanup: did NOT complete — leftover branches/worktrees remain (see escalations)')
+    }
+  }
+}
+
 const delivered = results.filter(function (r) { return r.status === 'delivered' || r.status === 'awaiting-human-merge' }).length
 log('start-all finished: ' + delivered + '/' + results.length + ' ticket(s) through the pipeline ' +
   '(concurrency=' + concurrency + ', ' + scans + ' DAG reload(s))')
+// Surfaced at the END, not only in the mid-run log line: a rescan drop is the same class
+// of event as a launch-time drop, and step 4 already reports those. A filter that removes
+// work silently is indistinguishable from work that ran (catalog issue #136).
+if (rescanDroppedClosed.length) {
+  log('rescan dropped ' + rescanDroppedClosed.length + ' already-delivered ticket(s) (issue closed): ' + rescanDroppedClosed.join(', '))
+}
 for (const e of escalations) log('escalation: ' + e)
 
 return {
@@ -507,6 +607,10 @@ return {
   rescans: scans,
   ticketCount: results.length,
   delivered: delivered,
+  // Machine-readable, so a caller can distinguish "the rescan found nothing new" from
+  // "the rescan found delivered work and correctly declined to re-run it".
+  rescanDroppedClosed: rescanDroppedClosed,
+  cleanup: cleanupReport,
   escalations: escalations,
   results: results,
 }

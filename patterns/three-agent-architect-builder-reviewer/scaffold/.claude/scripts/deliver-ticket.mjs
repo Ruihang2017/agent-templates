@@ -244,6 +244,12 @@ const finish = (code) => {
     checks.issueClosed &&
     (!checks.pushRequired || checks.pushed) &&
     (TEST_CMD ? checks.testsPassed === true : true)
+  // Branch cleanup deliberately does NOT happen here (issue #151). Deleting the ticket
+  // branch on delivery breaks the pattern's idempotent re-run: a second invocation — a
+  // resume, or a pass to close the tracker — would find no ref and report "not delivered"
+  // for work that shipped, which is the same false-negative class the squash fix removes.
+  // Cleanup belongs to the run that OWNS the branches, so it lives in start-all's post-run
+  // step; the revert guard above is what makes a leftover branch harmless in the meantime.
   const summary = {
     id: ID, branch: BRANCH, deliveryMode,
     merged: checks.merged, issueClosed: checks.issueClosed, dodPassed,
@@ -748,6 +754,51 @@ try {
     const pb = tryGit(['push', '-u', 'origin', BRANCH])
     if (pb.ok) { checks.branchPushed = true; console.log(`+ pushed  ${BRANCH} -> origin`) }
     else { note(`branch push failed: ${lastLine(pb.out)} — cannot open a PR without it`); finish(0) }
+
+    // 3a-bis. REFUSE to open a merge request that would revert the default branch.
+    //
+    // Catalog issue #151, and it is the most dangerous defect reported against this
+    // pattern so far because it fails in the INVERTED direction. Every other failure here
+    // ends at "the ticket did not deliver", which a human sees. This one ends at "here is
+    // a normal-looking, conflict-free merge request" whose effect is a large deletion.
+    //
+    // The chain: /start-all leaves `ticket/<ID>` branches behind; the project squashes on
+    // merge, so the original tip is never an ancestor of the default branch; any later
+    // deliver invocation for that ticket — a resume, a retry, a second pass to close the
+    // tracker — sees the branch still present, re-pushes it, and opens a NEW merge request
+    // against the CURRENT default branch. That branch was cut from an old default and
+    // never rebased, so the MR proposes reverting everything merged since. Four such MRs
+    // sat open in a real repo, one of them -12,095 lines, all showing NO conflict. They
+    // were found by a human scrolling the merge request list.
+    //
+    // Deliberately a REFUSAL, not a warning: the whole failure mode is that nothing in the
+    // chain reports an error, so adding one more line to a log nobody reads is not a fix.
+    {
+      // TWO dots, not three. `a...b` diffs from the MERGE BASE, so it shows only what the
+      // ticket changed and hides everything the default branch gained since — which is
+      // precisely the damage a stale branch would do. `a..b` is the comparison the forge
+      // shows as "diff vs main", and the one whose deletion count is the actual signal.
+      const stat = tryGit(['diff', '--numstat', `origin/${DEFAULT_BRANCH}..${BRANCH}`])
+      if (stat.ok) {
+        let added = 0
+        let removed = 0
+        for (const line of stat.out.split('\n')) {
+          const m = line.match(/^(\d+)\s+(\d+)\s/)
+          if (m) { added += Number(m[1]); removed += Number(m[2]) }
+        }
+        // A ticket legitimately deletes code — a refactor, a removal ticket — so a bare
+        // "removes anything" test would fire constantly and be turned off. The signature
+        // of a stale branch is a diff dominated by deletions AND large in absolute terms.
+        const REVERT_MIN_LINES = 200
+        const REVERT_RATIO = 5
+        if (removed >= REVERT_MIN_LINES && removed >= added * REVERT_RATIO) {
+          note(`refusing to open a PR/MR: ${BRANCH} would REMOVE ${removed} lines and add ${added} against ${DEFAULT_BRANCH}. `
+            + `That is the signature of a stale branch cut from an older ${DEFAULT_BRANCH} and never rebased — merging it would revert work delivered since. `
+            + `If this ticket genuinely removes that much, rebase the branch onto ${DEFAULT_BRANCH} and re-run.`)
+          finish(0)
+        }
+      }
+    }
 
     // 3b. find or create the PR/MR
     let pr = findPr()
