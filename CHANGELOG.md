@@ -2,6 +2,69 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
+## 0.13.0 — 2026-08-12
+
+### Upgrading from 0.12.0
+
+```
+git add -A && git commit -m "checkpoint before agent-templates update"
+npx agent-templates@latest adopt three-agent-architect-builder-reviewer . --force
+git diff
+```
+
+`--force` again: the changes are in `.claude/scripts/`, `.claude/workflows/` and `integrations/asana/`, which a plain re-run skips.
+
+**If you use the Asana integration, upgrade.** A parent with more than 100 subtasks was silently truncated and the missing ones recreated — see below.
+
+### New — finish the PRD without a tracker, publish afterwards
+
+`/start-all` accepts `platform: 'none'`. Every ticket merges to the **local** default branch and nothing touches a forge: no push, no PR/MR, no tracker.
+
+```
+/start-all autonomous 1 none
+```
+
+The reason is not convenience. Every delivery defect this catalog has recorded lives at the forge boundary — a missing `--sha` (#152), the mergeability race (#135), squash ancestry (#152), leftover branches opening reverting merge requests (#151), a protected default branch (#139), a 403 MR API (#56), one generated file leaving the tree dirty (#153) — and **every one of them stopped the whole run**. The pattern's value is the Architect → Builder → fresh Reviewer chain; the forge is how the result is *published*. Coupling them means an outage, an expired token or a pipeline policy blocks development.
+
+**Review is unchanged.** A ticket still only merges on CLEAR. What is deferred is publication, not judgement.
+
+What replaces the tracker: a **committed** ledger at `docs/delivered.json` recording each delivered ticket and the commit it landed as. That is the resume signal — a re-run executes only the new work — and it is what you or an agent read afterwards to know what still needs pushing. It is committed rather than gitignored on purpose: a scratch file would vanish on the first clean checkout, which is exactly when someone needs it.
+
+The run ends with an explicit handoff naming the exact command to publish. A mode that quietly accumulates work on one machine and says nothing is indistinguishable from work nobody can see.
+
+### New — run both three-agent patterns in one project
+
+A project may install the Claude and the Codex three-agent patterns **side by side**. Tested rather than asserted: zero file collisions — `.claude/` + `CLAUDE.md` beside `.codex/` + `.agents/` + `AGENTS.md`.
+
+```
+npx agent-templates@latest adopt three-agent-architect-builder-reviewer .
+npx agent-templates@latest adopt codex-three-agent-architect-builder-reviewer .
+```
+
+They share exactly what is the *project* rather than the runtime — the `docs/prd/` ticket tree, the `[<id>]` tracker prefix, `ticket/<ID>` branch names, `docs/plans/`, and the delivery ledger. A ticket planned in one runtime and built in the other works, so teammates with different tools can work the same project and one person can switch runtimes on a token budget without development stalling.
+
+**No hybrid pattern is offered.** It would add a third scaffold to maintain and a model table pinning two vendors at once, for no capability these two installs lack.
+
+### Fixed — Asana silently truncated at 100 subtasks and recreated the rest
+
+`listSubtasks` asked for `limit=100` and stopped, and the API helper discarded the response envelope including `next_page`. Asana caps a page at 100, so a parent with more than 100 subtasks returned a **truncated** list — and every caller treats "not in the list" as "does not exist yet" and creates it.
+
+This is **catalog issue #132 verbatim**, through a different API: there, `glab issue list --all` returned 30 issues and one `--create` produced 43 duplicates on a 44-ticket repo. Self-reinforcing the same way — each duplicate consumes a window slot, pushing a real subtask further out of view next run.
+
+The list is now paginated in full, and every condition under which completeness *cannot be known* throws rather than returning a short list: a full page with no `next_page`, a continuation token that yields no new rows, or exceeding the page cap. Asana remains fail-soft — it is a reporting mirror, never a gate, so these surface in `ASANA-SYNC-JSON.errors` and cannot fail a delivered ticket.
+
+Worth stating plainly for anyone maintaining a fork: **no test caught this because the fake Asana API returned every child in one response, ignoring `limit`.** A test double more capable than the real API cannot exercise a truncation bug.
+
+### Fixed — a flaky assertion in the merge gate was a real defect
+
+`suite-deliver`'s squash-merge test failed intermittently with nothing but a git warning to go on. `git init --bare` sets `HEAD` to `refs/heads/master` and pushing `main` never moves it, so the test fixture's origin permanently advertised a branch that did not exist and every clone of it landed on an **unborn** branch.
+
+Only affects the catalog's own test suite, but recorded because a flaky test in the merge gate trains everyone — human and agent — to re-run rather than investigate.
+
+### Changed — the release track record in the README
+
+It said "0/3, as of 2026-08-06". It is now 0/4 published by CI with 5/5 by hand, and the workflow itself is green — the already-published skip path works, verified on `v0.11.0` and `v0.12.0` — while still having **never actually published**.
+
 ## 0.12.0 — 2026-08-11
 
 ### Upgrading from 0.11.0 — read this first

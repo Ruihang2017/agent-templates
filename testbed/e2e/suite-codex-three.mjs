@@ -164,6 +164,16 @@ export async function run() {
     eq(S, 'the delivery ledger path is identical across runtimes', codexLedger, claudeLedger)
     check(S, 'the delivery ledger is not runtime-scoped',
       !/\.claude|\.codex|\.agents/.test(claudeLedger), claudeLedger)
+
+    // A capability that reaches one runtime's SCRIPTS through the parity port but never
+    // its SKILLS is unreachable in that runtime — and the catalog would be claiming it.
+    // Local delivery (issue #180) arrived exactly that way, so it is asserted here.
+    const startAllSkill = readFileSync(join(SCAFFOLD, '.agents', 'skills', 'start-all', 'SKILL.md'), 'utf8')
+    check(S, 'the Codex start-all skill documents local delivery', /local delivery/i.test(startAllSkill))
+    check(S, 'it tells the agent which flag to pass', /--delivery local/.test(startAllSkill))
+    check(S, 'it tells the agent NOT to publish in that mode', /skip step 3|publish nothing/i.test(startAllSkill))
+    check(S, 'it names the ledger as the resume signal', /docs\/delivered\.json/.test(startAllSkill))
+    check(S, 'it requires the run to hand the work over', /nothing was pushed/i.test(startAllSkill))
   }
 }
 
