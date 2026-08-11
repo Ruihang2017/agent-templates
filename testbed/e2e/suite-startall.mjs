@@ -86,7 +86,10 @@ const makeRespond = (scanState) => async ({ label, id }) => {
     if (scanState.fail) return { ok: false, detail: 'dag-scan exited 1: half-written ticket' }
     scanState.calls += 1
     if (scanState.onScan) scanState.onScan(scanState.calls)
-    return { ok: true, tickets: scanState.tickets.map((t) => ({ id: t.id, module: t.module || 'x', path: t.path, blockedBy: t.blockedBy || [], issue: t.issue })) }
+    // `state` mirrors what PUBLISH-SUMMARY-JSON reports for each ticket. It is what the
+    // rescan needs in order to apply the same closed-issue filter step 4 applies at
+    // launch (catalog issue #136).
+    return { ok: true, tickets: scanState.tickets.map((t) => ({ id: t.id, module: t.module || 'x', path: t.path, blockedBy: t.blockedBy || [], issue: t.issue, state: t.state })) }
   }
   if (kind(label) === 'plan') return plan(id)
   if (kind(label) === 'build' || kind(label) === 'fix') return goodBuild(id)
@@ -176,6 +179,96 @@ export async function run() {
       events.some((e) => e.ev === 'start' && e.label.startsWith('rescan') && /dag-report\.mjs/.test(e.prompt)))
     check(S, 'SA5 reload runs at low effort (it only relays script output)',
       events.some((e) => e.ev === 'start' && e.label.startsWith('rescan') && e.effort === 'low'))
+  }
+
+  // ---- SA5b (issue #136): the mid-run rescan applies the SAME closed-issue filter as
+  // step 4. Without it, an already-delivered ticket is pulled back into the running
+  // schedule, re-planned and re-built against a codebase that already contains its work.
+  //
+  // Both directions are asserted IN THE SAME TEST on purpose: a closed ticket must be
+  // dropped AND an open one must still be picked up. Neither assertion can be satisfied by
+  // breaking the other — neutering the rescan fails the second, and dropping the filter
+  // fails the first.
+  {
+    const tickets = [tk('A-1', [], 'x'), tk('A-2', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    const dispatched = []
+    st.onDeliver = (id) => {
+      dispatched.push(id)
+      if (id === 'A-1') {
+        // the outside world adds one ticket already delivered by an earlier run, and one
+        // genuinely new
+        st.tickets.push({ ...tk('OLD-1', [], '02-old'), state: 'closed' })
+        st.tickets.push({ ...tk('NEW-1', [], '03-new'), state: 'open' })
+      }
+    }
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    check(S, 'SA5b no error', !error, error && error.message)
+    check(S, 'SA5b the delivered ticket was NOT re-dispatched', !dispatched.includes('OLD-1'), dispatched.join(','))
+    check(S, 'SA5b it never entered the schedule at all', !result.results.some((r) => r.id === 'OLD-1'))
+    check(S, 'SA5b the drop is REPORTED, not silent',
+      Array.isArray(result.rescanDroppedClosed) && result.rescanDroppedClosed.includes('OLD-1'),
+      JSON.stringify(result.rescanDroppedClosed))
+    // the other direction, so the filter cannot be "fixed" by neutering the rescan
+    eq(S, 'SA5b a genuinely new ticket is still picked up', statusOf(result, 'NEW-1'), 'delivered')
+    // a rescan drop must be distinguishable from a launch-time drop
+    check(S, 'SA5b launch-time drops are not conflated with rescan drops',
+      !result.rescanDroppedClosed.includes('A-1') && !result.rescanDroppedClosed.includes('A-2'))
+  }
+
+  // ---- SA5c (issue #151): post-run cleanup of ticket branches and run worktrees.
+  // A leftover ticket branch is what later opens a merge request that REVERTS the default
+  // branch — four such MRs, one of them -12,095 lines, all conflict-free, sat open in a
+  // real repo and were found only because a human scrolled the list.
+  {
+    const tickets = [tk('A-1', [], 'x'), tk('A-2', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    let cleanupPrompt = ''
+    const respond = async (a) => {
+      if (a.label === 'cleanup') {
+        cleanupPrompt = a.prompt
+        return { ok: true, worktreesPruned: true, branchesDeleted: ['ticket/A-1', 'ticket/A-2'], branchesKept: [] }
+      }
+      return makeRespond(st)(a)
+    }
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    check(S, 'SA5c no error', !error, error && error.message)
+    check(S, 'SA5c a cleanup step runs after the tickets', !!cleanupPrompt)
+    check(S, 'SA5c it names only the DELIVERED ticket ids', /A-1, A-2/.test(cleanupPrompt), cleanupPrompt.slice(0, 200))
+    check(S, 'SA5c it explains WHY, so it cannot be optimised away as tidying',
+      /REVERTS the default branch/.test(cleanupPrompt))
+    check(S, 'SA5c it forbids touching remote branches', /not delete any REMOTE branch/i.test(cleanupPrompt))
+    check(S, 'SA5c the result is reported', result.cleanup && result.cleanup.branchesDeleted.length === 2)
+  }
+
+  // SA5d: cleanup that CANNOT complete must escalate. The entire failure mode of #151 is
+  // that nothing reported anything, so a silent cleanup failure would reproduce it.
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    const respond = async (a) => {
+      if (a.label === 'cleanup') return { ok: true, worktreesPruned: false, branchesDeleted: [], branchesKept: ['ticket/A-1'] }
+      return makeRespond(st)(a)
+    }
+    const { result } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    check(S, 'SA5d an uncleaned branch escalates',
+      result.escalations.some((e) => /cleanup could not remove/.test(e) && /ticket\/A-1/.test(e)),
+      JSON.stringify(result.escalations))
+    check(S, 'SA5d the escalation says what the risk actually is',
+      result.escalations.some((e) => /reverts main/i.test(e)), JSON.stringify(result.escalations))
+  }
+
+  // SA5e: a cleanup agent that returns nothing is not silently treated as success.
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    const respond = async (a) => (a.label === 'cleanup' ? null : makeRespond(st)(a))
+    const { result } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    check(S, 'SA5e a failed cleanup escalates rather than passing quietly',
+      result.escalations.some((e) => /post-run cleanup did not complete/.test(e)),
+      JSON.stringify(result.escalations))
+    check(S, 'SA5e and the run still reports its tickets as delivered',
+      statusOf(result, 'A-1') === 'delivered')
   }
 
   // ---- SA6: reload cadence honors rescanEvery, and 0 disables it ----------------------
