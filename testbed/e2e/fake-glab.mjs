@@ -268,7 +268,13 @@ if (joined.startsWith('mr merge')) {
     const origin = gitq(['remote', 'get-url', 'origin']).trim()
     const tmp = mkdtempSync(join(tmpdir(), 'fake-glab-merge-'))
     try {
-      gitq(['clone', '-q', origin, tmp])
+      // `--branch <base>` is load-bearing, not tidiness. `git init --bare` leaves HEAD at
+      // refs/heads/master, and pushing `main` does not move it — so a plain clone reports
+      // "remote HEAD refers to nonexistent ref, unable to checkout" and lands on an UNBORN
+      // branch where `rev-parse HEAD` is fatal. That produced an intermittent G5 failure
+      // whose only symptom was a clone warning, which is why it read as unexplained flake
+      // rather than a bug (recorded honestly in PR #171; diagnosed 2026-08-11).
+      gitq(['clone', '-q', '--branch', mr.base, origin, tmp])
       const g = (a) => gitq(['-C', tmp, ...a])
       g(['config', 'user.email', 'fake-glab@example.com'])
       g(['config', 'user.name', 'fake-glab'])

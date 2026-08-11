@@ -144,7 +144,7 @@ git tag vX.Y.Z && git push origin vX.Y.Z   # X.Y.Z = the version in package.json
 
 CI re-runs the E2E gate, checks the tag matches `package.json`, and publishes to npm.
 
-**Track record, so you know what to expect.** As of 2026-08-06 this workflow has **published nothing — 0/3**. `v0.8.0`, `v0.9.0` and `v0.10.0` all failed with `npm error code EOTP`. Every release since 0.7.0 shipped by the manual fallback below — 0.8.1, 0.9.0, 0.10.0, **3/3**. All three CI failures were the workflow behaving correctly: the tag-match and E2E gates passed, and the registry refused the token at the last step. Treat the tag path as the intended route, not a proven one, until a run goes green.
+**Track record, so you know what to expect.** As of 2026-08-11 the tag path has **published nothing — 0/4**: `v0.8.0`, `v0.9.0` and `v0.10.0` all failed with `npm error code EOTP`, and `v0.11.0`/`v0.12.0` were pushed *after* a manual publish, so they correctly **skipped**. Every release since 0.7.0 shipped by the manual fallback below — 0.8.1, 0.9.0, 0.10.0, 0.11.0, 0.12.0, **5/5**. The three failures were the workflow behaving correctly: both gates passed and the registry refused the token at the last step. The workflow itself is now green (the skip path works end to end, verified on `v0.11.0` and `v0.12.0`), but **it has still never actually published** — treat the tag path as the intended route, not a proven one, until a run publishes.
 
 Three consecutive `EOTP` failures is no longer a suspicion about the `NPM_TOKEN` secret — it is evidence. It is still a Classic token, and only a repo admin can replace it (see **One-time setup** below).
 

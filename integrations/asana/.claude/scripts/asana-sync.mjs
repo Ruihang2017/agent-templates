@@ -158,7 +158,10 @@ const MAX_ATTEMPTS = Number(process.env.ASANA_MAX_ATTEMPTS || 3)
 
 let requestCount = 0
 
-const api = async (method, path, body) => {
+// `opts.envelope` returns the WHOLE response object rather than just `.data`. Paginated
+// reads need `next_page`, and the default shape discards it — which is how a truncated
+// subtask list read as a complete one (issue #176).
+const api = async (method, path, body, opts = {}) => {
   let lastErr = ''
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     requestCount++
@@ -200,9 +203,10 @@ const api = async (method, path, body) => {
       } catch {}
       throw new Error(`http ${res.status}: ${detail}`)
     }
-    if (!text) return {}
+    if (!text) return opts.envelope ? { data: [] } : {}
     try {
-      return JSON.parse(text).data
+      const parsed = JSON.parse(text)
+      return opts.envelope ? parsed : parsed.data
     } catch {
       throw new Error('unparseable response body')
     }
@@ -211,7 +215,70 @@ const api = async (method, path, body) => {
 }
 
 const getTask = (gid) => api('GET', `/tasks/${encodeURIComponent(gid)}?opt_fields=name,completed,workspace,parent`)
-const listSubtasks = (gid) => api('GET', `/tasks/${encodeURIComponent(gid)}/subtasks?opt_fields=name,completed&limit=100`)
+
+// ---------------------------------------------------------------------------
+// PAGINATION IS LOAD-BEARING (catalog issue #176).
+//
+// `api()` returns `.data` and drops the response envelope, and `listSubtasks` asked for
+// `limit=100` and stopped there. Asana caps a page at 100, so a parent with more than 100
+// subtasks returned a TRUNCATED list — and every caller treats "not in the list" as "does
+// not exist yet" and CREATES it. That is precisely catalog issue #132, which produced 43
+// duplicate issues on a 44-ticket repo, arriving through a different API.
+//
+// It is also self-reinforcing in the same way: each duplicate consumes a slot in the
+// window, pushing a real subtask further out of view on the next run.
+//
+// So this follows #132's rule rather than inventing a new one: NEVER return a short list.
+// Every failure path throws, because a truncated list is indistinguishable from "these
+// were never created", and acting on that difference is the entire bug.
+// ---------------------------------------------------------------------------
+
+const PAGE_LIMIT = 100 // Asana's documented maximum
+const MAX_PAGES = Number(process.env.ASANA_MAX_PAGES || 200) // 20k subtasks; a runaway guard, not a real ceiling
+
+/** GET one page and return the FULL envelope, so `next_page` survives. */
+const apiPage = async (path) => {
+  const env = await api('GET', path, undefined, { envelope: true })
+  return { data: Array.isArray(env.data) ? env.data : [], nextPage: env.next_page || null }
+}
+
+const listSubtasks = async (gid) => {
+  const base = `/tasks/${encodeURIComponent(gid)}/subtasks?opt_fields=name,completed&limit=${PAGE_LIMIT}`
+  const out = []
+  const seen = new Set()
+  let path = base
+  for (let page = 1; ; page++) {
+    if (page > MAX_PAGES) {
+      throw new Error(`subtask list for ${gid} exceeded ${MAX_PAGES} pages — refusing to continue with a partial list`)
+    }
+    const { data, nextPage } = await apiPage(path)
+    let fresh = 0
+    for (const t of data) {
+      if (!t || !t.gid || seen.has(t.gid)) continue
+      seen.add(t.gid)
+      out.push(t)
+      fresh++
+    }
+    if (!nextPage || !nextPage.offset) {
+      // A FULL page with no continuation token is ambiguous — it is exactly what a server
+      // that ignores pagination looks like, and also what a parent with exactly `limit`
+      // subtasks looks like. Asana documents `next_page` as present whenever more results
+      // exist, so treat its absence on a full page as the server not paginating and fail
+      // rather than silently returning a possibly-truncated list.
+      if (data.length >= PAGE_LIMIT) {
+        throw new Error(`subtask list for ${gid} returned a full page (${data.length}) with no next_page — cannot tell a complete list from a truncated one, refusing to guess`)
+      }
+      break
+    }
+    if (fresh === 0) {
+      // The server handed back a continuation token but no new rows: following it would
+      // loop forever. Loud, because the alternative is an unattended run that never ends.
+      throw new Error(`subtask list for ${gid} advanced a page with no new subtasks — offset appears to be ignored, refusing to loop`)
+    }
+    path = `${base}&offset=${encodeURIComponent(nextPage.offset)}`
+  }
+  return out
+}
 const createSubtask = (parentGid, fields) => api('POST', `/tasks/${encodeURIComponent(parentGid)}/subtasks`, fields)
 const updateTask = (gid, fields) => api('PUT', `/tasks/${encodeURIComponent(gid)}`, fields)
 const addToProject = (gid, projectGid) => api('POST', `/tasks/${encodeURIComponent(gid)}/addProject`, { project: projectGid })
