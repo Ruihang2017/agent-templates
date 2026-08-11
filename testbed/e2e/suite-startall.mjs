@@ -271,6 +271,71 @@ export async function run() {
       statusOf(result, 'A-1') === 'delivered')
   }
 
+  // ---- SA5f (issue #180): platform 'none' = local delivery, no forge on the critical path.
+  {
+    const tickets = [tk('A-1', [], 'x'), tk('A-2', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    let deliverPrompt = ''
+    let rescanPrompt = ''
+    const respond = async (a) => {
+      if (kind(a.label) === 'deliver') deliverPrompt = a.prompt
+      if (a.label.startsWith('rescan')) rescanPrompt = a.prompt
+      if (a.label === 'cleanup') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
+      return makeRespond(st)(a)
+    }
+    const { result, error } = await drive(SRC,
+      { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1, platform: 'none' }, respond)
+    check(S, 'SA5f no error', !error, error && error.message)
+    check(S, 'SA5f delivery runs in local mode', /--delivery local/.test(deliverPrompt), deliverPrompt.slice(0, 300))
+    // the two flags that would drag a forge back onto the critical path
+    check(S, 'SA5f no --platform is passed', !/--platform/.test(deliverPrompt))
+    check(S, 'SA5f no --issue is passed (there is no tracker)', !/--issue/.test(deliverPrompt))
+    // the rescan must not publish, and must read the ledger for the SAME closed filter
+    // It must not be told to RUN the publisher. Naming it inside a prohibition is correct
+    // and wanted, so the assertion targets the command form, not the mere mention.
+    check(S, 'SA5f the rescan is not told to run the publisher',
+      !/run `node \.claude\/scripts\/publish-tickets\.mjs/.test(rescanPrompt))
+    check(S, 'SA5f and it is explicitly forbidden from publishing',
+      /Do NOT publish anything/.test(rescanPrompt))
+    check(S, 'SA5f the rescan reads the local delivery ledger',
+      /\.claude\/delivered\.json/.test(rescanPrompt), rescanPrompt.slice(0, 300))
+    check(S, 'SA5f it must not report every ticket as open when the ledger is unreadable',
+      /rather than reporting every ticket as "open"/.test(rescanPrompt))
+    // the run hands the work over rather than hoarding it silently
+    check(S, 'SA5f the run reports a local handoff', result.localHandoff && result.localHandoff.pushed === false)
+    check(S, 'SA5f the handoff says nothing was pushed',
+      result.localHandoff && result.localHandoff.next.some((l) => /Nothing was pushed/.test(l)))
+    check(S, 'SA5f the handoff gives the exact push command',
+      result.localHandoff && result.localHandoff.next.some((l) => l.includes('git push origin main')))
+    eq(S, 'SA5f the tickets still delivered', statusOf(result, 'A-1'), 'delivered')
+  }
+
+  // SA5g: a tracker run is unaffected — no handoff, and the forge flags are still passed.
+  // Without this, "local mode works" could be satisfied by making every run local.
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    let deliverPrompt = ''
+    const respond = async (a) => {
+      if (kind(a.label) === 'deliver') deliverPrompt = a.prompt
+      if (a.label === 'cleanup') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
+      return makeRespond(st)(a)
+    }
+    const { result } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0, platform: 'gh' }, respond)
+    check(S, 'SA5g a gh run still passes --platform', /--platform gh/.test(deliverPrompt))
+    check(S, 'SA5g a gh run does NOT use local delivery', !/--delivery local/.test(deliverPrompt))
+    check(S, 'SA5g a gh run reports no local handoff', result.localHandoff === null)
+  }
+
+  // SA5h: an unknown platform still fails loudly — 'none' widened the set, it did not
+  // remove the check.
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    const { error } = await drive(SRC, { tickets, mode: 'autonomous', platform: 'gitea' }, makeRespond(st))
+    check(S, 'SA5h an unknown platform is rejected', !!error && /platform must be/.test(error.message), error && error.message)
+  }
+
   // ---- SA6: reload cadence honors rescanEvery, and 0 disables it ----------------------
   {
     const mk = () => [tk('A-1', [], 'x'), tk('A-2', [], 'x'), tk('A-3', [], 'x'), tk('A-4', [], 'x'), tk('A-5', [], 'x'), tk('A-6', [], 'x')]

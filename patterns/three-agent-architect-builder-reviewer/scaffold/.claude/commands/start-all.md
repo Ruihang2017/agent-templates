@@ -1,9 +1,13 @@
 ---
 description: Gate 1 for the whole PRD — publish every module's tickets, then run them all through the pipeline scheduled from one dependency DAG
-argument-hint: [supervised|autonomous] [concurrency]
+argument-hint: [supervised|autonomous] [concurrency] [none]
 ---
 
 Arguments: `$ARGUMENTS` — optional mode override (else the repo's declared Operating mode in CLAUDE.md); an optional integer sets **`concurrency`** (default 1 = sequential; >1 runs independent tickets as parallel lanes — autonomous only).
+
+**`none` = local delivery (issue #180).** If the arguments contain the bare word `none`, pass `platform: 'none'` to the workflow. Every ticket then merges to the **local** default branch and nothing touches a forge — no push, no PR/MR, no tracker — so a pipeline gate, a protected branch, an expired token or a 403 MR API cannot stop the run. Review is unchanged: a ticket still only merges on CLEAR; what is deferred is publication.
+
+In this mode you must **not** publish tickets (step 3 is skipped entirely), and the resume signal is the committed ledger at `docs/delivered.json` instead of closed issues. Relay the run's `localHandoff` verbatim at the end — it names what landed and the exact command to publish. A run that quietly accumulates work on one machine and says nothing is indistinguishable from work nobody can see.
 
 **Do not guess `concurrency`.** `node .claude/scripts/dag-report.mjs docs/prd` derives it from the ticket DAG and prints `recommended concurrency: N` (also rendered in `docs/prd/dag.html`, written at `/breakdown-prd` time). Above that number the extra lanes never fill; below it, independent tickets get serialized. If the human passed no integer, run the report and report what it recommends rather than defaulting to 1 silently.
 
