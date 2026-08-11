@@ -745,6 +745,50 @@ const assertAiMarker = (label, body) => {
     } finally { cleanup(root) }
   }
 
+  // G7 (issue #151): refuse to open a PR/MR that would REVERT the default branch.
+  //
+  // This is the most dangerous shape reported against the pattern, because it fails
+  // INVERTED: every other failure ends at "the ticket did not deliver", which a human
+  // sees; this one ends at a normal-looking, conflict-free merge request whose effect is a
+  // large deletion. Four such MRs sat open in a real repo, one -12,095 lines.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      // main moves on substantially AFTER the ticket branch was cut — exactly the state a
+      // leftover branch is in when a later deliver invocation re-pushes it.
+      writeFileSync(join(repo, 'big.txt'), Array.from({ length: 600 }, (_, i) => `line ${i}`).join('\n') + '\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'lots of work delivered since the ticket branch was cut'])
+      git(repo, ['push', '-q', 'origin', 'main'])
+
+      const { r, sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt') })
+      eq(S, 'G7 exit 0 with a definitive summary', r.status, 0)
+      check(S, 'G7 it REFUSES to open the PR/MR', sum && !sum.checks.prCreated, sum && sum.notes)
+      check(S, 'G7 the note quantifies the deletion', sum && /would REMOVE \d+ lines and add \d+/.test(sum.notes), sum && sum.notes)
+      check(S, 'G7 it names the cause and the remedy',
+        sum && /stale branch/.test(sum.notes) && /rebase/.test(sum.notes), sum && sum.notes)
+      check(S, 'G7 nothing was delivered', sum && !sum.merged && !sum.dodPassed)
+    } finally { cleanup(root) }
+  }
+
+  // G8: the guard must NOT fire on an ordinary ticket, including one that legitimately
+  // deletes code. A guard that trips constantly gets turned off, and then it protects
+  // nothing — so this is as load-bearing as G7.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      git(repo, ['checkout', '-q', 'ticket/T-01'])
+      writeFileSync(join(repo, 'README.md'), '')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', '[T-01] remove the readme body'])
+      git(repo, ['checkout', '-q', 'main'])
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt') })
+      check(S, 'G8 an ordinary deleting ticket still delivers', sum && sum.merged && sum.dodPassed, sum && sum.notes)
+    } finally { cleanup(root) }
+  }
+
   // G6: a project with no pipeline gate is unchanged and gains no wait latency — the
   // default status is `mergeable`, so the poll returns on its first call.
   {

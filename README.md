@@ -2,7 +2,7 @@
 
 [![npm](https://img.shields.io/npm/v/agent-templates)](https://www.npmjs.com/package/agent-templates) · [![test](https://github.com/Ruihang2017/agent-templates/actions/workflows/test.yml/badge.svg)](https://github.com/Ruihang2017/agent-templates/actions/workflows/test.yml) · **[Catalog site →](https://ruihang2017.github.io/agent-templates/)**
 
-Catalog of reusable multi-agent development architecture patterns. Each entry is a design write-up plus drop-in scaffolding (subagent definitions, slash commands, CLAUDE.md snippets) so a new project reuses a proven pattern instead of redesigning one.
+Catalog of reusable multi-agent development architecture patterns. Each entry is a design write-up plus drop-in scaffolding (subagent definitions, commands or skills, and runtime guidance) so a new project reuses a proven pattern instead of redesigning one.
 
 ## Quickstart — from a bare `PRD.md` to a running pipeline
 
@@ -45,19 +45,24 @@ git diff        # re-apply your customizations (esp. .claude/settings.json)
 | Pattern | Status | As of | Summary |
 |---|---|---|---|
 | [three-agent-architect-builder-reviewer](patterns/three-agent-architect-builder-reviewer/README.md) | trialed | 2026-08-04 | Architect plans → Builder implements → independent Reviewer (fresh context, different model tier) clears or bounces; `/start-milestone` runs a whole module autonomously |
+| [codex-three-agent-architect-builder-reviewer](patterns/codex-three-agent-architect-builder-reviewer/README.md) | proposed | 2026-08-11 | Codex-native port of the same assurance topology using project custom agents + repo skills; global DAG execution is sequential in v1 because parallel Builders are not worktree-isolated |
 | [hub-and-spoke-orchestrator-executors](patterns/hub-and-spoke-orchestrator-executors/README.md) | proposed | 2026-08-10 | One Opus hub writes contract-first briefs → N headless `codex exec` spokes implement one each in isolated worktrees → the same hub audits, reviews and merges. Optimised for cost and throughput; **the review is deliberately not independent** |
 
-**Which one.** They are different points on a cost/assurance curve, not versions of each other:
+**Which one.** First choose the runtime; then choose the assurance/throughput tradeoff:
 
-| | three-agent | hub-and-spoke |
-|---|---|---|
-| Reviewer | independent — fresh context, different model tier | the same hub session that wrote the contract |
-| Implementers | one Claude Builder per ticket | N headless Codex executors in parallel |
-| Optimised for | predictable, reviewable delivery | throughput and token cost |
-| Use it when | a bad merge is expensive | a bad merge is cheap to revert, and the work fans out |
-| Tracker integration | issues + PRs, full evidence trail | none — briefs and branches are the record |
+| | Claude three-agent | Codex three-agent | hub-and-spoke |
+|---|---|---|---|
+| Reviewer | independent, fresh Claude context | independent, fresh read-only Codex subagent | the same hub session that wrote the contract |
+| Implementers | Claude Builder; parallel worktree lanes available | Codex Builder; sequential v1 | N headless Codex executors in parallel |
+| Optimised for | assurance + mature automation | assurance on the Codex runtime | throughput and token cost |
+| Use it when | a bad merge is expensive and Claude Code is the host | a bad merge is expensive and Codex is the host | a bad merge is cheap to revert, and the work fans out |
+| Tracker integration | issues + PRs, full evidence trail | issues + PRs, full evidence trail | none — briefs and branches are the record |
 
 If a bad merge would hurt, use the three-agent pattern. Its independent reviewer is the thing hub-and-spoke trades away.
+
+## Skills (codex-three-agent-architect-builder-reviewer)
+
+Install with `npx agent-templates@latest adopt codex-three-agent-architect-builder-reviewer .`, then invoke repo skills in Codex with `$`, for example `$breakdown-prd`, `$run-ticket ABC-1`, or `$start-all supervised`. See the [pattern README](patterns/codex-three-agent-architect-builder-reviewer/README.md) for the complete surface and the sequential-v1 boundary.
 
 ## Commands (three-agent-architect-builder-reviewer)
 

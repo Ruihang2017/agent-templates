@@ -12,6 +12,7 @@ import { check, eq } from './lib.mjs'
 const S = 'adopt'
 const SCRIPT = fileURLToPath(new URL('../../scripts/adopt.mjs', import.meta.url))
 const PATTERN = 'three-agent-architect-builder-reviewer'
+const CODEX_PATTERN = 'codex-three-agent-architect-builder-reviewer'
 const runAdopt = (args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' })
 
 export async function run() {
@@ -163,6 +164,7 @@ export async function run() {
     const l = runCli(['list'])
     eq(S, 'D1 cli list exits 0', l.status, 0)
     check(S, 'D1 cli list shows the pattern', l.stdout.includes(PATTERN))
+    check(S, 'D1 cli list shows the Codex pattern', l.stdout.includes(CODEX_PATTERN))
     const bare = runCli([])
     eq(S, 'D2 bare cli prints usage, exit 0', bare.status, 0)
     check(S, 'D2 usage names the npx form', /npx github:/.test(bare.stdout))
@@ -234,5 +236,53 @@ export async function run() {
     check(S, 'F2 scaffold still installed (arg parsed as flag value)', existsSync(join(t7, '.claude/agents/architect.md')))
   } finally {
     rmSync(t7, { recursive: true, force: true })
+  }
+
+  // G: Codex-native pattern installs its own runtime surface and AGENTS.md, without
+  // leaking Claude-only commands or integrations into the target.
+  const t8 = mkdtempSync(join(tmpdir(), 'e2e-adopt-codex-'))
+  try {
+    writeFileSync(join(t8, 'PRD.md'), '# Codex PRD\n')
+    const r1 = runAdopt([CODEX_PATTERN, t8, '--platform', 'gh'])
+    eq(S, 'G1 Codex adopt exits 0', r1.status, 0)
+    for (const f of [
+      '.codex/config.toml',
+      '.codex/agents/architect.toml',
+      '.codex/agents/builder.toml',
+      '.codex/agents/reviewer.toml',
+      '.codex/agents/delivery.toml',
+      '.codex/scripts/dag-scan.mjs',
+      '.codex/scripts/publish-tickets.mjs',
+      '.codex/scripts/deliver-ticket.mjs',
+      '.agents/skills/breakdown-prd/SKILL.md',
+      '.agents/skills/run-ticket/SKILL.md',
+      '.agents/skills/start-all/SKILL.md',
+      'AGENTS.md',
+      'docs/PRD.md',
+      'templates/ticket.template.md',
+    ]) check(S, `G1 installs ${f}`, existsSync(join(t8, f)))
+    check(S, 'G1 does not install Claude runtime', !existsSync(join(t8, '.claude')) && !existsSync(join(t8, 'CLAUDE.md')))
+    const agents = readFileSync(join(t8, 'AGENTS.md'), 'utf8')
+    check(S, 'G1 AGENTS.md records Tracker: gh', /\*\*Tracker: `gh`\*\*/.test(agents))
+    check(S, 'G1 upstream escalation is off by default', !agents.includes('Ruihang2017/agent-templates') && !agents.includes('upstream-escalation'))
+    const config = readFileSync(join(t8, '.codex/config.toml'), 'utf8')
+    check(S, 'G1 config enables agents and makes primary read-only', /sandbox_mode = "read-only"/.test(config) && /enabled = true/.test(config))
+    const reviewer = readFileSync(join(t8, '.codex/agents/reviewer.toml'), 'utf8')
+    check(S, 'G1 Reviewer is a distinct read-only high-effort model profile', /model = "gpt-5\.6-terra"/.test(reviewer) && /model_reasoning_effort = "high"/.test(reviewer) && /sandbox_mode = "read-only"/.test(reviewer))
+    const ga = readFileSync(join(t8, '.gitattributes'), 'utf8')
+    check(S, 'G1 pins Codex runtime text to LF', ga.includes('.codex/agents/*.toml text eol=lf') && ga.includes('.agents/skills/**/SKILL.md text eol=lf'))
+    const gi = readFileSync(join(t8, '.gitignore'), 'utf8')
+    check(S, 'G1 ignores Codex scratch and worktrees', /^\.codex\/tmp\/$/m.test(gi) && /^\.codex\/worktrees\/$/m.test(gi))
+    for (const f of ['.codex/config.toml', '.codex/agents/architect.toml', '.agents/skills/run-ticket/SKILL.md', '.codex/scripts/deliver-ticket.mjs']) {
+      check(S, `G1 LF-only install: ${f}`, !/\r/.test(readFileSync(join(t8, f), 'utf8')))
+    }
+    check(S, 'G1 copied scripts contain no Claude runtime path', !/\.claude\//.test(readFileSync(join(t8, '.codex/scripts/deliver-ticket.mjs'), 'utf8')))
+
+    const r2 = runAdopt([CODEX_PATTERN, t8])
+    eq(S, 'G2 Codex re-run exits 0', r2.status, 0)
+    check(S, 'G2 Codex re-run installs nothing', /adopt: 0 installed/.test(r2.stdout))
+    eq(S, 'G2 AGENTS.md snippet present exactly once', (readFileSync(join(t8, 'AGENTS.md'), 'utf8').match(/Delivery pipeline — Codex/g) || []).length, 1)
+  } finally {
+    rmSync(t8, { recursive: true, force: true })
   }
 }

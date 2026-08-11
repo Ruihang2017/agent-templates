@@ -74,20 +74,21 @@ function parsePattern(dir) {
   return { dir, title, status, asOf, summary, roles, commands: parseCommands(dir) }
 }
 
-// Slash commands are the pattern's user-facing surface; the frontmatter of each
-// scaffold/.claude/commands/*.md is the single source of truth. Rendering them here
+// Runtime commands/skills are the pattern's user-facing surface. Their frontmatter is
+// the single source of truth. Rendering them here
 // (and gating on them in E2E) is what keeps the site from silently omitting a shipped
 // command the way /start-all was once missing (catalog issue #35).
 function parseCommands(dir) {
   const fmField = (fm, name) => ((fm.match(new RegExp(`^${name}\\s*:\\s*(.+)$`, 'm')) || [])[1] || '').trim()
-  // Universal integration commands (integrations/<name>/.claude/commands) are installed
-  // for EVERY pattern by adopt.mjs, so they are part of every pattern's user-facing
+  // Runtime-compatible integration commands (integrations/<name>/.claude/commands) are
+  // installed for every Claude pattern by adopt.mjs, so they are part of that runtime's
   // surface and belong on the card. Omitting them is the issue #35 hole above, reopened
   // through a different directory (issue #124).
   const intRoot = join(ROOT, 'integrations')
+  const patternCommandDir = join(ROOT, 'patterns', dir, 'scaffold', '.claude', 'commands')
   const sources = [
-    { cdir: join(ROOT, 'patterns', dir, 'scaffold', '.claude', 'commands'), integration: '' },
-    ...(existsSync(intRoot)
+    { cdir: patternCommandDir, integration: '' },
+    ...(existsSync(patternCommandDir) && existsSync(intRoot)
       ? readdirSync(intRoot, { withFileTypes: true })
           .filter((d) => d.isDirectory() && existsSync(join(intRoot, d.name, '.claude', 'commands')))
           .sort((a, b) => a.name.localeCompare(b.name))
@@ -105,6 +106,21 @@ function parseCommands(dir) {
         hint: fmField(fm, 'argument-hint'),
         description: fmField(fm, 'description'),
         integration,
+      })
+    }
+  }
+  const skillsRoot = join(ROOT, 'patterns', dir, 'scaffold', '.agents', 'skills')
+  if (existsSync(skillsRoot)) {
+    for (const skillDir of readdirSync(skillsRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+      const path = join(skillsRoot, skillDir.name, 'SKILL.md')
+      if (!existsSync(path)) continue
+      const md = readFileSync(path, 'utf8')
+      const fm = (md.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
+      out.push({
+        name: '$' + (fmField(fm, 'name') || skillDir.name),
+        hint: '',
+        description: fmField(fm, 'description'),
+        integration: '',
       })
     }
   }
@@ -448,6 +464,7 @@ const tabButtons = ordered.map((p, i) =>
 const paneOpen = (dir, first) => `<div class="pane" role="tabpanel" id="pane-${esc(dir)}" aria-labelledby="tab-${esc(dir)}" data-pane="${esc(dir)}"${first ? '' : ' hidden'}>`
 const byDir = (dir) => ordered.find((p) => p.dir === dir)
 const THREE = 'three-agent-architect-builder-reviewer'
+const CODEX_THREE = 'codex-three-agent-architect-builder-reviewer'
 const HUB = 'hub-and-spoke-orchestrator-executors'
 const isFirst = (dir) => ordered.length > 0 && ordered[0].dir === dir
 
@@ -681,7 +698,7 @@ const html = `<!doctype html>
     <div class="sec-head">${PATTERNS_ICON}<h2>Patterns</h2></div>
     <div class="fact" style="margin-bottom:16px">
       <div class="fact-ico" style="${TILE_PINK}"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:1px;top:1px;width:6px;height:14px;border-radius:3px;background:#fffaf2"></span><span style="position:absolute;right:1px;top:4px;width:6px;height:11px;border-radius:3px;background:#fffaf2"></span></span></div>
-      <p><b>These are not versions of each other.</b> They are two points on a cost/assurance curve, and the commands, artifacts and guarantees do <em>not</em> carry across. Pick a tab and stay in it — <code>adopt</code> installs exactly one pattern's commands.</p>
+      <p><b>Choose by runtime and assurance boundary.</b> The two three-agent entries preserve the same independent-review topology on different runtimes; hub-and-spoke trades that independence for parallel throughput. Commands and guarantees do <em>not</em> carry across — <code>adopt</code> installs exactly one pattern.</p>
     </div>
     <div class="tabs" role="tablist" aria-label="Patterns">
       ${tabButtons}
@@ -754,6 +771,20 @@ const html = `<!doctype html>
     </div>
   </section>
   </div><!-- /pane three-agent -->
+
+  ${paneOpen(CODEX_THREE, isFirst(CODEX_THREE))}
+  <section>
+    ${byDir(CODEX_THREE) ? cardFor(byDir(CODEX_THREE)) : ''}
+  </section>
+  <section>
+    <div class="sec-head">${PIPELINE_ICON}<h2>Same assurance topology, Codex-native surface</h2></div>
+    <div class="steps">
+      <div class="step"><span class="step-ico" style="${TILE_GREEN}">${dotGlyph(1)}</span><h3>Project custom agents</h3><p><code>.codex/agents/*.toml</code> pins each role's model, reasoning effort, sandbox, and developer instructions. The Reviewer is read-only and always starts fresh.</p></div>
+      <div class="step"><span class="step-ico" style="${TILE_YELLOW}">${dotGlyph(2)}</span><h3>Repository skills</h3><p><code>$breakdown-prd</code>, <code>$run-ticket</code>, and the stage skills replace Claude slash commands. <code>AGENTS.md</code> keeps the orchestration rules with the repository.</p></div>
+      <div class="step"><span class="step-ico" style="${TILE_BLUE}">${dotGlyph(3)}</span><h3>Sequential by design</h3><p>The global dependency DAG is preserved, but v1 rejects parallel Builders because they share a checkout. That is a stated safety boundary, not hidden missing isolation.</p></div>
+    </div>
+  </section>
+  </div><!-- /pane codex three-agent -->
 
   ${paneOpen(HUB, isFirst(HUB))}
   <section>

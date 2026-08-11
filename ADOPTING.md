@@ -8,6 +8,8 @@ Check the index in [README.md](README.md), then the pattern's own §1 **When to 
 
 ## 1. Install — one command
 
+The walkthrough below uses the mature Claude three-agent pattern. For the Codex-native equivalent, substitute `codex-three-agent-architect-builder-reviewer`; adoption installs `.codex/agents/`, `.agents/skills/`, deterministic `.codex/scripts/`, and `AGENTS.md`. Its first command is `$breakdown-prd`, and its v1 milestone runner is sequential. See [the Codex scaffold install guide](patterns/codex-three-agent-architect-builder-reviewer/scaffold/INSTALL.md).
+
 From the public npm registry (anonymous, works for anyone):
 
 ```
@@ -16,9 +18,9 @@ npx agent-templates@latest adopt three-agent-architect-builder-reviewer C:\path\
 
 Pin an exact version for reproducibility (`npx agent-templates@0.1.0 …`) — a published version is a verified snapshot of the catalog's recommendations. Alternatives: `npx github:Ruihang2017/agent-templates …` (tracks the repo, no release needed; npx caches git installs — `--prefer-online` picks up updates), or from a checkout: `node scripts/adopt.mjs three-agent-architect-builder-reviewer <target-dir>`.
 
-Idempotent (re-runs skip what exists; `--force` overwrites). It installs the scaffold `.claude/` (agents with pinned model/effort, stage commands, write guard, workflows, publish script), the universal `templates/ticket.template.md`, the platform tracker templates into `.github/` or `.gitlab/`, creates `docs/prd|adr|plans/`, copies a root `PRD.md` to `docs/PRD.md`, and seeds or appends `CLAUDE.md` from the pattern snippet (marker-checked, never duplicated).
+Idempotent (re-runs skip what exists; `--force` overwrites). It installs the pattern's runtime roots (`.claude/`, or `.codex/` + `.agents/`), the universal `templates/ticket.template.md`, the platform tracker templates into `.github/` or `.gitlab/`, creates `docs/prd|adr|plans/`, copies a root `PRD.md` to `docs/PRD.md`, and seeds or appends the runtime guidance (`CLAUDE.md` or `AGENTS.md`) from the pattern snippet (marker-checked, never duplicated).
 
-**Platform (GitHub vs GitLab)** is resolved before anything is installed — from the origin remote host, else a repo-local signal (`.gitlab-ci.yml` → GitLab, existing `.github/` → GitHub). If neither is present (e.g. a fresh repo with only a `PRD.md`), adopt **does not guess**: run interactively it asks; run non-interactively (an agent or CI) it exits without installing and asks you to pass `--platform gh|glab`. So on a bare repo, either set the remote first or pass `--platform`. The resolved value is written to the `Tracker:` line in `CLAUDE.md`, which the pipeline reads.
+**Platform (GitHub vs GitLab)** is resolved before anything is installed — from the origin remote host, else a repo-local signal (`.gitlab-ci.yml` → GitLab, existing `.github/` → GitHub). If neither is present (e.g. a fresh repo with only a `PRD.md`), adopt **does not guess**: run interactively it asks; run non-interactively (an agent or CI) it exits without installing and asks you to pass `--platform gh|glab`. So on a bare repo, either set the remote first or pass `--platform`. The resolved value is written to the `Tracker:` line in the installed runtime guidance.
 
 **Upstream issue escalation is opt-in.** By default the installed `CLAUDE.md` carries **no** instruction to file pattern-level problems against any catalog — no external repo slug is written into your repo (safe for commercial and private projects). Pass `--upstream` to include the bullet pointing at the catalog you adopted from, or `--upstream <owner/repo>` to point it at your own fork or internal catalog.
 

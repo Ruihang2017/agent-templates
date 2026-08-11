@@ -5,9 +5,10 @@
 //   node scripts/adopt.mjs <pattern-name> <target-dir> [--platform gh|glab] [--force]
 //
 // Installs into <target-dir>:
-//   .claude/                 from the pattern's scaffold (per-file; existing files skipped)
-//   .claude/                 plus every universal integration in integrations/<name>/.claude/
-//                            (installed for all patterns; inert until its /connect-* runs).
+//   .claude/ / .codex/ / .agents/   runtime roots present in the pattern scaffold
+//                                   (per-file; existing files skipped)
+//   .claude/                 plus every compatible integration in integrations/<name>/.claude/
+//                            (currently Claude-only; inert until /connect-* runs).
 //                            Each integration's settings-allow.json is MERGED into
 //                            .claude/settings.json permissions.allow — additive, idempotent,
 //                            never replacing the file.
@@ -15,8 +16,8 @@
 //   .github/ or .gitlab/     universal tracker templates (issues + PR/MR) for the platform
 //   docs/PRD.md              copied from a root PRD.md if present and docs/PRD.md is absent
 //   docs/prd/ docs/adr/ docs/plans/   the docs skeleton the pipeline assumes
-//   CLAUDE.md                created from the snippet, or snippet appended once (marker-checked),
-//                            plus one marker-guarded section per integration
+//   CLAUDE.md or AGENTS.md   created from the runtime snippet, or appended once
+//                            (marker-checked); Claude installs add integration sections
 //   .gitattributes           eol=lf rules for scaffold runtime files, appended once (marker-checked)
 //   .gitignore               .claude/tmp/ scratch + allow-main-writes + docs/plans/*.md, appended once
 //                            (marker-checked), and .env under a SEPARATE marker so an older
@@ -203,21 +204,34 @@ const copyFile = (src, dst, label) => {
   return true
 }
 
-// 1. scaffold .claude/ (per-file so re-runs skip; settings.json conflicts get a manual-merge note)
-for (const src of walk(join(scaffold, '.claude'))) {
-  const rel = relative(scaffold, src).replaceAll('\\', '/')
-  const dst = join(target, rel)
-  const existed = existsSync(dst)
-  copyFile(src, dst, rel)
-  if (existed && !FORCE && rel === '.claude/settings.json') {
-    note('  (note) existing .claude/settings.json kept — merge the hooks.PreToolUse entry and permissions.allow from the scaffold manually')
+// 1. Runtime-native scaffold roots. A pattern may target Claude Code, Codex, or both.
+const runtimeRoots = ['.claude', '.codex', '.agents'].filter((name) => existsSync(join(scaffold, name)))
+if (!runtimeRoots.length) {
+  console.error(`pattern scaffold has no supported runtime root (.claude, .codex, or .agents): ${scaffold}`)
+  process.exit(1)
+}
+const isClaudePattern = runtimeRoots.includes('.claude')
+const isCodexPattern = runtimeRoots.includes('.codex') || runtimeRoots.includes('.agents')
+for (const runtimeRoot of runtimeRoots) {
+  for (const src of walk(join(scaffold, runtimeRoot))) {
+    const rel = relative(scaffold, src).replaceAll('\\', '/')
+    const dst = join(target, rel)
+    const existed = existsSync(dst)
+    copyFile(src, dst, rel)
+    if (existed && !FORCE && rel === '.claude/settings.json') {
+      note('  (note) existing .claude/settings.json kept — merge the hooks.PreToolUse entry and permissions.allow from the scaffold manually')
+    }
+    if (existed && !FORCE && rel === '.codex/config.toml') {
+      note('  (note) existing .codex/config.toml kept — merge the [agents] settings and sandbox defaults from the scaffold manually')
+    }
   }
 }
 
-// 1b. universal integrations (every pattern gets them). Installed unconditionally but
-// INERT: each one no-ops until the user opts in with its /connect-* command, so there is
-// no flag to pass and no way to end up with a half-installed integration later.
-const INTEGRATIONS = ['asana']
+// 1b. Runtime-compatible integrations. Installed unconditionally for that runtime but
+// INERT until the user opts in with the integration's connect command.
+// Integrations declare a runtime-specific surface. The current Asana integration is
+// Claude-only; do not install inert .claude commands into a Codex-only project.
+const INTEGRATIONS = isClaudePattern ? ['asana'] : []
 // A name in that list whose directory is absent is a PACKAGING BUG, never a normal
 // condition — and skipping it quietly is how issue #143 shipped: the npm tarball omitted
 // `integrations/` entirely, adopt exited 0 having installed none of it, and then printed
@@ -326,13 +340,21 @@ if (existsSync(rootPrd) && !existsSync(docsPrd)) {
   note('  (note) no PRD.md found — write docs/PRD.md before running the pattern\'s first command (see NEXT STEPS below)')
 }
 
-// 6. CLAUDE.md: create from the snippet, or append it once (marker-checked, never duplicated).
+// 6. Runtime guidance: Claude patterns seed CLAUDE.md; Codex patterns seed AGENTS.md.
 // The snippet defaults its Tracker line to `gh`; rewrite it to the resolved platform so the
-// pipeline reads the correct tracker from CLAUDE.md instead of re-guessing each run (issue #34).
+// pipeline reads the correct tracker from project guidance instead of re-guessing each run.
 // Normalize CRLF up front: the marker/Tracker matching below needs literal \n, and a
 // catalog checkout under git autocrlf can carry \r\n — don't let that silently no-op the
 // strip and leak the block (same posture as copyFile; catalog issues #21/#23/#40).
-let snippet = readFileSync(join(scaffold, 'claude-md-snippet.md'), 'utf8')
+const guidance = existsSync(join(scaffold, 'agents-md-snippet.md'))
+  ? { snippetName: 'agents-md-snippet.md', targetName: 'AGENTS.md', title: 'Project Agent Guidance' }
+  : { snippetName: 'claude-md-snippet.md', targetName: 'CLAUDE.md', title: 'Project Constitution' }
+const snippetPath = join(scaffold, guidance.snippetName)
+if (!existsSync(snippetPath)) {
+  console.error(`pattern scaffold is missing runtime guidance: expected ${snippetPath}`)
+  process.exit(1)
+}
+let snippet = readFileSync(snippetPath, 'utf8')
   .replace(/\r\n/g, '\n')
   // Only rewritten when the pattern has a tracker. A tracker-less snippet has no such
   // line, so this is a no-op there — but leaving the rewrite unconditional would bake a
@@ -356,22 +378,22 @@ if (UPSTREAM) {
 // snippet's own first `## ` heading is the marker by construction, so it cannot drift.
 const MARKER = (snippet.match(/^## .+$/m) || [])[0]
 if (!MARKER) {
-  console.error(`error: ${join(scaffold, 'claude-md-snippet.md')} has no '## ' heading to use as its idempotency marker.`)
+  console.error(`error: ${snippetPath} has no '## ' heading to use as its idempotency marker.`)
   console.error('Without one, re-running adopt would append the snippet again every time. Add a heading to the snippet.')
   process.exit(1)
 }
-const claudeMd = join(target, 'CLAUDE.md')
-if (!existsSync(claudeMd)) {
-  const header = `# ${basename(target)} — Project Constitution\n\n> Auto-loaded into every session. Installed by agent-templates adopt.mjs on ${new Date().toISOString().slice(0, 10)}.\n> Add your project facts and non-negotiable constraints above the pipeline section.\n\n`
-  writeFileSync(claudeMd, header + snippet)
-  console.log('+ install CLAUDE.md (seeded from the pattern snippet)')
+const guidancePath = join(target, guidance.targetName)
+if (!existsSync(guidancePath)) {
+  const header = `# ${basename(target)} — ${guidance.title}\n\n> Auto-loaded into every session. Installed by agent-templates adopt.mjs on ${new Date().toISOString().slice(0, 10)}.\n> Add your project facts and non-negotiable constraints above the pipeline section.\n\n`
+  writeFileSync(guidancePath, header + snippet)
+  console.log(`+ install ${guidance.targetName} (seeded from the pattern snippet)`)
   installed++
-} else if (!readFileSync(claudeMd, 'utf8').includes(MARKER)) {
-  writeFileSync(claudeMd, readFileSync(claudeMd, 'utf8').trimEnd() + '\n\n' + snippet)
-  console.log('+ append  CLAUDE.md (pipeline snippet appended)')
+} else if (!readFileSync(guidancePath, 'utf8').includes(MARKER)) {
+  writeFileSync(guidancePath, readFileSync(guidancePath, 'utf8').trimEnd() + '\n\n' + snippet)
+  console.log(`+ append  ${guidance.targetName} (pipeline snippet appended)`)
   installed++
 } else {
-  console.log('= exists  CLAUDE.md (pipeline snippet already present)')
+  console.log(`= exists  ${guidance.targetName} (pipeline snippet already present)`)
   skipped++
 }
 
@@ -382,12 +404,12 @@ for (const name of INTEGRATIONS) {
   if (!existsSync(src)) continue
   const frag = readFileSync(src, 'utf8').replace(/\r\n/g, '\n')
   const startMarker = `<!-- ${name}-integration:start -->`
-  const current = existsSync(claudeMd) ? readFileSync(claudeMd, 'utf8') : ''
+  const current = existsSync(guidancePath) ? readFileSync(guidancePath, 'utf8') : ''
   if (current.includes(startMarker)) {
     console.log(`= exists  CLAUDE.md (${name} integration section already present)`)
     skipped++
   } else {
-    writeFileSync(claudeMd, current.trimEnd() + '\n\n' + frag)
+    writeFileSync(guidancePath, current.trimEnd() + '\n\n' + frag)
     console.log(`+ append  CLAUDE.md (${name} integration section)`)
     installed++
   }
@@ -396,8 +418,13 @@ for (const name of INTEGRATIONS) {
 // 7. .gitattributes: pin scaffold runtime files to LF. Install-time normalization
 // (above) is not enough on Windows — a later `git checkout` with autocrlf re-CRLFs
 // them and the Workflow tool rejects the script content (catalog issue #23).
-const GA_MARKER = '# agent-templates: Workflow tool rejects CRLF scripts (keep LF)'
-const GA_RULES = `${GA_MARKER}\n.claude/workflows/*.js text eol=lf\n.claude/scripts/*.mjs text eol=lf\n`
+const codexOnly = isCodexPattern && !isClaudePattern
+const GA_MARKER = codexOnly
+  ? '# agent-templates: Codex scaffold runtime files (keep LF)'
+  : '# agent-templates: Workflow tool rejects CRLF scripts (keep LF)'
+const GA_RULES = codexOnly
+  ? `${GA_MARKER}\n.codex/agents/*.toml text eol=lf\n.codex/scripts/*.mjs text eol=lf\n.agents/skills/**/SKILL.md text eol=lf\n`
+  : `${GA_MARKER}\n.claude/workflows/*.js text eol=lf\n.claude/scripts/*.mjs text eol=lf\n`
 const gaPath = join(target, '.gitattributes')
 if (!existsSync(gaPath)) {
   writeFileSync(gaPath, GA_RULES)
@@ -440,19 +467,22 @@ if (NEEDS_TRACKER) {
 // --verdict-file; that ephemeral scratch must not read as a dirty tree (deliver-ticket
 // also ignores it) nor ever be committed (catalog issue #50). Same for the write-guard
 // override sentinel.
-const GI_MARKER = '# agent-templates: ephemeral pipeline scratch'
+const runtimeDir = codexOnly ? '.codex' : '.claude'
+const GI_MARKER = codexOnly
+  ? '# agent-templates: ephemeral Codex pipeline scratch'
+  : '# agent-templates: ephemeral pipeline scratch'
 // docs/plans/*.md: the Architect's HOW plan is ephemeral (the ticket is the source of
 // truth, #53) and only needs to EXIST on disk for the DoD, not be committed — ignoring it
 // keeps untracked plans from tripping deliver's clean-tree check (#58). .gitkeep stays tracked.
-const GI_RULES = `${GI_MARKER}\n.claude/tmp/\n.claude/allow-main-writes\ndocs/plans/*.md\n`
+const GI_RULES = `${GI_MARKER}\n${runtimeDir}/tmp/\n${runtimeDir}/allow-main-writes\ndocs/plans/*.md\n`
 const giPath = join(target, '.gitignore')
 if (!existsSync(giPath)) {
   writeFileSync(giPath, GI_RULES)
-  console.log('+ install .gitignore (.claude/tmp/ scratch)')
+  console.log(`+ install .gitignore (${runtimeDir}/tmp/ scratch)`)
   installed++
 } else if (!readFileSync(giPath, 'utf8').includes(GI_MARKER)) {
   writeFileSync(giPath, readFileSync(giPath, 'utf8').trimEnd() + '\n\n' + GI_RULES)
-  console.log('+ append  .gitignore (.claude/tmp/ scratch)')
+  console.log(`+ append  .gitignore (${runtimeDir}/tmp/ scratch)`)
   installed++
 } else {
   console.log('= exists  .gitignore (pipeline scratch rules already present)')
@@ -471,12 +501,14 @@ if (!existsSync(giPath)) {
 // rule existed gains it on a re-adopt rather than being skipped by the block above.
 // NOTE this only silences git. It does NOT stop test runners, linters or bundlers from
 // walking into those checkouts — see INSTALL.md § Parallel runs for the per-tool ignores.
-const GI_WT_MARKER = '# agent-templates: harness worktrees (concurrency > 1) — never commit, never scan'
-const GI_WT_RULES = `${GI_WT_MARKER}\n.claude/worktrees/\n`
+const GI_WT_MARKER = codexOnly
+  ? '# agent-templates: Codex worktrees — never commit, never scan'
+  : '# agent-templates: harness worktrees (concurrency > 1) — never commit, never scan'
+const GI_WT_RULES = `${GI_WT_MARKER}\n${runtimeDir}/worktrees/\n`
 const giBefore = existsSync(giPath) ? readFileSync(giPath, 'utf8') : ''
 if (!giBefore.includes(GI_WT_MARKER)) {
   writeFileSync(giPath, giBefore ? giBefore.trimEnd() + '\n\n' + GI_WT_RULES : GI_WT_RULES)
-  console.log('+ append  .gitignore (.claude/worktrees/ — harness worktrees)')
+  console.log(`+ append  .gitignore (${runtimeDir}/worktrees/ — harness worktrees)`)
   installed++
 } else {
   console.log('= exists  .gitignore (worktree rules already present)')
@@ -515,8 +547,8 @@ const nextSteps = existsSync(stepsFile)
   ? readFileSync(stepsFile, 'utf8').replace(/\r\n/g, '\n').trimEnd()
       .split('{{PLATFORM}}').join(PLATFORM)
       .split('{{CATALOG}}').join(CATALOG)
-  : `  1. Review CLAUDE.md and add your project facts.
-  2. Run the pattern's first slash command in Claude Code — see
+  : `  1. Review ${guidance.targetName} and add your project facts.
+  2. Run the pattern's first workflow — see
      ${join(scaffold, 'INSTALL.md')} for the full flow.`
 
 console.log(`
