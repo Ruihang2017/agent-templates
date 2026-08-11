@@ -635,7 +635,7 @@ try {
   // unless someone re-adopts.
   const dirty = git(['status', '--porcelain', '-uall'])
     .split('\n')
-    .filter((l) => l.trim() && !/\.codex\/tmp\/|\.codex\/worktrees\/|docs\/plans\//.test(l))
+    .filter((l) => l.trim() && !/\.codex\/tmp\/|\.codex\/worktrees\/|docs\/plans\/|docs\/prd\/dag\.html/.test(l))
   if (dirty.length) { note('working tree not clean — refusing to merge'); finish(0) }
 
   // 2. refs must exist locally

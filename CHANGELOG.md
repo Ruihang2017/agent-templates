@@ -10,6 +10,8 @@ Adds a Codex-native port of the independent Architect → Builder → fresh Revi
 
 The initial runner is deliberately sequential: it rejects `concurrency > 1` because parallel Codex Builders share the checkout and this pattern does not yet provide per-agent worktree isolation. The status remains `proposed` until maintainer sign-off and a Level-1 rehearsal.
 
+The Codex scaffold reuses the Claude pattern's deterministic scripts as hand-maintained copies under `.codex/scripts/`. A parity gate in the E2E suite compares them by **code** — whole-line comments stripped, runtime paths normalised — so runtime-specific rationale may differ but behaviour may not. Without it, fixing a delivery bug in one runtime would leave the other silently broken with every suite still green, because each suite reads only its own copy.
+
 `adopt.mjs` now installs runtime-native scaffold roots and guidance (`.claude` + `CLAUDE.md`, or `.codex`/`.agents` + `AGENTS.md`) without leaking Claude-only integrations into a Codex-only target.
 
 ## 0.11.0 — 2026-08-10
