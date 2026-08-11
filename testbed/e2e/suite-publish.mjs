@@ -118,7 +118,7 @@ export async function run() {
       check(S, 'P7 and it created nothing', !/^\+ created/m.test(c.stdout))
     }
 
-    // P9 (issue #134): the GitLab body must never travel through argv, and the issue
+    // P11 (issue #134): the GitLab body must never travel through argv, and the issue
     // number must be READ rather than scraped out of a URL.
     {
       // A body far past Windows' 32,767-character command-line cap. Asserted on every
@@ -138,23 +138,23 @@ export async function run() {
         FAKE_GLAB_BODY_LOG: log,
         FAKE_GLAB_ARGV_LOG: argvLog,
       })
-      eq(S, 'P9 a 40 KB body publishes on glab', c.status, 0)
-      check(S, 'P9 the full body reached the tracker', existsSync(log) && readFileSync(log, 'utf8').includes(big))
+      eq(S, 'P11 a 40 KB body publishes on glab', c.status, 0)
+      check(S, 'P11 the full body reached the tracker', existsSync(log) && readFileSync(log, 'utf8').includes(big))
       // the load-bearing one: the body was a FILE reference, never an argument
       const argvSeen = existsSync(argvLog) ? readFileSync(argvLog, 'utf8') : ''
-      check(S, 'P9 no single argument is body-sized',
+      check(S, 'P11 no single argument is body-sized',
         argvSeen && !argvSeen.split('\n').some((a) => a.length > 4000))
-      check(S, 'P9 the description arrived as a file reference',
+      check(S, 'P11 the description arrived as a file reference',
         /description=@/.test(argvSeen))
 
       // the number came from a field, and the fake returns the /-/work_items/N URL form
       // that broke the old scraper — so a regression to URL parsing fails here
       const entryBig = entry(c.summary, 'BIG-01', 'BIG-01-a')
-      eq(S, 'P9 the issue number is read from the API response', entryBig.issue, 77)
+      eq(S, 'P11 the issue number is read from the API response', entryBig.issue, 77)
       rmSync(root2, { recursive: true, force: true })
     }
 
-    // P10 (issue #134): a decoy `#N` in the create output must never bind the ticket. The
+    // P12 (issue #134): a decoy `#N` in the create output must never bind the ticket. The
     // old fallback matched any `#digits` anywhere, so it did not merely fail — it could
     // bind the WRONG issue, which is unrecoverable where a missing number is not.
     // Driven through the real script and the fake, so this covers the integration rather
@@ -174,7 +174,7 @@ export async function run() {
       const c = runPub(rootP, ['docs/prd/00-x', '--platform', 'glab', '--create'], {
         GLAB_BIN: FAKE_GLAB, FAKE_GLAB_ISSUES_JSON: '[]', FAKE_GLAB_CREATE_OUT: out,
       })
-      eq(S, `P10 ${label} binds ${want === null ? 'nothing' : '#' + want}`,
+      eq(S, `P12 ${label} binds ${want === null ? 'nothing' : '#' + want}`,
         entry(c.summary, 'PRS-01', 'PRS-01-a').issue, want)
       rmSync(rootP, { recursive: true, force: true })
     }
