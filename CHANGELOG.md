@@ -2,13 +2,72 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
-## Unreleased — 2026-08-11
+## 0.12.0 — 2026-08-11
+
+### Upgrading from 0.11.0 — read this first
+
+**If you run the three-agent pattern on GitLab, upgrade.** Four field-reported defects meant that on a pipeline-gated, squash-on-merge GitLab project **no ticket could deliver unattended**, and a fifth could publish a ticket against the *wrong* issue. None of them were visible from the runner's own reporting.
+
+```
+git add -A && git commit -m "checkpoint before agent-templates update"
+npx agent-templates@latest adopt three-agent-architect-builder-reviewer . --force
+git diff
+```
+
+`--force` is required: every fix below is in `.claude/scripts/` or `.claude/workflows/`, which a plain re-run skips because the files already exist.
+
+**Windows users on any tracker should also upgrade** — see the `dag.html` entry.
+
+### Fixed — GitLab delivery could not complete
+
+Reported from a real adopter's repo, and worth reading as one causal chain rather than four bugs:
+
+- **`glab mr merge` was called without `--sha`**, which GitLab rejects with `400 SHA must be provided`. Modern `glab` defaults `--auto-merge` on, and auto-merge requires one. Both call sites now pass the head — which is also a correctness win: the merge lands only if the branch head still matches the reviewed commit, so a push arriving after the CLEAR verdict fails safe instead of merging unreviewed work.
+- **The merge raced GitLab's mergeability computation**, returning `405`. Delivery now polls `detailed_merge_status` — waiting on `checking` / `unchecked` / `preparing` / `ci_still_running`, refusing immediately on `conflict` / `not_approved` / `ci_must_pass` and friends, bounded by a timeout because this runs unattended. A failed pipeline still escalates and **never** force-lands.
+- **The failure note was a guess.** "required checks pending, conflict, or approval required" covered three unrelated causes at once, and three separate delivery agents chased protected-branch and approval theories off the back of it, all wrong. The note now names the observed `detailed_merge_status` verbatim.
+- **Delivery was confirmed by git ancestry, which is permanently false under squash-on-merge.** Observed on five merge requests at once: all merged, all issues auto-closed by `Closes #N`, and the script reported `not-delivered` for every one. That is worse than a clean failure — the code is in `main`, the issue is closed, and the scheduler believes the ticket failed, so **a resume re-runs delivered work**. Detection now tries ancestry first (non-squash repos are unchanged), then falls back to the MR being merged **and** its squash/merge commit being *reachable* from the target. Status alone is deliberately not sufficient: a forge can report a merge that did not land.
+
+### Fixed — merge requests that silently revert `main`
+
+The most dangerous defect reported against this catalog so far, because it fails **inverted**. Every other failure here ends at "the ticket did not deliver", which a human sees. This one ends at a normal-looking, **conflict-free** merge request whose effect is a large deletion. Four sat open in a real repo — one of them **-12,095 lines** — found only because a human scrolled the merge request list.
+
+The chain: `/start-all` left `ticket/<ID>` branches behind; under squash-on-merge the tip is never an ancestor of `main`; a later delivery pass therefore saw the branch as undelivered, re-pushed it, and opened a merge request against a `main` that had moved on.
+
+Two independent defences:
+
+- **Delivery refuses** to open a PR/MR whose diff against the target removes ≥200 lines *and* ≥5× what it adds. A refusal, not a warning — the whole failure mode is that nothing reported anything. The thresholds exist so an ordinary deleting ticket still delivers; a guard that trips constantly gets turned off.
+- **`/start-all` cleans up after itself** — prunes the run's worktrees and deletes the branches of *delivered* tickets only. A failed ticket's branch is evidence and stays. What it could not clean escalates.
+
+### Fixed — the mid-run rescan re-ran delivered tickets
+
+`/start-all` filters out tickets whose issue is closed; that is the resume filter, and what makes a re-run after a pause or a new PRD phase execute only new work. **The mid-run rescan never applied it**, so a delivered ticket was pulled back into the running schedule — re-planned and re-built against a codebase that already contains its work. The reporter's workaround was `rescanEvery: 0`, i.e. turning the live-DAG feature off.
+
+Both filter points now share one rule, and rescan drops are **reported** — silently removing work is indistinguishable from work that ran.
+
+### Fixed — publishing on GitLab
+
+- **A large ticket body could not publish.** It travelled through argv as `--description`, and Windows caps a command line at 32,767 characters, so a 40 KB ticket failed with `ENAMETOOLONG`. Issue writes now go through `glab api --field description=@<file>`, so the body is never an argument at any length. (Verified against glab 1.108.0: there is no `--description-file`, and `-d -` opens an editor.)
+- **The issue number could bind to the *wrong* issue.** The old code scraped it from a URL and fell back to matching `#(\d+)` anywhere in the output; GitLab now returns `/-/work_items/N` on some versions, so the fallback could catch an unrelated number. The number is now read from the API's `iid` field, and the loose fallback is **removed, not narrowed** — failing to find a number is recoverable (`--sync` backfills it), binding the wrong one is not.
+
+### Fixed — Windows: one generated file blocked every delivery
+
+`docs/prd/dag.html` is committed by `adopt` and rewritten by `dag-report.mjs` on every run, including mid-run. With no eol rule a Windows checkout wants CRLF while the generator writes LF, so the file sits **permanently modified with an empty diff** — and delivery refuses to merge on a dirty tree. It presents as *one ticket failing at random*, depending on whether the DAG happened to be regenerated first.
+
+Fixed at the cause (a `.gitattributes` rule under its own marker, so an existing install gains it on re-adopt) **and** at the symptom (a clean-tree exemption), because the `.gitattributes` block is marker-guarded and a repo adopted earlier would not otherwise pick it up.
+
+### Changed — `adopt` no longer demands a tracker a pattern never uses
+
+A pattern now declares whether it needs one, in `scaffold/pattern.json`. `hub-and-spoke-orchestrator-executors` has no tracker integration, yet adopting it into a repo with no git remote failed until you supplied a `--platform` value nothing would ever read — and then installed issue/MR templates the pattern never mentions.
+
+Declaration rather than inference, and the default is `true`: a pattern that says nothing keeps the old, stricter behaviour, so this cannot weaken the gate for the pattern that needs it.
 
 ### New pattern: `codex-three-agent-architect-builder-reviewer` (status `proposed`)
 
 Adds a Codex-native port of the independent Architect → Builder → fresh Reviewer topology. Project custom agents live in `.codex/agents/`, reusable entry points are repository skills under `.agents/skills/`, and target guidance is installed into `AGENTS.md`. The existing deterministic phase, DAG, tracker-publication, and delivery gates are carried over under `.codex/scripts/`.
 
 The initial runner is deliberately sequential: it rejects `concurrency > 1` because parallel Codex Builders share the checkout and this pattern does not yet provide per-agent worktree isolation. The status remains `proposed` until maintainer sign-off and a Level-1 rehearsal.
+
+Two defects were found in review before it shipped, both worth knowing if you copy from it: the Architect and Builder pinned `model = "gpt-5.6"`, which is a tier *family* rather than a model id (Codex exposes `gpt-5.6-sol` / `-terra` / `-luna`), so both would have failed at spawn; and the E2E suite had hardcoded that same value, i.e. a green gate over a configuration that could not run.
 
 The Codex scaffold reuses the Claude pattern's deterministic scripts as hand-maintained copies under `.codex/scripts/`. A parity gate in the E2E suite compares them by **code** — whole-line comments stripped, runtime paths normalised — so runtime-specific rationale may differ but behaviour may not. Without it, fixing a delivery bug in one runtime would leave the other silently broken with every suite still green, because each suite reads only its own copy.
 
