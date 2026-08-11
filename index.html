@@ -220,7 +220,7 @@
   </div>
 
   <div class="stats">
-    <div class="stat stat-green"><span class="big">2</span><p>patterns in the catalog</p></div>
+    <div class="stat stat-green"><span class="big">3</span><p>patterns in the catalog</p></div>
     <div class="stat stat-orange"><span class="big" data-npm-version>v0.11.0</span><p>on npm · MIT</p></div>
     <div class="stat stat-yellow"><span class="big">E2E</span><p>gated merges — deterministic, zero-token tests</p></div>
     <div class="stat stat-blue"><span class="big">2</span><p>human gates per phase: sign-off &amp; smoke test</p></div>
@@ -230,10 +230,11 @@
     <div class="sec-head"><span style="display:inline-grid;grid-template-columns:9px 9px;gap:2.5px;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="width:9px;height:9px;border-radius:3px;background:#9ed095"></span><span style="width:9px;height:9px;border-radius:3px;background:#f6a5bb"></span><span style="width:9px;height:9px;border-radius:3px;background:#f4cd6d"></span><span style="width:9px;height:9px;border-radius:3px;background:#c3abe9"></span></span><h2>Patterns</h2></div>
     <div class="fact" style="margin-bottom:16px">
       <div class="fact-ico" style="background:#f6a5bb;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(170,30,80,0.2),0 6px 10px rgba(var(--amb),0.22)"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:1px;top:1px;width:6px;height:14px;border-radius:3px;background:#fffaf2"></span><span style="position:absolute;right:1px;top:4px;width:6px;height:11px;border-radius:3px;background:#fffaf2"></span></span></div>
-      <p><b>These are not versions of each other.</b> They are two points on a cost/assurance curve, and the commands, artifacts and guarantees do <em>not</em> carry across. Pick a tab and stay in it — <code>adopt</code> installs exactly one pattern's commands.</p>
+      <p><b>Choose by runtime and assurance boundary.</b> The two three-agent entries preserve the same independent-review topology on different runtimes; hub-and-spoke trades that independence for parallel throughput. Commands and guarantees do <em>not</em> carry across — <code>adopt</code> installs exactly one pattern.</p>
     </div>
     <div class="tabs" role="tablist" aria-label="Patterns">
       <button class="tab" type="button" role="tab" id="tab-three-agent-architect-builder-reviewer" aria-controls="pane-three-agent-architect-builder-reviewer" aria-selected="true" data-tab="three-agent-architect-builder-reviewer">Three-Agent Architect–Builder–Reviewer<span class="tab-sub">trialed · as of 2026-08-04 (every role cut one effort level — Architect high, Builder medium, Reviewer high, Triage high; §7)</span></button>
+      <button class="tab" type="button" role="tab" id="tab-codex-three-agent-architect-builder-reviewer" aria-controls="pane-codex-three-agent-architect-builder-reviewer" aria-selected="false" data-tab="codex-three-agent-architect-builder-reviewer">Codex Three-Agent Architect–Builder–Reviewer<span class="tab-sub">proposed · as of 2026-08-11</span></button>
       <button class="tab" type="button" role="tab" id="tab-hub-and-spoke-orchestrator-executors" aria-controls="pane-hub-and-spoke-orchestrator-executors" aria-selected="false" data-tab="hub-and-spoke-orchestrator-executors">Hub-and-Spoke Orchestrator + Headless Executors<span class="tab-sub">proposed · as of 2026-08-10</span></button>
     </div>
   </section>
@@ -614,6 +615,50 @@
   </section>
   </div><!-- /pane three-agent -->
 
+  <div class="pane" role="tabpanel" id="pane-codex-three-agent-architect-builder-reviewer" aria-labelledby="tab-codex-three-agent-architect-builder-reviewer" data-pane="codex-three-agent-architect-builder-reviewer" hidden>
+  <section>
+    
+      <article class="panel pattern">
+        <div class="pattern-head">
+          <h3>Codex Three-Agent Architect–Builder–Reviewer</h3>
+          <span class="chip" style="background:linear-gradient(180deg,#f792ab,#ef6f92);color:#fff;text-shadow:0 1px 2px rgba(170,30,80,0.35);box-shadow:inset 0 2px 2px rgba(255,255,255,0.5),inset 0 -3px 4px rgba(170,30,80,0.3),0 5px 10px rgba(199,100,110,0.3)"><span class="chip-dot" style="box-shadow:inset -1px -1px 2px rgba(170,30,80,0.35)"></span>proposed · as of 2026-08-11</span>
+        </div>
+        <p class="summary">A Codex-native port of the catalog's three-agent assurance topology: a planning Architect hands a cold-startable artifact to a Builder, and a fresh-context read-only Reviewer clears or bounces the diff. Repository skills replace Claude slash commands; project custom-agent TOML replaces Claude agent frontmatter; deterministic Node scripts retain the ticket, DAG, tracker, and delivery gates.</p>
+        <div class="roles">
+          <span class="role"><span class="dot" style="background:#a98fd6;box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px rgba(80,40,140,0.3)"></span><b>Architect</b><span class="sep">·</span><code>gpt-5.6-sol <span class="eff">@high</span></code></span>
+          <span class="role"><span class="dot" style="background:#f28ba3;box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px rgba(170,30,80,0.3)"></span><b>Builder</b><span class="sep">·</span><code>gpt-5.6-sol <span class="eff">@medium</span></code></span>
+          <span class="role"><span class="dot" style="background:#8fb4e6;box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px rgba(40,80,150,0.3)"></span><b>Reviewer</b><span class="sep">·</span><code>gpt-5.6-terra <span class="eff">@high</span></code></span>
+          <span class="role"><span class="dot" style="background:#f2c44e;box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px rgba(180,120,20,0.35)"></span><b>Delivery actuator</b><span class="sep">·</span><code>gpt-5.6-luna <span class="eff">@low</span></code></span>
+          <span class="role"><span class="dot" style="background:#f2c44e;box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px rgba(180,120,20,0.35)"></span><b>Triage</b><span class="sep">·</span><code>gpt-5.6-terra <span class="eff">@high</span></code></span>
+        </div>
+        <div class="cmds">
+          <div class="cmds-label">Commands</div>
+          <div class="cmd"><code class="cmd-name">$breakdown-prd</code><span class="cmd-desc">Decompose a PRD into Codex three-agent sub-PRDs and tickets, enforce append-only phases, and render the global DAG. Use before Gate 1.</span></div>
+          <div class="cmd"><code class="cmd-name">$build-ticket</code><span class="cmd-desc">Run the Codex three-agent Builder stage for one already-planned ticket. Use when asked to implement a ticket through the Builder only.</span></div>
+          <div class="cmd"><code class="cmd-name">$plan-ticket</code><span class="cmd-desc">Run the Codex three-agent Architect stage for one ticket. Use when asked to plan a ticket without implementing it.</span></div>
+          <div class="cmd"><code class="cmd-name">$publish-tickets</code><span class="cmd-desc">Publish Codex pipeline ticket files as GitHub or GitLab issues and stop. Use when the board should be populated without starting implementation.</span></div>
+          <div class="cmd"><code class="cmd-name">$review-ticket</code><span class="cmd-desc">Run a fresh, independent Codex Reviewer on a built ticket and return CLEAR or BOUNCE. Use for the review stage only.</span></div>
+          <div class="cmd"><code class="cmd-name">$run-ticket</code><span class="cmd-desc">Run one ticket through the Codex Architect -&gt; Builder -&gt; fresh Reviewer -&gt; delivery loop. Use for an end-to-end ticket pipeline.</span></div>
+          <div class="cmd"><code class="cmd-name">$start-all</code><span class="cmd-desc">Gate 1 for the complete Codex three-agent docs/prd dependency graph. Publish all tickets and run the global DAG sequentially.</span></div>
+          <div class="cmd"><code class="cmd-name">$start-milestone</code><span class="cmd-desc">Gate 1 for one Codex three-agent module. Publish its tickets, then run ready tickets sequentially through Architect, Builder, Reviewer, and delivery.</span></div>
+          <div class="cmd"><code class="cmd-name">$verify-delivery</code><span class="cmd-desc">Verify the post-merge Definition of Done for a Codex three-agent ticket. Use after delivery or when auditing completion.</span></div>
+        </div>
+        <div class="links">
+          <a class="btn btn-green" href="https://github.com/Ruihang2017/agent-templates/tree/main/patterns/codex-three-agent-architect-builder-reviewer">Pattern write-up</a>
+          <a class="btn btn-purple" href="https://github.com/Ruihang2017/agent-templates/tree/main/patterns/codex-three-agent-architect-builder-reviewer/scaffold">Scaffold</a>
+        </div>
+      </article>
+  </section>
+  <section>
+    <div class="sec-head"><span class="gx" style="width:22px;height:18px;border-radius:5px;background:#a9c6ec;overflow:hidden;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="position:absolute;left:3px;top:3px;width:6px;height:6px;border-radius:50%;background:#f9d66e"></span><span style="position:absolute;left:-5px;bottom:-9px;width:17px;height:17px;border-radius:50%;background:#9ed095"></span><span style="position:absolute;right:-4px;bottom:-8px;width:15px;height:15px;border-radius:50%;background:#8fc98b"></span></span><h2>Same assurance topology, Codex-native surface</h2></div>
+    <div class="steps">
+      <div class="step"><span class="step-ico" style="background:#9ed095;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(30,90,40,0.2),0 6px 10px rgba(var(--amb),0.22)"><span style="display:flex;gap:2.5px;align-items:center"><span style="width:5px;height:5px;border-radius:50%;background:#fffaf2"></span></span></span><h3>Project custom agents</h3><p><code>.codex/agents/*.toml</code> pins each role's model, reasoning effort, sandbox, and developer instructions. The Reviewer is read-only and always starts fresh.</p></div>
+      <div class="step"><span class="step-ico" style="background:#f4cd6d;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(180,120,20,0.25),0 6px 10px rgba(var(--amb),0.22)"><span style="display:flex;gap:2.5px;align-items:center"><span style="width:5px;height:5px;border-radius:50%;background:#fffaf2"></span><span style="width:5px;height:5px;border-radius:50%;background:#fffaf2"></span></span></span><h3>Repository skills</h3><p><code>$breakdown-prd</code>, <code>$run-ticket</code>, and the stage skills replace Claude slash commands. <code>AGENTS.md</code> keeps the orchestration rules with the repository.</p></div>
+      <div class="step"><span class="step-ico" style="background:#b3cdf0;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.55),inset -3px -4px 6px rgba(40,80,150,0.22),0 6px 10px rgba(var(--amb),0.22)"><span style="display:flex;gap:2.5px;align-items:center"><span style="width:5px;height:5px;border-radius:50%;background:#fffaf2"></span><span style="width:5px;height:5px;border-radius:50%;background:#fffaf2"></span><span style="width:5px;height:5px;border-radius:50%;background:#fffaf2"></span></span></span><h3>Sequential by design</h3><p>The global dependency DAG is preserved, but v1 rejects parallel Builders because they share a checkout. That is a stated safety boundary, not hidden missing isolation.</p></div>
+    </div>
+  </section>
+  </div><!-- /pane codex three-agent -->
+
   <div class="pane" role="tabpanel" id="pane-hub-and-spoke-orchestrator-executors" aria-labelledby="tab-hub-and-spoke-orchestrator-executors" data-pane="hub-and-spoke-orchestrator-executors" hidden>
   <section>
     
@@ -727,7 +772,7 @@
   // Pattern tabs. The quickstart in the hero follows the selected tab: leaving it pinned
   // to one pattern while a different pane is open is how someone copies the wrong adopt
   // command, which installs the wrong commands and the wrong guarantees.
-  var QS={"three-agent-architect-builder-reviewer":"npx agent-templates@latest adopt three-agent-architect-builder-reviewer .","hub-and-spoke-orchestrator-executors":"npx agent-templates@latest adopt hub-and-spoke-orchestrator-executors ."}
+  var QS={"three-agent-architect-builder-reviewer":"npx agent-templates@latest adopt three-agent-architect-builder-reviewer .","codex-three-agent-architect-builder-reviewer":"npx agent-templates@latest adopt codex-three-agent-architect-builder-reviewer .","hub-and-spoke-orchestrator-executors":"npx agent-templates@latest adopt hub-and-spoke-orchestrator-executors ."}
   var qs=document.getElementById('qs'),note=document.querySelector('.update-note code')
   function pick(dir){
     document.querySelectorAll('.pane').forEach(function(p){p.hidden=p.dataset.pane!==dir})
