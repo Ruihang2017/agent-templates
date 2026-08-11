@@ -1,0 +1,7 @@
+  1. Review AGENTS.md; keep Operating mode `supervised` for the first run and add project facts.
+  2. Review .codex/config.toml before trusting the project config; ensure Codex CLI >= 0.147.0.
+  3. Authenticate the tracker CLI: {{PLATFORM}} auth login. Node >= 18 is required.
+  4. In Codex:  $breakdown-prd
+  5. Gate 1 — review docs/prd/dag.html and the tickets, then run:
+     $start-milestone docs/prd/00-<module> supervised
+

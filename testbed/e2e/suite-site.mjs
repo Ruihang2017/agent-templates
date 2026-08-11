@@ -228,8 +228,10 @@ export async function run() {
 
       // Content separation: each pattern's own commands appear, and the page states that
       // they do not carry across.
-      check(S, 'the page says the patterns are not versions of each other',
-        /not versions of each other/i.test(html))
+      check(S, 'the page tells readers to choose by runtime and assurance boundary',
+        /Choose by runtime and assurance boundary/i.test(html))
+      check(S, 'the Codex-native pane exposes repo skills and its sequential boundary',
+        html.includes('$run-ticket') && /Same assurance topology, Codex-native surface/.test(html) && /rejects parallel Builders/i.test(html))
       check(S, 'the page carries the old-to-new command mapping',
         /Coming from the three-agent pattern/.test(html) && html.includes('/hub-brief') && html.includes('/breakdown-prd'))
       check(S, 'the mapping names the commands with no equivalent',
@@ -329,13 +331,25 @@ export async function run() {
       let policed = 0
       for (const { dir, start, end } of bounds) {
         const cdir = join(REPO, 'patterns', dir, 'scaffold', '.claude', 'commands')
-        if (!existsSync(cdir)) continue
-        for (const f of readdirSync(cdir).filter((n) => n.endsWith('.md'))) {
-          const name = '/' + f.replace(/\.md$/, '')
+        const commandNames = existsSync(cdir)
+          ? readdirSync(cdir).filter((n) => n.endsWith('.md')).map((f) => '/' + f.replace(/\.md$/, ''))
+          : []
+        const skillsDir = join(REPO, 'patterns', dir, 'scaffold', '.agents', 'skills')
+        if (existsSync(skillsDir)) {
+          for (const d of readdirSync(skillsDir, { withFileTypes: true }).filter((e) => e.isDirectory())) {
+            const skill = join(skillsDir, d.name, 'SKILL.md')
+            if (!existsSync(skill)) continue
+            const fm = (readFileSync(skill, 'utf8').match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
+            const name = (fm.match(/^name:\s*(.+)$/m) || [])[1] || d.name
+            commandNames.push('$' + name.trim())
+          }
+        }
+        for (const name of commandNames) {
           // the mapping section inside the hub pane deliberately names three-agent
           // commands to explain what replaced them — that is inside a pane, so it is fine.
           // What must not happen is a command appearing OUTSIDE every pane.
-          const outside = [...html.matchAll(new RegExp(name.replace(/[/]/g, '\\/') + '(?![a-z-])', 'g'))]
+          const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          const outside = [...html.matchAll(new RegExp(escapedName + '(?![a-z-])', 'g'))]
             .map((m) => m.index)
             .filter((i) => !bounds.some((b) => i >= b.start && i < b.end))
           policed++
@@ -346,7 +360,7 @@ export async function run() {
             html.slice(start, end).includes(name))
         }
       }
-      check(S, 'containment gate policed some commands', policed >= 6)
+      check(S, 'containment gate policed commands and skills', policed >= 15)
 
       // Claims that sit outside the tabs must be true of every pattern. These two were
       // three-agent mechanisms stated as catalog facts.

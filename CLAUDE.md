@@ -4,7 +4,7 @@
 
 ## What this repo is
 
-A library/catalog of the multi-agent development architecture patterns this team reuses across projects. Each pattern is a **self-contained, reusable unit**: a design write-up plus actual working scaffolding (CLAUDE.md snippets, subagent definitions, slash commands) that a new project copies directly instead of redesigning the architecture from scratch.
+A library/catalog of the multi-agent development architecture patterns this team reuses across projects. Each pattern is a **self-contained, reusable unit**: a design write-up plus actual working scaffolding (runtime guidance, subagent definitions, commands or skills) that a new project copies directly instead of redesigning the architecture from scratch.
 
 This repo ships documentation, scaffolding, and a testbed. The only application code is the testbed's toy target app.
 
@@ -37,9 +37,9 @@ templates/                             # UNIVERSAL — shared by all patterns an
 patterns/<pattern-name>/               # kebab-case; one directory per pattern
   README.md                            # the write-up — MUST follow the schema below
   scaffold/                            # drop-in files a target repo copies, then adapts
-integrations/<name>/                   # UNIVERSAL optional add-ons — adopt.mjs installs them for
-                                       #   EVERY pattern, and each arrives INERT until the user runs
-                                       #   its /connect-<name> command. Cross-pattern by design:
+integrations/<name>/                   # optional runtime-specific add-ons — adopt.mjs installs them
+                                       #   for every compatible pattern, INERT until the user runs
+                                       #   its connect command. Cross-pattern within that runtime:
                                        #   never duplicate one into a pattern's scaffold/
   README.md                            # mapping, API reference + as-of date, accepted costs, limits
   claude-md-snippet.md                 # marker-guarded section appended to the target's CLAUDE.md
@@ -115,8 +115,8 @@ Upstream docs convention assumed by patterns (exemplar: `fx-eye-tracking`): `doc
 
 | Label | Meaning |
 |---|---|
-| `[official]` | Anthropic docs / system card / model page — verifiable at a URL today |
-| `[vendor-benchmark]` | Anthropic-reported benchmark number |
+| `[official]` | Target-runtime vendor docs / system card / model page — verifiable at a URL today |
+| `[vendor-benchmark]` | Vendor-reported benchmark number |
 | `[third-party]` | External benchmark or report — name the source |
 | `[internal]` | Our own observation — name the harness, project, and date |
 | `[unverified]` | Unverified third-party data / needs testing |
@@ -125,7 +125,7 @@ Upstream docs convention assumed by patterns (exemplar: `fx-eye-tracking`): `doc
 ## Adding a new pattern
 
 1. Copy `templates/pattern-README.template.md` → `patterns/<kebab-name>/README.md`. Fill every section; delete none.
-2. Build `scaffold/` with actually-runnable files. Verify every config key (agent/command frontmatter, settings) against current Claude Code docs at write time — not from memory.
+2. Build `scaffold/` with actually-runnable files. Verify every config key (agent/command or skill frontmatter, settings) against the target runtime's current official docs at write time — not from memory.
 3. `node testbed/e2e/run-e2e.mjs` must be green before merging any scaffold change; when you add scaffold surface (new files, new orchestration logic), extend the E2E suites to cover it.
 4. Open a PR. Status starts at `proposed`.
 5. Sign-off to merge: the repo maintainer (Horace Hou) approves schema compliance and grounding. Promotion to `adopted` additionally requires the pattern having run on ≥1 real ticket in a real project, named in the provenance log.

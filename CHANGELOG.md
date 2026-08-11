@@ -2,6 +2,16 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
+## Unreleased — 2026-08-11
+
+### New pattern: `codex-three-agent-architect-builder-reviewer` (status `proposed`)
+
+Adds a Codex-native port of the independent Architect → Builder → fresh Reviewer topology. Project custom agents live in `.codex/agents/`, reusable entry points are repository skills under `.agents/skills/`, and target guidance is installed into `AGENTS.md`. The existing deterministic phase, DAG, tracker-publication, and delivery gates are carried over under `.codex/scripts/`.
+
+The initial runner is deliberately sequential: it rejects `concurrency > 1` because parallel Codex Builders share the checkout and this pattern does not yet provide per-agent worktree isolation. The status remains `proposed` until maintainer sign-off and a Level-1 rehearsal.
+
+`adopt.mjs` now installs runtime-native scaffold roots and guidance (`.claude` + `CLAUDE.md`, or `.codex`/`.agents` + `AGENTS.md`) without leaking Claude-only integrations into a Codex-only target.
+
 ## 0.11.0 — 2026-08-10
 
 ### Upgrading from 0.10.0 — read this first
