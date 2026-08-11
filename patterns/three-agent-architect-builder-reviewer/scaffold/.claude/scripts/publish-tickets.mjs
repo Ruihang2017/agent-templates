@@ -50,7 +50,8 @@
 //                 --create mode, or any create failure (summary still printed).
 
 import { execFileSync } from 'node:child_process'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const argv = process.argv.slice(2)
@@ -315,9 +316,67 @@ const renderDeps = (blockedBy, blocks) => {
   return '> ' + parts.join(' · ') + '\n>\n> _dependency graph — auto-rendered from the ticket frontmatter (issue #52)_\n\n'
 }
 
+// ---------------------------------------------------------------------------
+// GitLab issue writes go through `glab api`, not `glab issue create/update`.
+//
+// TWO defects are fixed by construction here, both field-reported 2026-08-04 (#134):
+//
+// 1. THE BODY MUST NOT TRAVEL THROUGH ARGV. `glab issue create` exposes only
+//    `-d/--description`, whose value is a command-line argument. Windows caps a command
+//    line at 32,767 characters, so a 40 KB ticket failed with ENAMETOOLONG and never
+//    published. There is no `--description-file`, and `-d -` opens an editor, which is
+//    unusable headless — verified against glab 1.108.0. `glab api` does have a file
+//    field: `--field description=@<path>` reads the value from a file (`@-` reads stdin),
+//    so the body never becomes an argument at any length.
+//
+// 2. THE ISSUE NUMBER IS READ, NOT PARSED. The old code scraped the created issue's URL
+//    and fell back to `#(\d+)` anywhere in the output. GitLab now returns
+//    `/-/work_items/N` on some versions, so the first pattern missed and the fallback
+//    matched any `#digits` in the output — binding the ticket to the WRONG issue, which
+//    is worse than failing. The API returns `iid` as a field; there is nothing to parse.
+//
+// `:fullpath` is glab's placeholder for the current project, so this stays repo-relative
+// exactly like the CLI form it replaces.
+// ---------------------------------------------------------------------------
+
+/** Write `body` to a temp file and hand its path to a callback, always cleaning up. */
+const withBodyFile = (body, fn) => {
+  const path = join(tmpdir(), `pt-body-${process.pid}-${bodySeq++}.md`)
+  writeFileSync(path, body)
+  try { return fn(path) } finally { try { unlinkSync(path) } catch {} }
+}
+let bodySeq = 0
+
+/**
+ * Read an issue number out of a forge response.
+ *
+ * Kept for the gh path and as a defensive fallback. Deliberately anchored and ordered:
+ * `iid` from JSON first, then a URL in either the legacy `/-/issues/N` or the newer
+ * `/-/work_items/N` form. The old loose `#(\d+)` fallback is GONE — it could match a
+ * number mentioned anywhere in the output and silently bind a ticket to the wrong issue.
+ * Failing to find a number is recoverable (a later --sync backfills it); binding the
+ * wrong one is not.
+ */
+const readIssueNumber = (out) => {
+  const text = String(out || '')
+  try {
+    const j = JSON.parse(text)
+    if (j && Number.isInteger(j.iid)) return j.iid
+    if (j && Number.isInteger(j.number)) return j.number
+  } catch { /* not JSON — fall through to URL forms */ }
+  // The trailing guard is `(?!\d)`, not "end of string or whitespace": a URL embedded in
+  // a JSON body is followed by a quote, and requiring whitespace silently matched nothing
+  // there. What makes this safe is the anchor on the URL PATH — `/-/issues/N` or
+  // `/-/work_items/N` — not the character after the digits.
+  const m = text.match(/\/-?\/?(?:issues|work_items)\/(\d+)(?!\d)/)
+  return m ? Number(m[1]) : null
+}
+
 const updateBody = (num, body) => {
   if (PLATFORM === 'gh') return cli('gh', ['issue', 'edit', String(num), '--body-file', '-'], { input: body }).trim()
-  return cli('glab', ['issue', 'update', String(num), '--description', body]).trim()
+  return withBodyFile(body, (p) => cli('glab', [
+    'api', `projects/:fullpath/issues/${num}`, '-X', 'PUT', '--field', `description=@${p}`,
+  ]).trim())
 }
 
 const createIssue = (issueTitle, body, labels) => {
@@ -327,9 +386,12 @@ const createIssue = (issueTitle, body, labels) => {
       if (withLabels) for (const l of labels) args.push('--label', l)
       return cli('gh', args, { input: body }).trim()
     }
-    const args = ['issue', 'create', '--title', issueTitle, '--description', body]
-    if (withLabels && labels.length) args.push('--label', labels.join(','))
-    return cli('glab', args).trim()
+    return withBodyFile(body, (p) => {
+      const args = ['api', 'projects/:fullpath/issues', '-X', 'POST',
+        '--field', `title=${issueTitle}`, '--field', `description=@${p}`]
+      if (withLabels && labels.length) args.push('--field', `labels=${labels.join(',')}`)
+      return cli('glab', args).trim()
+    })
   }
   try {
     return attempt(true)
@@ -435,11 +497,13 @@ for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort())
 
   try {
     const out = createIssue(issueTitle, fullBody, labels)
-    const lastLine = out.split('\n').filter(Boolean).pop() || ''
-    const num = (lastLine.match(/\/issues\/(\d+)\s*$/) || out.match(/#(\d+)/) || [])[1]
-    console.log(`+ created ${id}: ${lastLine}`)
-    summary.push({ id, path, title: issueTitle, issue: num ? Number(num) : null, state: 'open' })
-    if (num) idToNum.set(id, Number(num)) // so a later same-run ticket's dep line resolves
+    const num = readIssueNumber(out)
+    // The JSON body is not a useful log line; report the number we bound, or say plainly
+    // that we could not bind one. A later --sync backfills a missing number; a WRONG
+    // number is unrecoverable, which is why readIssueNumber has no loose fallback.
+    console.log(num ? `+ created ${id}: issue #${num}` : `+ created ${id}: (issue number not reported — re-run with --sync to backfill)`)
+    summary.push({ id, path, title: issueTitle, issue: num, state: 'open' })
+    if (num) idToNum.set(id, num) // so a later same-run ticket's dep line resolves
     created++
   } catch (e) {
     const msg = String(e && e.message ? e.message : e).split('\n')[0]
