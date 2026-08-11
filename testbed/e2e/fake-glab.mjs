@@ -212,11 +212,52 @@ if (joined.startsWith('mr update')) {
   process.exit(0)
 }
 
+// GET a merge request (issues #135, #152). deliver-ticket polls detailed_merge_status
+// before merging, because GitLab is still COMPUTING mergeability right after an MR is
+// created and merging into that window returns 405.
+//
+//   FAKE_GLAB_MERGE_STATUS_SEQ  comma-separated statuses served one per call, the last
+//                               repeating — e.g. "checking,ci_still_running,mergeable"
+//   FAKE_GLAB_SQUASH            "1" -> a merge produces a NEW squash commit and the
+//                               source is never an ancestor, as squash_option: default_on
+//                               behaves. This is what made ancestry-only detection report
+//                               `not-delivered` for five MRs that had all landed.
+if (/^api projects\/:fullpath\/merge_requests\/\d+$/.test(joined)) {
+  const number = Number((joined.match(/merge_requests\/(\d+)/) || [])[1])
+  const m = readMap()
+  const mr = m.mrs.find((x) => x.number === number)
+  if (!mr) { console.error(`no MR !${number}`); process.exit(1) }
+  const seqFile = join(gitq(['rev-parse', '--git-dir']).trim(), `fake-mr-poll-${number}`)
+  const seq = (process.env.FAKE_GLAB_MERGE_STATUS_SEQ || 'mergeable').split(',')
+  const n = existsSync(seqFile) ? Number(readFileSync(seqFile, 'utf8')) : 0
+  writeFileSync(seqFile, String(n + 1))
+  writeOut(JSON.stringify({
+    iid: number,
+    state: mr.merged ? 'merged' : 'opened',
+    detailed_merge_status: mr.merged ? 'mergeable' : seq[Math.min(n, seq.length - 1)],
+    merge_commit_sha: mr.merged ? mr.mergeSha || null : null,
+    squash_commit_sha: mr.merged && mr.squashSha ? mr.squashSha : null,
+  }))
+}
+
 if (joined.startsWith('mr merge')) {
   const blocked = process.env.FAKE_GLAB_MERGE_BLOCKED
   const number = Number(args[2])
   const m = readMap()
   const mr = m.mrs.find((x) => x.number === number)
+  // GitLab rejects a merge with no --sha: modern glab defaults --auto-merge on, and
+  // auto-merge requires one. The fake reproduces the exact 400, and ALSO checks the value
+  // against the real branch head — so passing a present-but-wrong SHA cannot pass a test.
+  const shaIx = args.indexOf('--sha')
+  const sha = shaIx !== -1 ? args[shaIx + 1] : ''
+  if (!sha) { console.error('400 {message: SHA must be provided when merging}'); process.exit(1) }
+  if (mr) {
+    const head = gitq(['rev-parse', `origin/${mr.branch}`]).trim()
+    if (!head.startsWith(sha) && !sha.startsWith(head)) {
+      console.error(`409 {message: SHA does not match HEAD of source branch} (got ${sha}, head ${head})`)
+      process.exit(1)
+    }
+  }
   if (blocked === '1' || blocked === 'checks') { console.error('merge failed: pipeline must succeed'); process.exit(1) }
   if (blocked === 'protection' && mr && mr.base === (process.env.FAKE_GLAB_PROTECTED_BRANCH || 'main')) {
     console.error('403 Forbidden: protected branch — you are not allowed to merge into main')
@@ -232,7 +273,25 @@ if (joined.startsWith('mr merge')) {
       g(['config', 'user.email', 'fake-glab@example.com'])
       g(['config', 'user.name', 'fake-glab'])
       g(['checkout', '-q', mr.base])
-      g(['merge', '--no-ff', '--no-edit', '-m', `Merge branch '${mr.branch}' into '${mr.base}' (!${number})`, `origin/${mr.branch}`])
+      if (process.env.FAKE_GLAB_SQUASH === '1') {
+        // squash_option: default_on — the source commits become ONE NEW commit, so the
+        // original tip is never an ancestor of the target. Ancestry-only detection reports
+        // a landed merge as not-delivered forever; that is defect 2 of issue #152.
+        const before = g(['rev-parse', 'HEAD']).trim()
+        g(['merge', '--squash', `origin/${mr.branch}`])
+        g(['commit', '-q', '-m', `${mr.branch} (!${number})`])
+        mr.squashSha = g(['rev-parse', 'HEAD']).trim()
+        // Self-check: a squash that produced no commit would leave the target unchanged
+        // and the test would then measure the wrong thing while looking like a git
+        // warning. Fail here, with a message that says what actually happened.
+        if (mr.squashSha === before) {
+          console.error(`fake-glab: squash merge of ${mr.branch} produced no new commit on ${mr.base}`)
+          process.exit(1)
+        }
+      } else {
+        g(['merge', '--no-ff', '--no-edit', '-m', `Merge branch '${mr.branch}' into '${mr.base}' (!${number})`, `origin/${mr.branch}`])
+        mr.mergeSha = g(['rev-parse', 'HEAD']).trim()
+      }
       g(['push', '-q', 'origin', mr.base])
     } finally { rmSync(tmp, { recursive: true, force: true }) }
     mr.merged = true; writeMap(m)
