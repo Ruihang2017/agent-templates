@@ -465,11 +465,11 @@ export async function run() {
     // exactly one copy — of THIS pattern's heading, not of some other pattern's.
     const dir = mkdtempSync(join(tmpdir(), 'e2e-hub-adopt-'))
     try {
-      // --platform is required even though this pattern has no tracker integration: it
-      // selects which issue/PR templates get installed. Passed explicitly here because a
-      // bare temp dir has no git remote to infer from.
+      // NO --platform, and a bare temp dir with no git remote to infer one from. This
+      // pattern declares `"tracker": false`, so adopt must not demand a platform it will
+      // never read (issue #158). Passing one here would hide a regression.
       const adopt = (extra = []) => sh(process.execPath,
-        [join(REPO, 'scripts', 'adopt.mjs'), 'hub-and-spoke-orchestrator-executors', dir, '--platform', 'gh', ...extra], { cwd: REPO })
+        [join(REPO, 'scripts', 'adopt.mjs'), 'hub-and-spoke-orchestrator-executors', dir, ...extra], { cwd: REPO })
       const first = await adopt()
       eq(S, 'adopt exits 0 for the hub-and-spoke pattern', first.status, 0)
       const second = await adopt()
@@ -493,6 +493,16 @@ export async function run() {
       check(S, 'next steps name this pattern\'s first command', /\/hub-brief/.test(first.out))
       check(S, 'next steps do NOT name the other pattern\'s commands',
         !/\/breakdown-prd|\/start-milestone/.test(first.out))
+
+      // issue #158: a tracker-less pattern must neither demand a platform nor receive
+      // tracker templates it never references.
+      check(S, 'adopt says the platform is not required', /platform: not required/.test(first.out))
+      check(S, 'no tracker issue/MR templates were installed',
+        !existsSync(join(dir, '.github')) && !existsSync(join(dir, '.gitlab')))
+      check(S, 'adopt says it skipped the tracker templates', /skip.*tracker/i.test(first.out))
+      // and no dag.html eol rule either — that file belongs to the other pattern
+      const ga = existsSync(join(dir, '.gitattributes')) ? readFileSync(join(dir, '.gitattributes'), 'utf8') : ''
+      check(S, 'no dag.html eol rule for a pattern that has no dag.html', !ga.includes('docs/prd/dag.html'))
     } finally { rmSync(dir, { recursive: true, force: true }) }
   }
 
