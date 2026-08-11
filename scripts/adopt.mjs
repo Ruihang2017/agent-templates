@@ -81,12 +81,43 @@ if (!targetOk) {
   process.exit(1)
 }
 
+// Does this pattern use a tracker at all? A pattern DECLARES it, rather than adopt
+// inferring it (catalog issue #158). Inference about whether a hard requirement applies is
+// exactly the kind of thing that breaks quietly: a pattern could stop mentioning `glab`
+// and silently lose its platform gate. A declaration cannot drift that way.
+//
+// Default is `true` — a pattern that says nothing gets the old, stricter behaviour, so
+// this can never weaken the gate for the pattern that genuinely needs it.
+const manifestPath = join(scaffold, 'pattern.json')
+let NEEDS_TRACKER = true
+if (existsSync(manifestPath)) {
+  try {
+    const m = JSON.parse(readFileSync(manifestPath, 'utf8'))
+    if (m.tracker === false) NEEDS_TRACKER = false
+    else if (m.tracker !== undefined && m.tracker !== true) {
+      console.error(`${manifestPath}: "tracker" must be true or false, got ${JSON.stringify(m.tracker)}`)
+      process.exit(1)
+    }
+  } catch (e) {
+    // Fail loudly. Silently falling back to `true` would make a typo in the manifest look
+    // like a pattern that wants a tracker, which is the confusing direction to be wrong in.
+    console.error(`${manifestPath} is not valid JSON: ${e.message}`)
+    process.exit(1)
+  }
+}
+if (!NEEDS_TRACKER) {
+  console.log(`platform: not required — ${pattern} declares no tracker integration (scaffold/pattern.json)`)
+  if (PLATFORM) console.log(`  (--platform ${PLATFORM} accepted but unused: nothing this pattern installs reads it)`)
+}
+
 // Platform detection (deterministic, offline). Signals in order:
 //   1. origin host contains 'gitlab' / 'github'      (covers *.gitlab.com, gitlab.corp, github.com)
 //   2. repo-local signal: .gitlab-ci.yml -> glab; existing .github/ -> gh
 //      (this is what catches a self-hosted GitLab on a custom domain like git.company.com)
 //   3. default gh, with a LOUD ambiguity note naming --platform
-if (!PLATFORM) {
+// Skipped entirely for a pattern that declares no tracker: there is nothing to detect,
+// and demanding an answer that will never be read is a gate with no consequence.
+if (!PLATFORM && NEEDS_TRACKER) {
   let host = ''
   try {
     const origin = execFileSync('git', ['-C', target, 'remote', 'get-url', 'origin'], {
@@ -129,7 +160,10 @@ if (!PLATFORM) {
     }
   }
 }
-if (PLATFORM !== 'gh' && PLATFORM !== 'glab') {
+// A tracker-less pattern may legitimately have no platform at all. An explicitly WRONG
+// value is still an error either way — accepting `--platform nope` because the value
+// happens to be unused would teach the operator the flag is not validated.
+if (NEEDS_TRACKER ? (PLATFORM !== 'gh' && PLATFORM !== 'glab') : (PLATFORM && PLATFORM !== 'gh' && PLATFORM !== 'glab')) {
   console.error(`unknown platform: ${PLATFORM} (expected gh or glab)`)
   process.exit(1)
 }
@@ -247,11 +281,18 @@ for (const name of INTEGRATIONS) {
 copyFile(join(CATALOG, 'templates', 'ticket.template.md'), join(target, 'templates', 'ticket.template.md'), 'templates/ticket.template.md')
 
 // 3. platform tracker templates (issues + PR/MR)
-const trackerSrc = join(CATALOG, 'templates', 'tracker', PLATFORM === 'gh' ? 'github' : 'gitlab')
-const trackerDstRoot = join(target, PLATFORM === 'gh' ? '.github' : '.gitlab')
-for (const src of walk(trackerSrc)) {
-  const rel = relative(trackerSrc, src).replaceAll('\\', '/')
-  copyFile(src, join(trackerDstRoot, rel), `${PLATFORM === 'gh' ? '.github' : '.gitlab'}/${rel}`)
+// Skipped for a pattern that declares no tracker: issue and MR templates it never
+// references are noise in the adopter's repo, and installing them implies a workflow the
+// pattern does not have (issue #158).
+if (NEEDS_TRACKER) {
+  const trackerSrc = join(CATALOG, 'templates', 'tracker', PLATFORM === 'gh' ? 'github' : 'gitlab')
+  const trackerDstRoot = join(target, PLATFORM === 'gh' ? '.github' : '.gitlab')
+  for (const src of walk(trackerSrc)) {
+    const rel = relative(trackerSrc, src).replaceAll('\\', '/')
+    copyFile(src, join(trackerDstRoot, rel), `${PLATFORM === 'gh' ? '.github' : '.gitlab'}/${rel}`)
+  }
+} else {
+  console.log('= skip    tracker issue/MR templates (this pattern declares no tracker)')
 }
 
 // 4. docs skeleton
@@ -293,7 +334,10 @@ if (existsSync(rootPrd) && !existsSync(docsPrd)) {
 // strip and leak the block (same posture as copyFile; catalog issues #21/#23/#40).
 let snippet = readFileSync(join(scaffold, 'claude-md-snippet.md'), 'utf8')
   .replace(/\r\n/g, '\n')
-  .replace('**Tracker: `gh`**', `**Tracker: \`${PLATFORM}\`**`)
+  // Only rewritten when the pattern has a tracker. A tracker-less snippet has no such
+  // line, so this is a no-op there — but leaving the rewrite unconditional would bake a
+  // platform into any future snippet that happened to mention one.
+  .replace('**Tracker: `gh`**', NEEDS_TRACKER ? `**Tracker: \`${PLATFORM}\`**` : '**Tracker: none**')
 // Upstream-escalation bullet is opt-in (issue #40): keep it only with --upstream (pointing
 // at the chosen catalog repo), otherwise strip the whole marked block so no catalog repo
 // slug or "file issues upstream" instruction lands in the adopted CLAUDE.md.
@@ -366,6 +410,30 @@ if (!existsSync(gaPath)) {
 } else {
   console.log('= exists  .gitattributes (eol=lf rules already present)')
   skipped++
+}
+
+// 7b. .gitattributes: docs/prd/dag.html, under its OWN marker so a repo adopted before
+// this rule existed still picks it up (an existing install already carries GA_MARKER, so
+// the block above would skip it forever — the same reason GI_WT_MARKER is separate).
+//
+// The file is committed by adopt and REWRITTEN by dag-report.mjs on every run, including
+// mid-run when rescanEvery fires. With no eol rule a Windows checkout wants CRLF while the
+// generator writes LF, so it sits permanently modified with an EMPTY diff — and
+// deliver-ticket.mjs refuses to merge on a dirty tree. One generated file then blocks
+// every delivery, intermittently, depending on whether the DAG happened to be regenerated
+// before that ticket's delivery ran (catalog issue #153).
+if (NEEDS_TRACKER) {
+  const GA_DAG_MARKER = '# agent-templates: generated by dag-report.mjs — keep LF so regeneration does not dirty the tree'
+  const GA_DAG_RULES = `${GA_DAG_MARKER}\ndocs/prd/dag.html text eol=lf\n`
+  const gaNow = existsSync(gaPath) ? readFileSync(gaPath, 'utf8') : ''
+  if (!gaNow.includes(GA_DAG_MARKER)) {
+    writeFileSync(gaPath, gaNow ? gaNow.trimEnd() + '\n\n' + GA_DAG_RULES : GA_DAG_RULES)
+    console.log('+ append  .gitattributes (eol=lf for the generated docs/prd/dag.html)')
+    installed++
+  } else {
+    console.log('= exists  .gitattributes (dag.html eol rule already present)')
+    skipped++
+  }
 }
 
 // 8. .gitignore: the deliver step stages the Reviewer's verdict under .claude/tmp/ for
