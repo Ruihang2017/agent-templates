@@ -651,4 +651,108 @@ const assertAiMarker = (label, body) => {
         /INTEGRATION-MR-JSON: .*"opened":false/.test(String(h.r.stdout)))
     } finally { cleanup(root) }
   }
+
+  // ===================================================================== GitLab merge
+  // Issues #135 and #152. Together these three defects meant NO ticket could deliver
+  // unattended on a pipeline-gated, squash-on-merge project — while the code itself landed.
+  const GL = ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--platform', 'glab']
+
+  // G1: the merge carries the head SHA, and it must MATCH the branch head. The fake
+  // rejects a missing sha with the real 400 and a wrong one with a 409, so this cannot be
+  // satisfied by passing any value.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, GL, { FAKE_GLAB_CLOSED_STATE: join(root, 'c.txt') })
+      check(S, 'G1 glab merge succeeds, so --sha was sent and matched the head',
+        sum && sum.merged && sum.dodPassed, sum && sum.notes)
+    } finally { cleanup(root) }
+  }
+
+  // G2: GitLab is still computing mergeability -> WAIT, then merge. Asserted on ordering
+  // (the wait is reported before the merge), not just on the end state.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { r, sum } = deliver(repo, GL, {
+        FAKE_GLAB_CLOSED_STATE: join(root, 'c.txt'),
+        FAKE_GLAB_MERGE_STATUS_SEQ: 'checking,ci_still_running,mergeable',
+        DELIVER_MERGE_POLL_MS: '5',
+      })
+      check(S, 'G2 it waited for GitLab rather than racing it', /waiting for GitLab/.test(String(r.stdout)))
+      check(S, 'G2 the wait happened BEFORE the merge',
+        String(r.stdout).indexOf('waiting for GitLab') < String(r.stdout).indexOf('merged'))
+      check(S, 'G2 and it merged once GitLab said mergeable', sum && sum.merged && sum.dodPassed, sum && sum.notes)
+    } finally { cleanup(root) }
+  }
+
+  // G3: a status waiting cannot fix is refused IMMEDIATELY, and the note names the
+  // observed status verbatim. The old note was a GUESS covering three unrelated causes,
+  // and three delivery agents chased the wrong ones off the back of it.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, GL, {
+        FAKE_GLAB_CLOSED_STATE: join(root, 'c.txt'),
+        FAKE_GLAB_MERGE_STATUS_SEQ: 'ci_must_pass',
+        DELIVER_MERGE_POLL_MS: '5',
+      })
+      check(S, 'G3 a failed pipeline does NOT merge', sum && !sum.merged)
+      check(S, 'G3 the note names the observed status verbatim',
+        sum && /detailed_merge_status=`ci_must_pass`/.test(sum.notes), sum && sum.notes)
+      check(S, 'G3 and it did not force-land anything', sum && !sum.dodPassed)
+    } finally { cleanup(root) }
+  }
+
+  // G4: a pipeline that never finishes stops at the cap, leaves the MR open, and says
+  // what it waited for. No exception, no hang.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { r, sum } = deliver(repo, GL, {
+        FAKE_GLAB_CLOSED_STATE: join(root, 'c.txt'),
+        FAKE_GLAB_MERGE_STATUS_SEQ: 'ci_still_running',
+        DELIVER_MERGE_POLL_MS: '5',
+        DELIVER_MERGE_WAIT_MS: '40',
+      })
+      eq(S, 'G4 it still exits 0 with a definitive summary', r.status, 0)
+      check(S, 'G4 nothing merged', sum && !sum.merged && !sum.dodPassed)
+      check(S, 'G4 the note reports the wait it actually performed',
+        sum && /still reported `ci_still_running` after \d+s/.test(sum.notes), sum && sum.notes)
+      check(S, 'G4 the MR is left open', sum && sum.prUrl)
+    } finally { cleanup(root) }
+  }
+
+  // G5: squash-on-merge. The source commit is squashed into a NEW one, so ancestry is
+  // permanently false. Five MRs in the field merged with their issues auto-closed while
+  // the script reported not-delivered for every one — worse than a clean failure, because
+  // a resume then re-runs work that is already delivered.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { r, sum } = deliver(repo, GL, {
+        FAKE_GLAB_CLOSED_STATE: join(root, 'c.txt'),
+        FAKE_GLAB_SQUASH: '1',
+      })
+      check(S, 'G5 a squashed merge is recognised as delivered', sum && sum.merged, sum && sum.notes)
+      check(S, 'G5 the DoD runs, so the issue closes', sum && sum.issueClosed && sum.dodPassed, sum && sum.notes)
+      check(S, 'G5 it says how it detected the landing', /via squash commit/.test(String(r.stdout)))
+      // non-vacuous: the source commit really is NOT an ancestor, so this could only pass
+      // via the squash-commit path
+      const anc = spawnSync('git', ['merge-base', '--is-ancestor', 'ticket/T-01', 'origin/main'],
+        { cwd: repo, encoding: 'utf8' })
+      check(S, 'G5 and the source commit is genuinely not an ancestor', anc.status !== 0)
+    } finally { cleanup(root) }
+  }
+
+  // G6: a project with no pipeline gate is unchanged and gains no wait latency — the
+  // default status is `mergeable`, so the poll returns on its first call.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { r, sum } = deliver(repo, GL, { FAKE_GLAB_CLOSED_STATE: join(root, 'c.txt') })
+      check(S, 'G6 an ungated project still delivers', sum && sum.merged && sum.dodPassed)
+      check(S, 'G6 and it never waited', !/waiting for GitLab/.test(String(r.stdout)))
+    } finally { cleanup(root) }
+  }
 }

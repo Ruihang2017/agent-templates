@@ -439,6 +439,104 @@ const classifyMergeFailure = (out) => {
   return 'gate'
 }
 
+// ---------------------------------------------------------------------------
+// GitLab merge gate (catalog issues #135, #152). Three defects, one root cause each,
+// which together meant NO ticket could deliver unattended on a pipeline-gated,
+// squash-on-merge project — while the code itself landed.
+// ---------------------------------------------------------------------------
+
+const MERGE_WAIT_MS = Number(process.env.DELIVER_MERGE_WAIT_MS || 300000) // 5 min
+const MERGE_POLL_MS = Number(process.env.DELIVER_MERGE_POLL_MS || 5000)
+
+// Synchronous sleep: this script is execFileSync throughout, so there is no event loop to
+// await on. Atomics.wait on a throwaway SharedArrayBuffer is the standard way.
+const sleepSync = (ms) => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms) }
+
+const glabMr = (iid) => {
+  const r = tryCli(['api', `projects/:fullpath/merge_requests/${iid}`])
+  if (!r.ok) return null
+  try { return JSON.parse(r.out) } catch { return null }
+}
+
+// GitLab is still COMPUTING mergeability right after an MR is created. Merging into that
+// window returns 405, which the old code reported as a guess — "required checks pending,
+// conflict, or approval required" — and three separate delivery agents chased
+// protected-branch and approval theories off the back of it, all wrong.
+const WAIT_STATUS = new Set(['checking', 'unchecked', 'preparing', 'ci_still_running'])
+// Refused IMMEDIATELY: waiting cannot change any of these, so polling would only burn the
+// timeout before escalating with the same answer.
+const REFUSE_STATUS = new Set([
+  'conflict', 'discussions_not_resolved', 'not_approved', 'need_rebase',
+  'broken_status', 'ci_must_pass', 'draft_status', 'blocked_status',
+])
+
+/**
+ * Poll `detailed_merge_status` until GitLab says the MR can merge.
+ *
+ * Bounded, because this runs unattended. What it waited for and for how long lands in the
+ * notes either way — an escalation that does not say what it waited on is indistinguishable
+ * from the pipeline being broken, which is exactly the state #135 describes.
+ */
+const waitForMergeable = (iid) => {
+  const started = Date.now()
+  let last = ''
+  for (;;) {
+    const mr = glabMr(iid)
+    // No readable status is not "mergeable" — proceed and let the merge itself decide,
+    // rather than blocking forever on a field this GitLab version may not expose.
+    if (!mr) return { ok: true, status: 'unknown', waitedMs: Date.now() - started }
+    last = String(mr.detailed_merge_status || mr.merge_status || '')
+    if (mr.state === 'merged') return { ok: true, status: 'merged', waitedMs: Date.now() - started }
+    if (REFUSE_STATUS.has(last)) return { ok: false, status: last, waitedMs: Date.now() - started }
+    if (!WAIT_STATUS.has(last)) return { ok: true, status: last || 'unknown', waitedMs: Date.now() - started }
+    if (Date.now() - started >= MERGE_WAIT_MS) return { ok: false, status: last, timedOut: true, waitedMs: Date.now() - started }
+    console.log(`  … waiting for GitLab: ${last} (${Math.round((Date.now() - started) / 1000)}s)`)
+    sleepSync(MERGE_POLL_MS)
+  }
+}
+
+/**
+ * The head SHA the Reviewer actually cleared.
+ *
+ * `glab mr merge` without `--sha` returns 400 "SHA must be provided when merging": modern
+ * glab defaults --auto-merge on, and GitLab's auto-merge requires one. Passing it is also
+ * a correctness win, not just an API formality — the merge only lands if the branch head
+ * still matches the reviewed commit, so a push arriving after the CLEAR verdict fails safe
+ * instead of merging unreviewed work.
+ */
+const headSha = () => {
+  for (const ref of [`origin/${BRANCH}`, BRANCH]) {
+    const r = tryGit(['rev-parse', ref])
+    if (r.ok && /^[0-9a-f]{7,40}$/i.test(r.out.trim())) return r.out.trim()
+  }
+  return ''
+}
+
+/**
+ * Did this ticket's work actually land on the default branch?
+ *
+ * Ancestry FIRST, so non-squash repos are unchanged. But with `squash_option: default_on`
+ * the source commit is squashed into a NEW one, so the original is never an ancestor and
+ * ancestry alone is permanently false. Observed in the field on five merge requests at
+ * once: all merged, all issues auto-closed by `Closes #N`, and the script reported
+ * `not-delivered` for every one — a state worse than a clean failure, because a resume
+ * then re-runs work that is already delivered.
+ *
+ * Status alone is deliberately NOT sufficient. A forge can report a merge that did not
+ * land; the squash/merge commit must be REACHABLE from the target after a fetch. That is
+ * the whole point of the check.
+ */
+const landedOn = (branch, pr) => {
+  if (tryGit(['merge-base', '--is-ancestor', BRANCH, `origin/${branch}`]).ok) return 'ancestry'
+  if (PLATFORM !== 'glab' || !pr || !pr.number) return ''
+  const mr = glabMr(pr.number)
+  if (!mr || mr.state !== 'merged') return ''
+  const sha = mr.squash_commit_sha || mr.merge_commit_sha
+  if (!sha) return ''
+  tryGit(['fetch', 'origin', branch])
+  return tryGit(['merge-base', '--is-ancestor', sha, `origin/${branch}`]).ok ? 'squash-commit' : ''
+}
+
 // Ensure the integration branch exists on origin, branched from the DEFAULT branch.
 // Idempotent: a second ticket in the same run reuses it and never resets it (resetting
 // would silently discard the previous ticket's delivery).
@@ -469,14 +567,21 @@ const rerouteToIntegration = (pr, failureOut) => {
     : tryCli(['mr', 'update', String(pr.number), '--target-branch', INTEGRATION_BRANCH])
   if (!rt.ok) { note(`retarget to ${INTEGRATION_BRANCH} failed: ${firstLine(rt.out)}`); return }
 
+  // Same --sha requirement as the default-branch path (#152): both call sites hit the
+  // identical 400 without it, and both gain the same safety — the merge lands only if the
+  // head still matches what the Reviewer cleared.
+  const rtSha = PLATFORM === 'glab' ? headSha() : ''
   const mg = PLATFORM === 'gh'
     ? tryCli(['pr', 'merge', String(pr.number), '--merge'])
-    : tryCli(['mr', 'merge', String(pr.number), '--yes'])
+    : tryCli(['mr', 'merge', String(pr.number), '--yes', ...(rtSha ? ['--sha', rtSha] : [])])
   if (!mg.ok) { note(`merge into ${INTEGRATION_BRANCH} failed: ${firstLine(mg.out)}`); return }
 
   tryGit(['fetch', 'origin', INTEGRATION_BRANCH])
-  if (!tryGit(['merge-base', '--is-ancestor', BRANCH, `origin/${INTEGRATION_BRANCH}`]).ok) {
-    note(`merge into ${INTEGRATION_BRANCH} reported success but the branch is not an ancestor — not counting it`)
+  // Squash-aware, for the same reason as the default branch: under squash_option the
+  // source commit is never an ancestor, so ancestry alone would report a successful
+  // reroute as "not counted" forever.
+  if (!landedOn(INTEGRATION_BRANCH, pr)) {
+    note(`merge into ${INTEGRATION_BRANCH} reported success but the work is not reachable from it — not counting it`)
     return
   }
   checks.mergedToIntegration = true
@@ -679,22 +784,45 @@ try {
 
     // 3e. merge THROUGH the forge, then fast-forward the local default to it.
     tryGit(['fetch', 'origin', DEFAULT_BRANCH])
-    if (tryGit(['merge-base', '--is-ancestor', BRANCH, `origin/${DEFAULT_BRANCH}`]).ok) {
+    const landedBefore = landedOn(DEFAULT_BRANCH, pr)
+    if (landedBefore) {
       checks.alreadyMerged = true
-      console.log(`= merged  ${BRANCH} already on origin/${DEFAULT_BRANCH}`)
+      console.log(`= merged  ${BRANCH} already on origin/${DEFAULT_BRANCH} (${landedBefore})`)
     } else if (pr && pr.number) {
-      const mg = PLATFORM === 'gh'
-        ? tryCli(['pr', 'merge', String(pr.number), '--merge'])
-        : tryCli(['mr', 'merge', String(pr.number), '--yes'])
-      if (!mg.ok) {
-        note(`forge merge failed (required checks pending, conflict, or approval required): ${firstLine(mg.out)}`)
-        // Only a PROTECTION refusal may be rerouted. Anything else stays an escalation.
-        if (INTEGRATION_BRANCH) rerouteToIntegration(pr, mg.out)
-      } else console.log(`+ merged  #${pr.number} via ${PLATFORM} (forge-side)`)
+      // GitLab only: wait for it to finish computing mergeability before attempting the
+      // merge. Without this the merge races the forge and returns 405 on a project with a
+      // pipeline gate — every ticket stranded as an open MR (#135, #152).
+      let ready = { ok: true, status: '', waitedMs: 0 }
+      if (PLATFORM === 'glab') {
+        ready = waitForMergeable(pr.number)
+        if (ready.waitedMs > 0) console.log(`  waited ${Math.round(ready.waitedMs / 1000)}s for GitLab (${ready.status})`)
+      }
+      if (!ready.ok) {
+        // The observed status, verbatim. The old wording was a GUESS covering three
+        // unrelated causes at once, and delivery agents chased the wrong ones.
+        note(ready.timedOut
+          ? `merge not attempted: GitLab still reported \`${ready.status}\` after ${Math.round(ready.waitedMs / 1000)}s — MR left open`
+          : `merge refused by GitLab: detailed_merge_status=\`${ready.status}\``)
+        if (INTEGRATION_BRANCH) rerouteToIntegration(pr, ready.status)
+      } else {
+        const sha = PLATFORM === 'glab' ? headSha() : ''
+        const mg = PLATFORM === 'gh'
+          ? tryCli(['pr', 'merge', String(pr.number), '--merge'])
+          : tryCli(['mr', 'merge', String(pr.number), '--yes', ...(sha ? ['--sha', sha] : [])])
+        if (!mg.ok) {
+          note(`forge merge failed${ready.status ? ` (detailed_merge_status=\`${ready.status}\`)` : ''}: ${firstLine(mg.out)}`)
+          // Only a PROTECTION refusal may be rerouted. Anything else stays an escalation.
+          if (INTEGRATION_BRANCH) rerouteToIntegration(pr, mg.out)
+        } else console.log(`+ merged  #${pr.number} via ${PLATFORM} (forge-side)`)
+      }
       tryGit(['fetch', 'origin', DEFAULT_BRANCH])
     }
     // confirm the merge actually landed on the remote default, then sync local
-    if (tryGit(['merge-base', '--is-ancestor', BRANCH, `origin/${DEFAULT_BRANCH}`]).ok) {
+    const landedHow = landedOn(DEFAULT_BRANCH, pr)
+    if (landedHow) {
+      if (landedHow === 'squash-commit') {
+        console.log(`+ landed  via squash commit (the source commit is not an ancestor — squash_option is on)`)
+      }
       checks.merged = true
       checks.pushed = true // the forge landed it on origin
       git(['checkout', DEFAULT_BRANCH], { stdio: ['ignore', 'pipe', 'pipe'] })
