@@ -84,10 +84,34 @@ function startFake({ mode = 'ok', repoTaskParent = null } = {}) {
         const parent = tasks.get(m[1])
         if (!parent) return send(404, { errors: [{ message: 'Not Found' }] })
         if (req.method === 'GET') {
-          return send(200, { data: parent.children.map((g) => {
+          // Real pagination (catalog issue #176). This route used to return every child in
+          // one response, so the truncation bug it exists to catch could never occur here:
+          // the script asked for limit=100, the fake ignored it, and 250 subtasks came back
+          // looking complete. A fake that is more capable than the API hides the defect.
+          const all = parent.children.map((g) => {
             const t = tasks.get(g)
             return { gid: t.gid, name: t.name, completed: t.completed }
-          }) })
+          })
+          const limit = Math.min(Number(url.searchParams.get('limit')) || 50, 100)
+          const offset = Number(url.searchParams.get('offset') || 0)
+
+          // Servers that mishandle pagination, both of which the script must DETECT rather
+          // than quietly under-report:
+          //   no-paginate  full page, no next_page — indistinguishable from a complete
+          //                list unless you refuse to guess
+          //   stuck-offset hands back a token but always serves page 1 — an infinite loop
+          //                for any client that trusts the token
+          if (mode === 'no-paginate') return send(200, { data: all.slice(0, limit) })
+          if (mode === 'stuck-offset') {
+            return send(200, { data: all.slice(0, limit), next_page: { offset: 'always-the-same', path, uri: path } })
+          }
+
+          const page = all.slice(offset, offset + limit)
+          const more = offset + limit < all.length
+          return send(200, {
+            data: page,
+            ...(more ? { next_page: { offset: String(offset + limit), path, uri: path } } : {}),
+          })
         }
         if (req.method === 'POST') {
           const gid = String(nextGid++)
@@ -682,6 +706,101 @@ export async function run() {
       eq(S, 'A23 a missing tickets directory exits 0', r.status, 0)
       check(S, 'A23 it reports no-tickets-dir', r.codes.includes('no-tickets-dir'))
       eq(S, 'A23 nothing was created', fake.counts.POST || 0, 0)
+    } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
+  }
+
+  // ---- A24 (issue #176): the subtask list must be paginated in FULL ------
+  //
+  // Asana caps a page at 100. The old code asked for limit=100 and stopped, and `api()`
+  // discarded `next_page` entirely — so a parent with more than 100 subtasks returned a
+  // TRUNCATED list, and every caller treats "not in the list" as "does not exist yet" and
+  // creates it. Same defect as catalog issue #132, which produced 43 duplicate issues on a
+  // 44-ticket repo, arriving through a different API.
+  {
+    const fake = await startFake()
+    const root = makeRepo()
+    try {
+      // 250 existing module subtasks — well past one page, and past two.
+      const names = []
+      for (let i = 1; i <= 250; i++) {
+        const name = `[MOD-${String(i).padStart(3, '0')}] module ${i}`
+        names.push(name)
+        const gid = String(900000 + i)
+        fake.tasks.set(gid, { gid, name, completed: false, workspace: { gid: WORKSPACE }, parent: { gid: REPO_TASK }, children: [], projects: [] })
+        fake.tasks.get(REPO_TASK).children.push(gid)
+      }
+      const r = await sync(root, ['status'], { base: fake.base })
+      eq(S, 'A24 status exits 0 across three pages', r.status, 0)
+      eq(S, 'A24 every subtask is listed, not just the first page', r.json && r.json.items.length, 250)
+      // non-vacuous: a truncating client would report exactly the page size, so name the
+      // wrong answer the old code gave
+      check(S, 'A24 it did not stop at one page', r.json && r.json.items.length !== 100)
+      const gids = new Set((r.json.items || []).map((i) => i.gid))
+      eq(S, 'A24 no subtask is double-counted', gids.size, 250)
+    } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
+  }
+
+  // A25: the harm itself — a module past the first page must NOT be recreated.
+  {
+    const fake = await startFake()
+    const root = makeRepo()
+    try {
+      // 150 filler modules, then the one this repo's fixture actually syncs. It sits
+      // beyond the first page, which is exactly where the old code stopped looking.
+      for (let i = 1; i <= 150; i++) {
+        const gid = String(800000 + i)
+        fake.tasks.set(gid, { gid, name: `[FILL-${i}] filler`, completed: false, workspace: { gid: WORKSPACE }, parent: { gid: REPO_TASK }, children: [], projects: [] })
+        fake.tasks.get(REPO_TASK).children.push(gid)
+      }
+      const first = await sync(root, ['sync', MOD, '--create'], { base: fake.base })
+      eq(S, 'A25 first sync exits 0', first.status, 0)
+      const afterFirst = fake.childrenOf(REPO_TASK).filter((t) => String(t.name).startsWith('[01-foundation]')).length
+      eq(S, 'A25 the module subtask was created once', afterFirst, 1)
+
+      // Re-run. The module is now the 151st child — past page 1. A truncating client
+      // cannot see it and creates a second one.
+      const second = await sync(root, ['sync', MOD, '--create'], { base: fake.base })
+      eq(S, 'A25 second sync exits 0', second.status, 0)
+      const afterSecond = fake.childrenOf(REPO_TASK).filter((t) => String(t.name).startsWith('[01-foundation]')).length
+      eq(S, 'A25 re-running created NO duplicate past the first page', afterSecond, 1)
+    } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
+  }
+
+  // A26: a server that does not paginate must FAIL, not be believed. A full page with no
+  // continuation token is indistinguishable from a complete list, and guessing is the bug.
+  {
+    const fake = await startFake({ mode: 'no-paginate' })
+    const root = makeRepo()
+    try {
+      for (let i = 1; i <= 120; i++) {
+        const gid = String(700000 + i)
+        fake.tasks.set(gid, { gid, name: `[X-${i}] x`, completed: false, workspace: { gid: WORKSPACE }, parent: { gid: REPO_TASK }, children: [], projects: [] })
+        fake.tasks.get(REPO_TASK).children.push(gid)
+      }
+      const r = await sync(root, ['status'], { base: fake.base })
+      check(S, 'A26 a non-paginating server is reported, not trusted',
+        JSON.stringify(r.json || {}).includes('no next_page') || (r.codes || []).length > 0,
+        JSON.stringify(r.json))
+      check(S, 'A26 it does not silently report a short list',
+        !(r.json && r.json.items && r.json.items.length === 100))
+    } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
+  }
+
+  // A27: a server whose offset never advances must fail rather than loop forever. An
+  // unattended run that never ends is worse than one that stops with a reason.
+  {
+    const fake = await startFake({ mode: 'stuck-offset' })
+    const root = makeRepo()
+    try {
+      for (let i = 1; i <= 120; i++) {
+        const gid = String(600000 + i)
+        fake.tasks.set(gid, { gid, name: `[Y-${i}] y`, completed: false, workspace: { gid: WORKSPACE }, parent: { gid: REPO_TASK }, children: [], projects: [] })
+        fake.tasks.get(REPO_TASK).children.push(gid)
+      }
+      const r = await sync(root, ['status'], { base: fake.base })
+      check(S, 'A27 an ignored offset is reported rather than looped on',
+        JSON.stringify(r.json || {}).includes('offset appears to be ignored') || (r.codes || []).length > 0,
+        JSON.stringify(r.json))
     } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
   }
 }

@@ -41,6 +41,12 @@ function makeRepo({ withOrigin = true, withPlan = true, pushOptionMr = false } =
   if (withOrigin) {
     const origin = join(root, 'origin.git')
     execFileSync('git', ['init', '-q', '--bare', origin], { encoding: 'utf8' })
+    // Point the bare repo's HEAD at the branch this fixture actually uses. `git init
+    // --bare` defaults it to refs/heads/master and pushing `main` never moves it, so every
+    // clone of this origin warns "remote HEAD refers to nonexistent ref" and lands on an
+    // unborn branch. Fixing it at the source keeps the fixture faithful to a real forge,
+    // where HEAD does track the default branch.
+    execFileSync('git', ['-C', origin, 'symbolic-ref', 'HEAD', 'refs/heads/main'], { encoding: 'utf8' })
     if (pushOptionMr) {
       // emulate GitLab: advertise push options + a pre-receive hook that prints the MR
       // URL (relayed to the client as "remote:" lines) when push options are present.
