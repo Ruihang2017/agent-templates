@@ -150,6 +150,20 @@ export async function run() {
     }
     // guard the guard: if the loop compared nothing, every check above passed vacuously
     check(S, 'parity gate actually compared the scripts', compared >= 7, `compared ${compared}`)
+
+    // Shared project state must NOT be runtime-scoped (catalog issue #181). One project can
+    // run both patterns side by side — they share docs/prd/, the ticket ids, the branch
+    // names and the tracker — so a record of what shipped that lived under `.claude/` or
+    // `.codex/` would give each runtime its own truth and let the other re-run delivered
+    // work. The parity gate above CANNOT see this: it normalises `.codex/` to `.claude/`,
+    // so two divergent paths compare equal. This reads the raw literals instead.
+    const rawLedger = (p) => (readFileSync(p, 'utf8').match(/^const LEDGER = (.+)$/m) || [])[1] || ''
+    const claudeLedger = rawLedger(join(claudeScripts, 'deliver-ticket.mjs'))
+    const codexLedger = rawLedger(join(codexScripts, 'deliver-ticket.mjs'))
+    check(S, 'both runtimes declare a delivery ledger', claudeLedger && codexLedger)
+    eq(S, 'the delivery ledger path is identical across runtimes', codexLedger, claudeLedger)
+    check(S, 'the delivery ledger is not runtime-scoped',
+      !/\.claude|\.codex|\.agents/.test(claudeLedger), claudeLedger)
   }
 }
 

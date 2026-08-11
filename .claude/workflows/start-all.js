@@ -57,7 +57,12 @@ for (const t of cfg.tickets) {
 if (cfg.mode !== 'supervised' && cfg.mode !== 'autonomous') {
   throw new Error("args.mode must be 'supervised' or 'autonomous'")
 }
-if (cfg.platform !== 'gh' && cfg.platform !== 'glab') throw new Error("args.platform must be 'gh' or 'glab'")
+// 'none' = LOCAL delivery (catalog issue #180): no tracker, no push, no PR/MR. Every
+// delivery defect this catalog has recorded lives at the forge boundary, and each one
+// stops the whole run; 'none' takes that boundary off the critical path. Review is
+// unchanged — what is deferred is PUBLICATION, not judgement.
+if (cfg.platform !== 'gh' && cfg.platform !== 'glab' && cfg.platform !== 'none') throw new Error("args.platform must be 'gh', 'glab', or 'none' (local delivery, no tracker)")
+const LOCAL_ONLY = cfg.platform === 'none'
 if (!Number.isInteger(cfg.concurrency) || cfg.concurrency < 1) {
   throw new Error('args.concurrency must be an integer >= 1')
 }
@@ -238,7 +243,7 @@ async function runTicket(t, opts) {
   const verdictFile = '.claude/tmp/' + t.id + '-verdict.md'
   const bodyFile = '.claude/tmp/' + t.id + '-mrbody.md'
   const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
-    ' --default-branch ' + cfg.defaultBranch + ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '') +
+    ' --default-branch ' + cfg.defaultBranch + (LOCAL_ONLY ? ' --delivery local' : ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '')) +
     (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : '') + ' --verdict-file ' + verdictFile + ' --body-file ' + bodyFile +
     (cfg.mode === 'supervised' ? ' --no-merge' : '')
   const deliverPrompt =
@@ -429,13 +434,22 @@ const rescan = async function (reason) {
     'Run these commands from the repo root and report what they print -- do not invent, infer, or edit any ticket:\n' +
     '1. `node .claude/scripts/dag-scan.mjs ' + cfg.prdRoot + '` -- parse its final SCAN-JSON line. If it exits non-zero, ' +
     'STOP and return ok=false with its stderr in detail; a half-written ticket must not disturb a run already in flight.\n' +
-    '2. For every scanned ticket whose id is NOT in this already-known list [' + known + '], publish it so delivery can close its issue: ' +
-    'run `node .claude/scripts/publish-tickets.mjs <its module dir under ' + cfg.prdRoot + '> --create --platform ' + cfg.platform + '` ' +
-    'once per affected module dir (idempotent -- the [<id>] title prefix dedupes), and read the issue numbers from its PUBLISH-SUMMARY-JSON line. Skip this step entirely if there are no new ids.\n' +
-    '2b. You MUST report each ticket\'s issue `state` ("open" or "closed") exactly as PUBLISH-SUMMARY-JSON reports it. ' +
-    'For a module you did not publish in step 2, run the SAME command WITHOUT --create (a dry run creates nothing) purely to read the states. ' +
-    'This is not optional bookkeeping: a ticket whose issue is closed has already been delivered, and re-admitting it re-plans and re-builds against a codebase that already contains its work. ' +
-    'If you genuinely cannot determine a state, omit the field rather than guessing "open".\n' +
+    // Steps 2 and 2b differ by runtime, but the RULE they feed is identical: a ticket
+    // already delivered must not be re-admitted. Only the signal differs — a closed
+    // tracker issue, or a row in the local ledger (catalog issues #136, #180).
+    (LOCAL_ONLY
+      ? '2. There is NO tracker in this run (platform: none). Do NOT publish anything and do NOT run publish-tickets.mjs.\n' +
+        '2b. Report each ticket\'s `state` from the LOCAL DELIVERY LEDGER instead: read `.claude/delivered.json` (it may not exist yet -- then every state is "open"). ' +
+        'A ticket whose id appears in its `delivered` array is "closed"; every other ticket is "open". ' +
+        'This is the same filter the run applies at launch, reading the only signal that exists without a tracker: re-admitting an already-delivered ticket re-plans and re-builds it against a codebase that already contains its work. ' +
+        'If you cannot read the ledger, say so in detail rather than reporting every ticket as "open".\n'
+      : '2. For every scanned ticket whose id is NOT in this already-known list [' + known + '], publish it so delivery can close its issue: ' +
+        'run `node .claude/scripts/publish-tickets.mjs <its module dir under ' + cfg.prdRoot + '> --create --platform ' + cfg.platform + '` ' +
+        'once per affected module dir (idempotent -- the [<id>] title prefix dedupes), and read the issue numbers from its PUBLISH-SUMMARY-JSON line. Skip this step entirely if there are no new ids.\n' +
+        '2b. You MUST report each ticket\'s issue `state` ("open" or "closed") exactly as PUBLISH-SUMMARY-JSON reports it. ' +
+        'For a module you did not publish in step 2, run the SAME command WITHOUT --create (a dry run creates nothing) purely to read the states. ' +
+        'This is not optional bookkeeping: a ticket whose issue is closed has already been delivered, and re-admitting it re-plans and re-builds against a codebase that already contains its work. ' +
+        'If you genuinely cannot determine a state, omit the field rather than guessing "open".\n') +
     '3. `node .claude/scripts/dag-report.mjs ' + cfg.prdRoot + '` -- refresh the Gate 1 visualization so it shows the live DAG.\n' +
     'Return ok=true and `tickets` = the SCAN-JSON ticket list, each with id, module, path and blockedBy exactly as scanned, ' +
     'plus `issue` (a number) for any ticket whose issue number you saw in a PUBLISH-SUMMARY-JSON line.',
@@ -589,6 +603,23 @@ const cleanupReport = { branchesDeleted: [], branchesKept: [], worktreesPruned: 
   }
 }
 
+// Local delivery leaves work on the LOCAL default branch and nowhere else, so the run has
+// to hand it over explicitly (issue #180). Without this the mode is indistinguishable from
+// silent hoarding: everything looks delivered, and nothing is anywhere a colleague can see.
+const localHandoff = LOCAL_ONLY
+  ? {
+      branch: cfg.defaultBranch,
+      ledger: '.claude/delivered.json',
+      pushed: false,
+      next: [
+        'Nothing was pushed and no PR/MR was opened — this run touched no forge.',
+        'Review the local history: git log --oneline ' + cfg.defaultBranch,
+        'When you want it published: git push origin ' + cfg.defaultBranch,
+        'Or hand this summary to an agent and ask it to push and open the PR/MR.',
+      ],
+    }
+  : null
+
 const delivered = results.filter(function (r) { return r.status === 'delivered' || r.status === 'awaiting-human-merge' }).length
 log('start-all finished: ' + delivered + '/' + results.length + ' ticket(s) through the pipeline ' +
   '(concurrency=' + concurrency + ', ' + scans + ' DAG reload(s))')
@@ -597,6 +628,10 @@ log('start-all finished: ' + delivered + '/' + results.length + ' ticket(s) thro
 // work silently is indistinguishable from work that ran (catalog issue #136).
 if (rescanDroppedClosed.length) {
   log('rescan dropped ' + rescanDroppedClosed.length + ' already-delivered ticket(s) (issue closed): ' + rescanDroppedClosed.join(', '))
+}
+if (localHandoff) {
+  log('LOCAL DELIVERY -- nothing was pushed and no PR/MR was opened.')
+  for (const line of localHandoff.next) log('  ' + line)
 }
 for (const e of escalations) log('escalation: ' + e)
 
@@ -611,6 +646,7 @@ return {
   // "the rescan found delivered work and correctly declined to re-run it".
   rescanDroppedClosed: rescanDroppedClosed,
   cleanup: cleanupReport,
+  localHandoff: localHandoff,
   escalations: escalations,
   results: results,
 }

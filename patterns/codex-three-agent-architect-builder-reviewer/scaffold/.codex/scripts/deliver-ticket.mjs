@@ -58,9 +58,9 @@
 //             1 = bad invocation or unexpected internal error.
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 const argv = process.argv.slice(2)
 const has = (name) => argv.includes('--' + name)
@@ -117,8 +117,8 @@ if (PLATFORM !== 'gh' && PLATFORM !== 'glab') {
   console.error(`unknown platform: ${PLATFORM} (expected gh or glab)`)
   process.exit(1)
 }
-if (!['pr', 'direct', 'pushmr', 'auto'].includes(DELIVERY)) {
-  console.error(`unknown --delivery: ${DELIVERY} (expected pr, direct, pushmr, or auto)`)
+if (!['pr', 'direct', 'pushmr', 'local', 'auto'].includes(DELIVERY)) {
+  console.error(`unknown --delivery: ${DELIVERY} (expected pr, direct, pushmr, local, or auto)`)
   process.exit(1)
 }
 if (VERDICT_FILE && !existsSync(VERDICT_FILE)) {
@@ -218,7 +218,7 @@ const checks = {
   planExists: false, alreadyMerged: false, merged: false,
   pushRequired: false, pushed: false, branchPushed: false,
   prCreated: false, prExists: false, verdictPosted: false,
-  issueClosed: false, testsPassed: null,
+  issueClosed: false, ledgerWritten: false, testsPassed: null,
   // Integration-branch delivery (issue #139). Deliberately SEPARATE from `merged`, which
   // measures ancestry into the DEFAULT branch — so dodPassed reads false, honestly, until
   // the integration branch lands on the default one.
@@ -238,10 +238,15 @@ const finish = (code) => {
   // DO NOT add an Asana term here. Asana is a reporting mirror (issue #126); making the
   // Definition of Done depend on it would let a token expiry fail a delivered ticket.
   // The E2E integrity suite asserts this expression stays Asana-free.
+  // In `local` mode there is no tracker, so `issueClosed` can never become true and would
+  // make dodPassed permanently false — the ticket would deliver and still read as failed,
+  // which is the exact false-negative class issue #152 removed. The Definition of Done
+  // drops the tracker term ONLY in that mode, and gains the ledger write in its place, so
+  // the run still has a durable, checkable record of what landed (issue #180).
   const dodPassed = !awaitingMerge &&
     checks.planExists &&
     checks.merged &&
-    checks.issueClosed &&
+    (deliveryMode === 'local' ? checks.ledgerWritten : checks.issueClosed) &&
     (!checks.pushRequired || checks.pushed) &&
     (TEST_CMD ? checks.testsPassed === true : true)
   // Branch cleanup deliberately does NOT happen here (issue #151). Deleting the ticket
@@ -300,6 +305,75 @@ const completeAsana = () => {
 // ONLY after the work actually landed: a closed issue is what resume filtering
 // treats as "delivered by an earlier run", so closing on a failed merge would
 // silently drop the ticket from every future run.
+// ---------------------------------------------------------------------------
+// Local delivery ledger (catalog issue #180).
+//
+// With no tracker there is no "issue closed" to resume from, and that signal is what makes
+// a re-run after a pause, a crash, or a new PRD phase execute only the NEW work. Something
+// has to carry it, and it has to survive a process exit.
+//
+// A COMMITTED file, not a gitignored one, and that is the whole design: it is the record
+// of what this repo has delivered, so it belongs in history alongside the code it
+// describes. It is also what a later human or agent reads to know what still needs
+// pushing. A scratch file under .codex/tmp/ would be lost on the first clean checkout —
+// exactly when someone needs to know what happened.
+// ---------------------------------------------------------------------------
+
+// RUNTIME-NEUTRAL on purpose (catalog issue #181). One project may run the Claude and the
+// Codex three-agent patterns side by side — different team members, different tool
+// budgets — and they share `docs/prd/`, the ticket ids, the branch names and the tracker.
+// A ledger under `.codex/` or `.codex/` would give each runtime its OWN record of what
+// shipped, so the other would re-plan and re-build delivered tickets: catalog issue #136's
+// harm, reintroduced through the runtime split.
+//
+// It lives beside `docs/prd/` rather than inside it, because prd-phase.mjs freezes that
+// tree as append-only and a ledger that changes on every delivery would fight the freeze.
+const LEDGER = join('docs', 'delivered.json')
+
+const readLedger = () => {
+  if (!existsSync(LEDGER)) return { delivered: [] }
+  try {
+    const j = JSON.parse(readFileSync(LEDGER, 'utf8'))
+    return Array.isArray(j.delivered) ? j : { delivered: [] }
+  } catch {
+    // A corrupt ledger must not be silently replaced: that would erase the record of every
+    // previously delivered ticket and let the next run redo all of it.
+    note(`${LEDGER} is present but unparseable — refusing to overwrite it; fix or remove it by hand`)
+    return null
+  }
+}
+
+const writeLedger = () => {
+  const led = readLedger()
+  if (!led) return false
+  const sha = (tryGit(['rev-parse', 'HEAD']).out || '').trim()
+  const existing = led.delivered.findIndex((d) => d && d.id === ID)
+  const row = { id: ID, branch: BRANCH, sha, at: new Date().toISOString() }
+  if (existing === -1) led.delivered.push(row)
+  else led.delivered[existing] = row // a re-delivery updates in place; never duplicates
+  try {
+    // A repo may reach `local` delivery without a `.codex/` directory — the mode is
+    // deliberately usable in a plain checkout, not only in an adopted one.
+    mkdirSync(dirname(LEDGER), { recursive: true })
+    writeFileSync(LEDGER, JSON.stringify(led, null, 2) + '\n')
+  } catch (e) {
+    note(`could not write ${LEDGER}: ${firstLine(errText(e))}`)
+    return false
+  }
+  // Committed on the default branch, so the ledger and the work it describes move together.
+  // If this fails the ledger is still on disk but uncommitted, which the next run's
+  // clean-tree check would trip over — so say so rather than leaving it dangling.
+  const add = tryGit(['add', LEDGER])
+  if (!add.ok) { note(`could not stage ${LEDGER}: ${firstLine(add.out)}`); return false }
+  const commit = tryGit(['commit', '-m', `chore(deliver): record ${ID} as delivered locally`, '--', LEDGER])
+  if (!commit.ok && !/nothing to commit/i.test(commit.out)) {
+    note(`could not commit ${LEDGER}: ${firstLine(commit.out)}`)
+    return false
+  }
+  console.log(`+ ledger  recorded ${ID} in ${LEDGER}`)
+  return true
+}
+
 const closeIssue = () => {
   let issueNum = ISSUE_ARG ? Number(ISSUE_ARG) : null
   if (issueNum !== null && (!Number.isInteger(issueNum) || issueNum < 1)) {
@@ -628,14 +702,29 @@ try {
   // path-anchored allowlist cannot match, so delivery refused every ticket as "dirty".
   // Observed on the catalog's own Level-1 rehearsal, 2026-07-27 (issue #75).
   //
-  // `.codex/worktrees/` is exempt for future worktree-isolated runners. Codex-native v1
-  // rejects parallel Builders, but stale experimental worktrees still must not block delivery.
+  // `.codex/worktrees/` is exempt too (issue #141). At concurrency > 1 the HARNESS puts
+  // each isolated agent's worktree at `.codex/worktrees/wf_<runId>-<agentIndex>/` —
+  // inside the repo, and the pattern does not choose that path. Those are untracked, so
+  // `-uall` reports them and every delivery refused to merge. Field report: 7 tickets
+  // produced 16 worktrees (Builder and Reviewer are isolated; the Architect is not, since
+  // it must write docs/plans/ on the main tree), and delivery was blocked throughout.
   // adopt.mjs also git-ignores the path, but this exemption is deliberate belt-and-braces:
   // the .gitignore block is marker-guarded, so a repo adopted earlier never gains the rule
   // unless someone re-adopts.
+  //
+  // `docs/prd/dag.html` is exempt for the same belt-and-braces reason (issue #153). It is
+  // GENERATED by dag-report.mjs on every run, including mid-run when rescanEvery fires, so
+  // on a Windows checkout with no eol rule it sits permanently modified with an EMPTY
+  // diff and blocks delivery — intermittently, depending on whether the DAG happened to be
+  // regenerated before that ticket's delivery ran. adopt.mjs now pins it to LF, but that
+  // rule is marker-guarded and a repo adopted earlier never gains it without re-adopting.
+  // The field report also shows why this must not be left to the agent: a delivery agent
+  // that hit "working tree not clean" resolved it by running `git checkout --` on a file
+  // it had never written, in a repo with other agents' worktrees live. It was harmless
+  // only because the diff happened to be empty.
   const dirty = git(['status', '--porcelain', '-uall'])
     .split('\n')
-    .filter((l) => l.trim() && !/\.codex\/tmp\/|\.codex\/worktrees\/|docs\/plans\/|docs\/prd\/dag\.html/.test(l))
+    .filter((l) => l.trim() && !/\.claude\/tmp\/|\.claude\/worktrees\/|docs\/plans\/|docs\/prd\/dag\.html/.test(l))
   if (dirty.length) { note('working tree not clean — refusing to merge'); finish(0) }
 
   // 2. refs must exist locally
@@ -651,7 +740,25 @@ try {
   const mrApiOk = () => (PLATFORM === 'gh'
     ? tryCli(['pr', 'list', '--limit', '1', '--json', 'number'], { stdio: ['ignore', 'pipe', 'ignore'] }).ok
     : tryCli(['mr', 'list', '--per-page', '1'], { stdio: ['ignore', 'pipe', 'ignore'] }).ok)
-  if (DELIVERY === 'direct') deliveryMode = 'direct'
+  // `local` (catalog issue #180): finish the whole PRD on the local default branch and
+  // touch NO forge — no push, no PR/MR, no tracker. The forge work is deferred to a human
+  // (or an agent) after the run.
+  //
+  // The motivation is not tidiness. Every delivery defect this catalog has recorded lives
+  // at the forge boundary — pipeline gates, protected branches, a 403 MR API, squash
+  // ancestry, a missing --sha — and each one stops the whole run. `local` removes that
+  // boundary from the critical path so development is never blocked by the tracker's
+  // availability, its auth, or its merge policy.
+  //
+  // It is NOT a way to bypass review: the Architect -> Builder -> fresh Reviewer chain is
+  // unchanged, and a ticket still only merges on CLEAR. What is deferred is publication.
+  if (DELIVERY === 'local') {
+    deliveryMode = 'local'
+    // Deliberately ignore whether an origin exists. `local` means local, so a repo WITH a
+    // remote must behave identically to one without — otherwise the mode would silently
+    // do different things in the two places people actually use it.
+    checks.pushRequired = false
+  } else if (DELIVERY === 'direct') deliveryMode = 'direct'
   else if (DELIVERY === 'pushmr') {
     if (PLATFORM !== 'glab') { note('--delivery pushmr is GitLab-only (a GitHub push cannot open a PR); use pr or direct'); finish(0) }
     if (!checks.pushRequired) { note('--delivery pushmr requires an origin remote'); finish(0) }
@@ -673,7 +780,9 @@ try {
     finish(0)
   }
 
-  if (deliveryMode === 'direct') {
+  // `local` reuses the direct path's local --no-ff merge; what differs is downstream —
+  // pushRequired is false, so nothing is pushed, and the DoD term is the ledger.
+  if (deliveryMode === 'direct' || deliveryMode === 'local') {
     // ---- direct (legacy, no-forge) path ----
     git(['checkout', DEFAULT_BRANCH], { stdio: ['ignore', 'pipe', 'pipe'] })
     if (tryGit(['merge-base', '--is-ancestor', BRANCH, 'HEAD']).ok) {
@@ -888,7 +997,8 @@ try {
   // duplicate and conflicting work — the larger cost. The close comment names the branch,
   // and `dodPassed` stays false, so the ticket reads as delivered-but-not-on-main.
   const landed = (checks.merged && (!checks.pushRequired || checks.pushed)) || checks.mergedToIntegration
-  if (!landed) note('skipping tracker close — merge/push did not complete, ticket is NOT delivered')
+  if (!landed) note(deliveryMode === 'local' ? 'skipping ledger write — the merge did not complete, ticket is NOT delivered' : 'skipping tracker close — merge/push did not complete, ticket is NOT delivered')
+  else if (deliveryMode === 'local') checks.ledgerWritten = writeLedger()
   else closeIssue()
 
   // 4b. mirror the completion into Asana (issue #126). Same `landed` precondition as the

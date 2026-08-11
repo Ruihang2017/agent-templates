@@ -795,6 +795,90 @@ const assertAiMarker = (label, body) => {
     } finally { cleanup(root) }
   }
 
+  // ================================================================= local delivery
+  // Issue #180. Finish the whole PRD on the local default branch and touch no forge, so
+  // the tracker's availability, auth and merge policy are off the critical path.
+  const LOCAL = ['--id', 'T-01', '--branch', 'ticket/T-01', '--delivery', 'local']
+
+  // L1: it merges locally, writes the ledger, and passes the DoD — with NO tracker and no
+  // push, in a repo that HAS an origin. The strongest form of the claim: the forge CLI is
+  // pointed at a binary that does not exist, so any forge dependency would fail the run.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const before = execFileSync('git', ['-C', join(root, 'origin.git'), 'rev-parse', 'main'], { encoding: 'utf8' }).trim()
+      const { r, sum } = deliver(repo, LOCAL, {
+        GH_BIN: 'definitely-not-a-real-binary-xyz', GLAB_BIN: 'definitely-not-a-real-binary-xyz',
+      })
+      eq(S, 'L1 exit 0', r.status, 0)
+      eq(S, 'L1 deliveryMode is local', sum && sum.deliveryMode, 'local')
+      check(S, 'L1 merged locally', sum && sum.merged, sum && sum.notes)
+      check(S, 'L1 the DoD passes with no tracker at all', sum && sum.dodPassed, sum && sum.notes)
+      check(S, 'L1 no issue was closed (there is no tracker)', sum && !sum.issueClosed)
+      // the load-bearing one: origin must be untouched
+      const after = execFileSync('git', ['-C', join(root, 'origin.git'), 'rev-parse', 'main'], { encoding: 'utf8' }).trim()
+      eq(S, 'L1 origin was NOT pushed', after, before)
+      check(S, 'L1 pushRequired is false even though an origin exists', sum && !sum.checks.pushRequired)
+      // the work really is on the local default branch
+      check(S, 'L1 the feature landed on local main',
+        existsSync(join(repo, 'feature.txt')))
+      // the ledger exists, is committed, and names the ticket
+      const led = join(repo, 'docs', 'delivered.json')
+      check(S, 'L1 the ledger was written', existsSync(led))
+      const parsed = existsSync(led) ? JSON.parse(readFileSync(led, 'utf8')) : { delivered: [] }
+      eq(S, 'L1 the ledger records this ticket once', parsed.delivered.filter((d) => d.id === 'T-01').length, 1)
+      check(S, 'L1 the ledger row carries the commit it landed as', parsed.delivered[0] && /^[0-9a-f]{7,40}$/.test(parsed.delivered[0].sha))
+      eq(S, 'L1 the ledger is committed, not left dirty', git(repo, ['status', '--porcelain']).trim(), '')
+    } finally { cleanup(root) }
+  }
+
+  // L2: re-running is idempotent — the ledger must not grow a second row, or a resume
+  // filter built on it would drift.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      deliver(repo, LOCAL, {})
+      const { sum } = deliver(repo, LOCAL, {})
+      check(S, 'L2 the re-run still passes the DoD', sum && sum.dodPassed, sum && sum.notes)
+      const parsed = JSON.parse(readFileSync(join(repo, 'docs', 'delivered.json'), 'utf8'))
+      eq(S, 'L2 the ledger has exactly one row for the ticket', parsed.delivered.filter((d) => d.id === 'T-01').length, 1)
+    } finally { cleanup(root) }
+  }
+
+  // L3: a merge that does NOT land must not be recorded. The ledger is the resume signal
+  // in this mode, so a false entry means the work is skipped forever.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      writeFileSync(join(repo, 'feature.txt'), 'conflicting main version\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'main edit that conflicts'])
+      const { sum } = deliver(repo, LOCAL, {})
+      check(S, 'L3 a conflicting merge does not deliver', sum && !sum.merged && !sum.dodPassed)
+      check(S, 'L3 the ledger was NOT written', !existsSync(join(repo, 'docs', 'delivered.json')))
+      check(S, 'L3 it says why', sum && /skipping ledger write/.test(sum.notes), sum && sum.notes)
+      eq(S, 'L3 the tree is clean after the abort', git(repo, ['status', '--porcelain']).trim(), '')
+    } finally { cleanup(root) }
+  }
+
+  // L4: a corrupt ledger must not be silently replaced — that would erase the record of
+  // every previously delivered ticket and let the next run redo all of it.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      mkdirSync(join(repo, 'docs'), { recursive: true })
+      writeFileSync(join(repo, 'docs', 'delivered.json'), '{ this is not json')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'corrupt ledger'])
+      const { sum } = deliver(repo, LOCAL, {})
+      check(S, 'L4 a corrupt ledger is reported, not overwritten',
+        sum && /unparseable/.test(sum.notes), sum && sum.notes)
+      check(S, 'L4 the corrupt file is left intact',
+        readFileSync(join(repo, 'docs', 'delivered.json'), 'utf8').includes('this is not json'))
+      check(S, 'L4 and the ticket does not read as delivered', sum && !sum.dodPassed)
+    } finally { cleanup(root) }
+  }
+
   // G6: a project with no pipeline gate is unchanged and gains no wait latency — the
   // default status is `mergeable`, so the poll returns on its first call.
   {

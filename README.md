@@ -72,7 +72,7 @@ Installed into your project by `adopt`; run them in Claude Code. Full list is ge
 |---|---|---|
 | `/breakdown-prd` | `[prd-path] [focus notes]` | Decompose a PRD (default `docs/PRD.md`) into sub-PRDs + template-compliant tickets (pre-Gate-1 planning). Point it at a phase PRD to append work after Gate 2. |
 | `/start-milestone` | `<module dir> [supervised\|autonomous] [concurrency]` | Gate 1 for one module — publish its tickets as tracker issues, then run the milestone pipeline (parallel lanes when `concurrency > 1`). |
-| `/start-all` | `[supervised\|autonomous] [concurrency]` | Gate 1 for the **whole PRD** — compute the module DAG, publish every module, run all modules in dependency order. |
+| `/start-all` | `[supervised\|autonomous] [concurrency] [none]` | Gate 1 for the **whole PRD** — compute the module DAG, publish every module, run all modules in dependency order. Add `none` for local delivery: no tracker, no push, publish afterwards. |
 | `/publish-tickets` | `<module dir> [--all]` | Publish only — create the tracker issues (and Asana subtasks if connected), then **stop**. For populating the board before any work starts. |
 | `/plan-ticket` | `<ticket-id>` | Architect stage on a ticket. |
 | `/build-ticket` | `<ticket-id>` | Builder stage on a planned ticket. |
@@ -96,6 +96,33 @@ Three properties worth knowing before adopting it:
 - **All-or-nothing dispatch.** One invalid brief dispatches nothing. A bad decomposition is a hub problem, and low-effort executors will not notice it.
 - **`quarantined` outranks green tests.** A spoke that passed its tests while writing outside its declared file-scope does not merge — passing tests is exactly what would otherwise wave it through.
 - **`unverified` is not a pass.** A branch whose tests could not be re-run does not merge.
+
+### Local delivery — finish first, publish later (opt-in)
+
+`/start-all` and `/start-milestone` accept `platform: 'none'`, which drives every ticket to the **local** default branch and touches no forge: no push, no PR/MR, no tracker.
+
+```
+/start-all autonomous 1 none
+```
+
+Why it exists: every delivery defect this catalog has recorded lives at the forge boundary — a pipeline gate, a protected branch, a 403 MR API, squash-merge ancestry, an expired token — and each one stops the whole run. The pattern's value is the Architect → Builder → fresh Reviewer chain; the forge is how the result is *published*. `none` decouples them.
+
+**Review is unchanged.** A ticket still only merges on CLEAR. What is deferred is publication, not judgement.
+
+What replaces the tracker: a committed ledger at `docs/delivered.json` recording each delivered ticket and the commit it landed as. That is the resume signal — a re-run executes only the new work — and it is what you or an agent read afterwards to know what still needs pushing. The run ends with an explicit handoff naming the exact command to publish, because a mode that quietly accumulates work on one machine is indistinguishable from work nobody can see.
+
+### Two runtimes, one project
+
+A project may install **both** three-agent patterns — Claude Code and Codex — side by side. They do not collide: `.claude/` + `CLAUDE.md` sit beside `.codex/` + `.agents/` + `AGENTS.md`.
+
+```
+npx agent-templates@latest adopt three-agent-architect-builder-reviewer .
+npx agent-templates@latest adopt codex-three-agent-architect-builder-reviewer .
+```
+
+They share exactly what is the *project* rather than the runtime — the `docs/prd/` ticket tree, the `[<id>]` tracker title prefix, `ticket/<ID>` branch names, `docs/plans/`, and the delivery ledger. So a ticket planned in one runtime and built in the other works, and a teammate can switch runtimes mid-project on a token budget without development stalling.
+
+No hybrid pattern is needed, and none is offered: it would add a third scaffold to maintain and a §3 model table pinning two vendors at once, for no capability these two installs lack.
 
 ### Parallel delivery (opt-in)
 
