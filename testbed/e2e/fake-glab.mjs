@@ -30,6 +30,15 @@ const logBody = (label, body) => {
   if (f) writeFileSync(f, (existsSync(f) ? readFileSync(f, 'utf8') : '') + `=== ${label} ===\n` + body + '\n')
 }
 
+// Every argument this fake was invoked with, one per line. The point is issue #134's
+// property: no argument may ever be body-sized. Recording argv is the only way to assert
+// that on Linux CI, where the 32,767-character Windows cap never bites.
+if (process.env.FAKE_GLAB_ARGV_LOG) {
+  writeFileSync(process.env.FAKE_GLAB_ARGV_LOG,
+    (existsSync(process.env.FAKE_GLAB_ARGV_LOG) ? readFileSync(process.env.FAKE_GLAB_ARGV_LOG, 'utf8') : '')
+    + args.join('\n') + '\n')
+}
+
 if (joined.startsWith('auth status')) process.exit(0)
 
 // simulate an org whose token has Issues API but a 403 MR API (catalog issue #56):
@@ -90,9 +99,63 @@ if (joined.startsWith('issue list')) {
   }
 }
 
-if (joined.startsWith('issue create')) { logBody('create', flag('--description')); console.log('https://gitlab.example.com/acme/repo/-/issues/77'); process.exit(0) }
+// ---- REST surface (issue #134) ----
+// Issue bodies now go through `glab api --field description=@<file>` instead of
+// `issue create --description <body>`, because a --description value is an ARGV element
+// and Windows caps a command line at 32,767 characters. This fake asserts the property
+// that matters on every platform, not just where the limit bites: the body arrives as a
+// FILE REFERENCE, and no argument is ever body-sized.
+const fieldValue = (name) => {
+  for (let i = 0; i < args.length - 1; i++) {
+    if ((args[i] === '--field' || args[i] === '-f' || args[i] === '--raw-field') && args[i + 1].startsWith(name + '=')) {
+      return args[i + 1].slice(name.length + 1)
+    }
+  }
+  return ''
+}
+const readFieldFile = (name) => {
+  const v = fieldValue(name)
+  if (!v.startsWith('@')) {
+    // The fake refuses the old shape outright rather than accepting it quietly — an
+    // inline body is the defect, so it must fail here and not merely be "supported".
+    console.error(`fake-glab: field ${name} must be a file reference (@path), got a ${v.length}-char inline value`)
+    process.exit(1)
+  }
+  return readFileSync(v.slice(1), 'utf8')
+}
 
-if (joined.startsWith('issue update')) { logBody('update ' + args[2], flag('--description')); console.log(`Updated issue #${args[2]}`); process.exit(0) }
+if (joined.startsWith('api projects/:fullpath/issues') && args.includes('POST')) {
+  logBody('create', readFieldFile('description'))
+  // The number is returned as a FIELD. The old code scraped it out of a URL and could
+  // bind the wrong issue when GitLab switched to /-/work_items/N; there is nothing to
+  // parse here. web_url deliberately uses the work_items form so a regression back to
+  // URL-scraping fails against the shape that actually broke in the field.
+  // FAKE_GLAB_CREATE_OUT lets a test drive the exact response shape — the JSON form, the
+  // legacy /-/issues/N URL, the newer /-/work_items/N one, and outputs carrying a decoy
+  // `#N`. Default is the work_items shape, so a regression back to URL-scraping fails
+  // against the form that actually broke in the field.
+  const iid = Number(process.env.FAKE_GLAB_NEW_IID || 77)
+  // writeOut is asynchronous, so these must be exclusive — calling both concatenates two
+  // JSON objects into one unparseable blob and the test measures the wrong thing.
+  writeOut(process.env.FAKE_GLAB_CREATE_OUT || JSON.stringify({
+    iid,
+    title: fieldValue('title'),
+    web_url: `https://gitlab.example.com/acme/repo/-/work_items/${iid}`,
+  }))
+}
+
+if (/^api projects\/:fullpath\/issues\/\d+/.test(joined) && args.includes('PUT')) {
+  const num = (joined.match(/issues\/(\d+)/) || [])[1]
+  logBody('update ' + num, readFieldFile('description'))
+  writeOut(JSON.stringify({ iid: Number(num) }))
+}
+
+// The old CLI shapes must NOT be reachable any more. Keeping them working would let the
+// argv path survive a refactor with every test still green.
+if (joined.startsWith('issue create') || joined.startsWith('issue update')) {
+  console.error(`fake-glab: '${args.slice(0, 2).join(' ')}' is no longer used — issue bodies must go through 'glab api --field description=@file' (issue #134)`)
+  process.exit(1)
+}
 
 if (joined.startsWith('issue close')) {
   const st = process.env.FAKE_GLAB_CLOSED_STATE
