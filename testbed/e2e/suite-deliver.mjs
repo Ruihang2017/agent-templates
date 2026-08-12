@@ -406,8 +406,15 @@ export async function run() {
 const assertAiMarker = (label, body) => {
   check(S, `${label} body carries a rendered-visible AI banner (not an HTML comment)`,
     /^>.*Automated delivery/m.test(body) && !/^<!--[^>]*Auto-delivered/m.test(body), body.slice(0, 160))
-  check(S, `${label} banner says the change was written and merged by AI`,
-    /written and merged by AI/i.test(body))
+  check(S, `${label} banner says the change was written by AI`,
+    /written by AI/i.test(body))
+  // It must NOT claim a merge that has not happened (catalog issue #192). The banner used
+  // to say "written and merged by AI" unconditionally — on a supervised PR sitting open
+  // and waiting for a human, and at creation time, which is always before any merge. That
+  // is a false claim on a public artifact, and the worst kind: reviewers use this banner to
+  // decide how much scrutiny a change needs, and "already merged" invites less.
+  check(S, `${label} banner does NOT claim it was already merged`,
+    !/written and merged by AI/i.test(body) && !/\bwas merged\b/i.test(body), body.slice(0, 300))
   check(S, `${label} banner explains the author shown is the token owner`,
     /token'?s? owner|Personal Access Token/i.test(body))
 }
@@ -876,6 +883,69 @@ const assertAiMarker = (label, body) => {
       check(S, 'L4 the corrupt file is left intact',
         readFileSync(join(repo, 'docs', 'delivered.json'), 'utf8').includes('this is not json'))
       check(S, 'L4 and the ticket does not read as delivered', sum && !sum.dodPassed)
+    } finally { cleanup(root) }
+  }
+
+  // ============================================ supervised honesty (issue #192)
+  // A supervised run's whole product is an evidenced PR a human will read, so what it says
+  // about itself has to be true.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const vf = join(root, 'verdict.md'); writeFileSync(vf, 'CLEAR — checked.\n')
+      const bodyLog = join(root, 'bodies.txt')
+      const { r, sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--no-merge', '--verdict-file', vf],
+        { FAKE_GH_BODY_LOG: bodyLog, FAKE_GH_CLOSED_STATE: join(root, 'c.txt') })
+      eq(S, 'S1 exit 0', r.status, 0)
+      check(S, 'S1 it is awaiting merge, not delivered', sum && sum.awaitingMerge && !sum.merged && !sum.dodPassed)
+      check(S, 'S1 the issue stays open', sum && !sum.issueClosed && !existsSync(join(root, 'c.txt')))
+
+      // the plan is ON DISK — makeRepo writes it — so a supervised run must report it
+      // present. Before this fix the check ran AFTER the supervised return, so `false`
+      // meant "never looked", which reads as manufactured negative evidence.
+      check(S, 'S1 planExists is TRUE when the plan is on disk', sum && sum.checks.planExists === true, JSON.stringify(sum && sum.checks))
+      // and an unperformed check stays distinguishable from a failed one
+      eq(S, 'S1 an unrun test-cmd is null, not false', sum && sum.checks.testsPassed, null)
+
+      const body = existsSync(bodyLog) ? readFileSync(bodyLog, 'utf8') : ''
+      check(S, 'S1 the PR banner says it awaits human review and merge',
+        /awaiting human review and merge/i.test(body), body.slice(0, 300))
+      check(S, 'S1 the banner does NOT claim a merge happened',
+        !/merged by AI/i.test(body) && !/\bwas merged\b/i.test(body), body.slice(0, 300))
+      check(S, 'S1 it states plainly that nothing was merged', /Nothing has been merged/i.test(body))
+    } finally { cleanup(root) }
+  }
+
+  // S2: the autonomous banner must not claim a merge at creation time either — the merge
+  // has not happened yet when the body is written.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const vf = join(root, 'verdict.md'); writeFileSync(vf, 'CLEAR.\n')
+      const bodyLog = join(root, 'bodies.txt')
+      deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--verdict-file', vf],
+        { FAKE_GH_BODY_LOG: bodyLog, FAKE_GH_CLOSED_STATE: join(root, 'c.txt') })
+      const body = existsSync(bodyLog) ? readFileSync(bodyLog, 'utf8') : ''
+      check(S, 'S2 the autonomous banner states the merge is still conditional',
+        /will be merged .* once the forge/i.test(body), body.slice(0, 300))
+      check(S, 'S2 and it says an unmet check escalates rather than force-lands',
+        /escalates rather than force-landing/i.test(body))
+    } finally { cleanup(root) }
+  }
+
+  // S3: supervised with NO plan refuses instead of opening an unevidenced PR. The plan is
+  // part of what the human is being asked to review; handing over a PR that cannot pass
+  // the Definition of Done, without saying so, wastes the review it was opened to get.
+  {
+    const { root, repo } = makeRepo({ withPlan: false })
+    try {
+      const vf = join(root, 'verdict.md'); writeFileSync(vf, 'CLEAR.\n')
+      const { r, sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--no-merge', '--verdict-file', vf], {})
+      eq(S, 'S3 exit 0 with a definitive summary', r.status, 0)
+      check(S, 'S3 no PR was opened', sum && !sum.checks.prCreated)
+      check(S, 'S3 it refuses explicitly and names the file',
+        sum && /refusing to open a supervised PR without its plan/.test(sum.notes) && /docs\/plans\/T-01\.md/.test(sum.notes), sum && sum.notes)
+      check(S, 'S3 planExists is reported false because it was CHECKED', sum && sum.checks.planExists === false)
     } finally { cleanup(root) }
   }
 

@@ -202,6 +202,23 @@ export async function run() {
     check(S, 'it bounds the payload rather than implying more', /Nothing else from the repository leaves it/.test(startAllSkill))
     // and the forge-free mode must NOT ask for upload consent it does not need
     check(S, 'none mode asks for no upload consent', /must not ask for upload consent/i.test(startAllSkill))
+
+    // Issue #193: PR-body ownership must be unambiguous ACROSS the skill and the agent
+    // contract. They disagreed — the skill asked the mechanical, low-effort Delivery
+    // actuator to "compose" a body whose own contract says it may only write SUPPLIED
+    // text. A low-effort role asked to compose review history produces fluent, plausible,
+    // wrong evidence, and this document exists to let a human trust the run.
+    const deliveryToml = readFileSync(join(SCAFFOLD, '.codex', 'agents', 'delivery.toml'), 'utf8')
+    check(S, 'run-ticket composes the PR body in the orchestrating thread',
+      runTicketSkill.includes('You compose the PR/MR body yourself, in this thread'))
+    check(S, 'run-ticket does NOT ask delivery to compose it',
+      !/spawn `delivery`\. Ask it to [^\n]*compose/i.test(runTicketSkill))
+    check(S, 'delivery is forbidden from composing a body',
+      deliveryToml.includes('never COMPOSE a PR/MR body'))
+    check(S, 'delivery refuses rather than filling gaps', /refuse and say the parent must supply it/.test(deliveryToml))
+    check(S, 'the skill sources every section from a stage artifact', /Comes from/.test(runTicketSkill))
+    check(S, 'and forbids inferring an unavailable fact',
+      /never infer it/i.test(runTicketSkill))
   }
 }
 
