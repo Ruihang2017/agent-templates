@@ -377,6 +377,50 @@ export async function run() {
           html.indexOf('id="pane-hub-and-spoke-orchestrator-executors"'))))
     }
 
+    // Landscape layout (issue #185). The page was built at max-width 880px — a phone
+    // layout stretched down a desktop monitor — and this catalog is read on a laptop next
+    // to an editor. These assert the SHAPE, not the styling: a container that uses the
+    // width, and every wide region laying out across rather than down.
+    {
+      check(S, 'the container uses the full landscape width', /\.wrap\{width:min\(1560px,94vw\)/.test(html))
+      check(S, 'the container is not capped at a portrait width', !/\.wrap\{max-width:8\d\dpx/.test(html))
+      check(S, 'the nav bar is sticky, so it survives a long page', /\.navbar\{position:sticky/.test(html))
+      check(S, 'the hero lays out in three columns', /\.hero-cols\{display:grid;grid-template-columns:minmax\(420px/.test(html))
+      check(S, 'the stats run as one horizontal band inside the hero', /\.hero-stats\{display:flex/.test(html))
+      check(S, 'patterns use a rail beside a panel, not a stack',
+        /\.pattern-layout\{display:grid;grid-template-columns:minmax\(300px/.test(html))
+      check(S, 'the rail stays visible while the detail scrolls', /\.rail\{[^}]*position:sticky/.test(html))
+      check(S, 'commands render as a two-column reference table', /\.cmd\{display:grid;grid-template-columns:minmax\(230px/.test(html))
+      check(S, 'the pipeline steps run five across', /\.steps\{display:grid;grid-template-columns:repeat\(5,1fr\)/.test(html))
+      // it must still degrade rather than break — landscape-first, not landscape-only
+      const bps = [...html.matchAll(/@media \(max-width:(\d+)px\)/g)].map((m) => Number(m[1]))
+      check(S, 'narrow viewports are handled', bps.includes(1360) && bps.includes(1100), bps.join(','))
+      check(S, 'the rail collapses above the panel when narrow',
+        /@media \(max-width:1100px\)\{[\s\S]{0,400}?\.pattern-layout\{grid-template-columns:1fr\}/.test(html))
+    }
+
+    // Detail the reader would otherwise have to guess at (issue #185). Each pattern panel
+    // must carry its OWN install command and its roles with model + effort — the two facts
+    // someone needs before adopting, previously only in the pattern README.
+    {
+      const patternDirs = readdirSync(join(REPO, 'patterns'), { withFileTypes: true })
+        .filter((d) => d.isDirectory() && existsSync(join(REPO, 'patterns', d.name, 'scaffold')))
+        .map((d) => d.name)
+      for (const dir of patternDirs) {
+        check(S, `${dir} panel carries its own install command`,
+          html.includes(`adopt ${dir} .`))
+      }
+      check(S, 'each rail entry states what the pattern is FOR', /class="tab-tag"/.test(html))
+      check(S, 'roles are labelled with model and effort', /Roles · model · effort/.test(html))
+      // the two capabilities added in 0.13.0 must be discoverable on the page, not only
+      // in the changelog
+      check(S, 'local delivery is explained on the page', /Finish first, publish later/.test(html))
+      check(S, 'it gives the exact local-delivery command', html.includes('/start-all autonomous 1 none'))
+      check(S, 'it names the ledger', html.includes('docs/delivered.json'))
+      check(S, 'two-runtime coexistence is explained', /Both runtimes, one project/.test(html))
+      check(S, 'it states that no hybrid pattern is offered', /No hybrid pattern is offered/.test(html))
+    }
+
     // clay restyle contract (issue #19)
     check(S, 'loads Baloo 2 + Nunito from Google Fonts', html.includes('fonts.googleapis.com/css2') && html.includes('Baloo+2') && html.includes('Nunito'))
     check(S, 'Baloo 2 on headings, Nunito on body', /h1\{[^}]*Baloo 2/.test(html.replace(/\n/g, '')) && /body\{[^}]*Nunito/.test(html.replace(/\n/g, '')))

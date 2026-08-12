@@ -60,6 +60,85 @@ git diff        # re-apply your customizations (esp. .claude/settings.json)
 
 If a bad merge would hurt, use the three-agent pattern. Its independent reviewer is the thing hub-and-spoke trades away.
 
+## Before you adopt
+
+| | Claude three-agent | Codex three-agent | hub-and-spoke |
+|---|---|---|---|
+| Host | Claude Code | Codex CLI | Claude Code **and** the Codex CLI on `PATH` |
+| Node | ≥ 18 | ≥ 18 | ≥ 18 |
+| Git | repo with ≥ 1 commit | same | same, plus `git worktree` (git ≥ 2.5) |
+| Tracker CLI | `gh` or `glab`, authenticated | same | **none** — it has no tracker |
+| Your project needs | a `docs/PRD.md` (or a root `PRD.md` — adopt copies it) | same | same, plus a **per-module** test command |
+
+`adopt` is idempotent and refuses to guess: with no git remote and no `--platform`, it installs **nothing** and tells you to re-run with `--platform gh|glab`. For a tracker-less pattern it does not ask at all.
+
+## What lands in your repo
+
+```
+.claude/                       # (or .codex/ + .agents/ for the Codex pattern)
+  agents/                      # role definitions — who may write what
+  commands/                    # the slash commands below
+  scripts/                     # deterministic steps: publish, DAG, deliver
+  workflows/                   # the autonomous runners
+  settings.json                # permission allowlist + the write guard
+CLAUDE.md                      # (or AGENTS.md) pipeline rules, appended once
+templates/ticket.template.md   # the ticket format the Architect must follow
+.github/ or .gitlab/           # issue + PR/MR templates
+docs/PRD.md · docs/prd/ · docs/adr/ · docs/plans/
+.gitattributes · .gitignore    # eol pins and scratch rules, appended once
+```
+
+Nothing is overwritten on a re-run. `--force` overwrites changed files, including `settings.json` — commit first, then re-apply your customisations from the diff.
+
+## Your first run, and what you will actually see
+
+```
+npx agent-templates@latest adopt three-agent-architect-builder-reviewer .
+```
+
+**1 · Write the PRD.** `docs/PRD.md`. Requirements and constraints, not a design. The Architect turns it into modules and tickets.
+
+**2 · `/breakdown-prd`** — the Architect reads the PRD, the codebase and any ADRs, then writes `docs/prd/<module>/README.md` sub-PRDs and `docs/prd/<module>/tickets/*.md`, plus `docs/prd/dag.html` — a self-contained dependency graph you open by double-clicking. **It stops there.** It does not write code, and it tells you the concurrency worth passing rather than making you guess.
+
+**3 · Gate 1 — you decide.** Read the tickets. This is the cheapest moment to fix a wrong decomposition; everything downstream assumes it is right. Then:
+
+```
+/start-milestone docs/prd/00-foundation supervised
+```
+
+Tickets become tracker issues, and one ticket runs plan → build → fresh-context review. `supervised` opens a PR and **stops for your merge**, so you see the shape before trusting it.
+
+**4 · Flip to autonomous.** `/start-all autonomous 4` runs the whole PRD, scheduled from one dependency DAG, four parallel lanes. Each ticket merges only on a CLEAR verdict from a reviewer that never saw the Builder's session.
+
+**5 · Gate 2 — smoke test.** The agents own unit, integration and E2E throughout. You test once, when the PRD's tickets are all delivered.
+
+## What the agents will not do
+
+These are enforced by config and deterministic scripts, not by asking politely:
+
+- **No agent judges its own work.** The Reviewer runs in a fresh context on a different model tier from the Builder.
+- **The Architect writes no production code**, and the Builder never merges without a CLEAR verdict.
+- **A required-but-unmet check escalates; it never force-lands.** A failed pipeline stops delivery rather than bypassing the gate.
+- **Delivery refuses a dirty working tree**, and refuses to open a PR whose diff removes ≥200 lines and ≥5× what it adds — the signature of a stale branch that would revert your default branch.
+- **The main session cannot write production files** while a pipeline is installed (a `PreToolUse` guard), so orchestration cannot quietly become implementation.
+
+## When something goes wrong
+
+Every row here is a defect that was reported from a real repo and is now fixed — they are listed because the *symptom* is rarely obvious.
+
+| Symptom | Cause | What to do |
+|---|---|---|
+| Every ticket ends "not delivered" but the code **is** on `main` and the issues are closed | Delivery was confirmed by git ancestry, which is permanently false under squash-on-merge | Upgrade to ≥ 0.12.0 |
+| A merge request appears proposing to delete thousands of lines, with **no conflict** | A leftover `ticket/*` branch cut from an older `main` was re-pushed | Upgrade to ≥ 0.12.0 — delivery now refuses to open it, and `/start-all` cleans up after itself |
+| `glab mr merge` fails with `400 SHA must be provided` or `405` | Missing `--sha`; merging before GitLab finished computing mergeability | Upgrade to ≥ 0.12.0 |
+| Delivery refuses: "working tree not clean" and `git status` shows only `docs/prd/dag.html` | Windows CRLF vs the LF the generator writes — the file is modified with an **empty** diff | Upgrade to ≥ 0.12.0, then re-adopt so the `.gitattributes` rule lands |
+| Duplicate tracker issues, or duplicate Asana subtasks | A paginated list was silently truncated, so existing items read as "never created" | Upgrade to ≥ 0.13.0 |
+| A publish fails with `ENAMETOOLONG` on Windows | A large ticket body travelled through the command line | Upgrade to ≥ 0.12.0 |
+| Tickets already delivered get planned and built again mid-run | The mid-run DAG rescan did not apply the closed-issue filter | Upgrade to ≥ 0.12.0 |
+| The forge is down, or its policy blocks every merge | — | Run with `none`: finish locally, publish afterwards (below) |
+
+Anything else: the pattern READMEs' **§4 Known failure modes** carry the full list with dates and mitigations, and `.github/ISSUE_TEMPLATE/` is wired for reports.
+
 ## Skills (codex-three-agent-architect-builder-reviewer)
 
 Install with `npx agent-templates@latest adopt codex-three-agent-architect-builder-reviewer .`, then invoke repo skills in Codex with `$`, for example `$breakdown-prd`, `$run-ticket ABC-1`, or `$start-all supervised`. See the [pattern README](patterns/codex-three-agent-architect-builder-reviewer/README.md) for the complete surface and the sequential-v1 boundary.
