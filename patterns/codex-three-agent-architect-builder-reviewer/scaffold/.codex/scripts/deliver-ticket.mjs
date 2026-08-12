@@ -54,6 +54,8 @@
 // Last line of stdout is machine-readable for run-milestone:
 //   DELIVER-SUMMARY-JSON: {"id","branch","deliveryMode","merged","issueClosed",
 //     "dodPassed","awaitingMerge","prUrl","checks":{...},"asana":{...}|null,"notes"}
+// In checks, a boolean means CHECKED; `testsPassed: null` means the check was not run at
+// all (no --test-cmd). Never report an unperformed check as a failed one (issue #192).
 // Exit codes: 0 = definitive summary printed (flags may still be false);
 //             1 = bad invocation or unexpected internal error.
 
@@ -477,11 +479,24 @@ const ensureCloses = (text) => {
 //
 // Rendered-visible and content-bearing on purpose: a reviewer must be able to tell what
 // produced this and why the author field looks human, without reading page source.
+// The marker must state what is TRUE WHEN IT IS WRITTEN (catalog issue #192).
+//
+// It used to say "written and merged by AI" unconditionally — including on a supervised
+// PR that was open and waiting for a human, and including at the moment of creation, which
+// is always before any merge. That is a false claim on a public artifact, and it is the
+// worst place to make one: reviewers use this banner to decide how much scrutiny the
+// change needs, and "already merged" invites less.
+//
+// So the merge sentence is conditional on the mode, and neither branch claims a merge that
+// has not happened: supervised says a human must land it, autonomous says the script will.
 const aiMarker = () =>
-  `> 🤖 **Automated delivery — this change was written and merged by AI.**\n` +
+  `> 🤖 **Automated delivery — this change was written by AI.**\n` +
   `> Produced by the three-agent Architect → Builder → Reviewer pipeline for ticket \`${ID}\`, ` +
-  `cleared by an independent reviewer in a fresh context, and merged by \`deliver-ticket.mjs\` (no human wrote or merged it).\n` +
-  `> It runs under the account whose Personal Access Token authenticated the forge CLI, so **the author and merger shown above are that token's owner, not the code's author.**\n` +
+  `cleared by an independent reviewer in a fresh context (no human wrote it).\n` +
+  (NO_MERGE
+    ? `> **This PR is open and awaiting human review and merge.** Nothing has been merged; \`deliver-ticket.mjs\` stopped here deliberately (supervised mode).\n`
+    : `> It will be merged by \`deliver-ticket.mjs\` once the forge's own checks pass; if they do not, delivery escalates rather than force-landing.\n`) +
+  `> It runs under the account whose Personal Access Token authenticated the forge CLI, so **the author shown above is that token's owner, not the code's author.**\n` +
   `> Plan: \`docs/plans/${ID}.md\` · Reviewer verdict: **CLEAR**, posted as a comment below.\n\n`
 
 const resolvePrBody = () => {
@@ -733,6 +748,25 @@ try {
   }
 
   // 3. resolve delivery mode
+  //
+  // The plan check runs HERE, before any exit path (catalog issue #192). It used to sit at
+  // step 5, after the supervised early return — so a supervised run reported
+  // `planExists: false` for a plan that was sitting on disk. A boolean cannot distinguish
+  // "checked and missing" from "never checked", and reporting the second as the first is
+  // manufactured negative evidence: the summary said the ticket lacked its plan when it
+  // did not. Resolving it up front makes `false` mean exactly one thing.
+  checks.planExists = existsSync(join('docs', 'plans', `${ID}.md`))
+  if (!checks.planExists) note(`plan file missing: docs/plans/${ID}.md`)
+
+  // In SUPERVISED mode a missing plan is an explicit refusal rather than a note. The entire
+  // product of that mode is an evidenced PR for a human to read, and the plan is part of
+  // the evidence — handing over a PR that cannot pass the Definition of Done, without
+  // saying so up front, wastes the review it was opened to get.
+  if (NO_MERGE && !checks.planExists) {
+    note(`refusing to open a supervised PR without its plan: docs/plans/${ID}.md is missing — the plan is part of the evidence a human is being asked to review`)
+    finish(0)
+  }
+
   checks.pushRequired = tryGit(['remote', 'get-url', 'origin']).ok
   const cliAuthed = tryCli(['auth', 'status'], { stdio: ['ignore', 'ignore', 'ignore'] }).ok
   // Cheap MR/PR-API probe: a token can have a working Issues API but a 403 MR API
@@ -1008,8 +1042,8 @@ try {
   if (landed) completeAsana()
 
   // 5. deterministic DoD inputs
-  checks.planExists = existsSync(join('docs', 'plans', `${ID}.md`))
-  if (!checks.planExists) note(`plan file missing: docs/plans/${ID}.md`)
+  //    (planExists is resolved earlier — see the note at step 3 — so it is accurate on
+  //     every exit path, including the supervised one that returns before this point.)
   if (TEST_CMD) {
     const t = spawnSync(TEST_CMD, { shell: true, encoding: 'utf8' })
     checks.testsPassed = t.status === 0
