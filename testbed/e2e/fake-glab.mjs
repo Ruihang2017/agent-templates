@@ -299,7 +299,16 @@ if (joined.startsWith('mr merge')) {
         mr.mergeSha = g(['rev-parse', 'HEAD']).trim()
       }
       g(['push', '-q', 'origin', mr.base])
-    } finally { rmSync(tmp, { recursive: true, force: true }) }
+    } finally {
+      // Cleanup must NEVER fail the merge. On Windows git can still hold a freshly
+      // written object file for a beat, so rmSync throws ENOTEMPTY — and because this
+      // finally sits inside the try whose catch reports "merge failed", a temp-directory
+      // problem was reported as a failed merge on a merge that had already pushed.
+      // Same class as the earlier G5 flake: harness failure wearing a product failure's
+      // clothes. Retries for the common case, swallowed for the rest — a leftover temp
+      // dir is worth nothing next to a false negative.
+      try { rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }) } catch {}
+    }
     mr.merged = true; writeMap(m)
     console.log(`Merged !${number}`)
     process.exit(0)

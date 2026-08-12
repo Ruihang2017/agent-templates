@@ -444,22 +444,47 @@ const cardFor = (p) => {
           <span class="chip" style="${c.chip}"><span class="chip-dot" style="box-shadow:${c.dot}"></span>${esc(p.status)} · as of ${esc(p.asOf)}</span>
         </div>
         <p class="summary">${summary}</p>
-        <div class="roles">
-          ${p.roles.map((r) => { const [dot, dotInk] = roleDot(r.role); return `<span class="role"><span class="dot" style="background:${dot};box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px ${dotInk}"></span><b>${esc(r.role)}</b><span class="sep">·</span><code>${esc(r.model)} <span class="eff">@${esc(r.effort)}</span></code></span>` }).join('\n          ')}
-        </div>
-        ${p.commands.length ? `<div class="cmds">
-          <div class="cmds-label">Commands</div>
-          ${p.commands.map((cmd) => `<div class="cmd"><code class="cmd-name">${esc(cmd.name)}</code>${cmd.hint ? `<code class="cmd-hint">${esc(cmd.hint)}</code>` : ''}${cmd.integration ? `<span class="cmd-opt">${esc(cmd.integration)} · optional</span>` : ''}<span class="cmd-desc">${esc(cmd.description)}</span></div>`).join('\n          ')}
-        </div>` : ''}
-        <div class="links">
-          <a class="btn btn-green" href="${GITHUB}/tree/main/patterns/${esc(p.dir)}">Pattern write-up</a>
-          <a class="btn btn-purple" href="${GITHUB}/tree/main/patterns/${esc(p.dir)}/scaffold">Scaffold</a>
+        <div class="pattern-cols">
+          ${p.commands.length ? `<div class="cmds">
+            <div class="cmds-label">Commands</div>
+            ${p.commands.map((cmd) => `<div class="cmd"><div class="cmd-sig"><code class="cmd-name">${esc(cmd.name)}</code>${cmd.hint ? ` <code class="cmd-hint">${esc(cmd.hint)}</code>` : ''}${cmd.integration ? `<span class="cmd-opt">${esc(cmd.integration)} · optional</span>` : ''}</div><div class="cmd-desc">${esc(cmd.description)}</div></div>`).join('\n            ')}
+          </div>` : ''}
+          <div class="pattern-side">
+            <div class="cmds-label" style="padding-left:2px">Roles · model · effort</div>
+            <div class="roles">
+              ${p.roles.map((r) => { const [dot, dotInk] = roleDot(r.role); return `<span class="role"><span class="dot" style="background:${dot};box-shadow:inset 1px 1.5px 1.5px rgba(255,255,255,0.6),inset -1px -1.5px 2px ${dotInk}"></span><b>${esc(r.role)}</b><code>${esc(r.model)} <span class="eff">@${esc(r.effort)}</span></code></span>` }).join('\n              ')}
+            </div>
+            <div class="install-mini">
+              <div class="cmds-label">Install this pattern</div>
+              <code>npx agent-templates@latest adopt ${esc(p.dir)} .</code>
+            </div>
+            <div class="links">
+              <a class="btn btn-green" href="${GITHUB}/tree/main/patterns/${esc(p.dir)}">Pattern write-up</a>
+              <a class="btn btn-purple" href="${GITHUB}/tree/main/patterns/${esc(p.dir)}/scaffold">Scaffold</a>
+            </div>
+          </div>
         </div>
       </article>`
 }
 
+// One line of POSITIONING per pattern, so the rail answers "which one do I want" without
+// opening all three. Keyed by directory: a new pattern falls back to its own summary
+// rather than silently getting someone else's pitch.
+const RAIL_TAG = {
+  'three-agent-architect-builder-reviewer':
+    'Highest assurance — a fresh-context Reviewer on a different model tier clears every ticket.',
+  'codex-three-agent-architect-builder-reviewer':
+    'The same independent-reviewer topology, for teams on the Codex CLI rather than Claude Code.',
+  'hub-and-spoke-orchestrator-executors':
+    'Cheapest and fastest — one expensive context for the whole run, and no independent reviewer.',
+}
+
 const tabButtons = ordered.map((p, i) =>
-  `<button class="tab" type="button" role="tab" id="tab-${esc(p.dir)}" aria-controls="pane-${esc(p.dir)}" aria-selected="${i === 0 ? 'true' : 'false'}" data-tab="${esc(p.dir)}">${esc(p.title)}<span class="tab-sub">${esc(p.status)} · as of ${esc(p.asOf)}</span></button>`).join('\n      ')
+  `<button class="tab" type="button" role="tab" id="tab-${esc(p.dir)}" aria-controls="pane-${esc(p.dir)}" aria-selected="${i === 0 ? 'true' : 'false'}" data-tab="${esc(p.dir)}">` +
+  `<span class="tab-name">${esc(p.title)}</span>` +
+  `<span class="tab-sub">${esc(p.status)} · as of ${esc(p.asOf)}</span>` +
+  `<span class="tab-tag">${esc(RAIL_TAG[p.dir] || p.summary)}</span>` +
+  `</button>`).join('\n        ')
 
 const paneOpen = (dir, first) => `<div class="pane" role="tabpanel" id="pane-${esc(dir)}" aria-labelledby="tab-${esc(dir)}" data-pane="${esc(dir)}"${first ? '' : ' hidden'}>`
 const byDir = (dir) => ordered.find((p) => p.dir === dir)
@@ -492,11 +517,24 @@ const html = `<!doctype html>
   body{margin:0;background:var(--page);font-family:'Nunito',sans-serif}
   a{color:#e7548c;text-decoration:none}
   a:hover{color:#c13a63}
-  .wrap{max-width:880px;margin:0 auto;padding:22px 0 34px}
+  /* Landscape-first (catalog issue #185). The page was built at max-width 880px, which
+     reads as a phone layout stretched down a desktop monitor — and this catalog is read on
+     a laptop, in a browser, next to an editor. The container is now the design's
+     min(1560px,94vw) and every section below lays out ACROSS rather than down. */
+  .wrap{width:min(1560px,94vw);margin:0 auto;padding:0 0 34px}
+  .page-body{padding-top:26px}
   .gx{position:relative;display:inline-block}
   .arr{color:#e7548c}
 
-  .nav{display:flex;align-items:center;margin-bottom:22px}
+  /* Sticky bar: on a wide screen the section links and the install command must stay
+     reachable without scrolling back to the top. */
+  .navbar{position:sticky;top:0;z-index:30;background:rgba(var(--pill-rgb),0.84);backdrop-filter:blur(14px);
+    box-shadow:0 1px 0 rgba(var(--flt),0.12),0 10px 24px rgba(var(--amb),0.13)}
+  .nav{display:flex;align-items:center;gap:26px;padding:12px 0;margin:0}
+  .nav-sec{display:flex;align-items:center;gap:2px;margin-left:6px}
+  .nav-sec a{padding:7px 13px;border-radius:12px;font-size:13px;font-weight:800;color:var(--sub)}
+  .nav-sec a:hover{background:rgba(var(--flt),0.09);color:var(--ink)}
+  .nav-note{font-size:12px;font-weight:800;color:var(--mut);margin-right:4px}
   .logo{display:flex;align-items:center;gap:10px;padding:8px 18px 8px 13px;border-radius:19px;background:var(--pill);
     box-shadow:inset 0 2px 2px #fff,inset 0 -3px 5px rgba(var(--ins),0.2),0 8px 16px rgba(var(--amb),0.25)}
   .logo b{font-family:'Baloo 2',cursive;font-weight:800;font-size:19px;color:var(--ink)}
@@ -516,12 +554,28 @@ const html = `<!doctype html>
   .btn-purple{background:linear-gradient(180deg,#c3abe9,#a78cd8);text-shadow:0 1px 2px rgba(90,50,130,0.4);
     box-shadow:inset 0 2px 3px rgba(255,255,255,0.55),inset 0 -4px 6px rgba(94,58,140,0.28),0 8px 14px rgba(var(--amb),0.3)}
 
-  .hero{display:grid;grid-template-columns:1fr 300px;gap:16px;align-items:stretch}
-  .hero-main{border-radius:30px;padding:30px 34px 26px;background:linear-gradient(170deg,var(--hero-a),var(--hero-b));
-    box-shadow:inset 0 3px 4px rgba(255,255,255,0.6),inset 0 -6px 10px var(--hero-ink),0 16px 30px var(--hero-amb)}
-  .hero-main h1{margin:0;font-family:'Baloo 2',cursive;font-weight:800;font-size:38px;line-height:1.1;
-    color:var(--hero-title);text-shadow:0 2px 0 rgba(255,255,255,0.4)}
-  .lede{margin:14px 0 0;max-width:410px;font-size:13.5px;line-height:1.6;font-weight:700;color:var(--hero-body)}
+  /* ONE hero panel holding three columns, rather than a panel plus a sidebar. The title
+     column, the install card and the facts sit side by side and the stats run as a single
+     row underneath — the design's shape, and the one that uses a 1560px canvas. */
+  .hero{border-radius:32px;padding:36px 38px 30px;background:linear-gradient(150deg,var(--hero-a),var(--hero-b));
+    box-shadow:inset 0 3px 4px rgba(255,255,255,0.6),inset 0 -7px 12px var(--hero-ink),0 18px 34px var(--hero-amb)}
+  .hero-cols{display:grid;grid-template-columns:minmax(420px,1.25fr) minmax(340px,0.85fr) minmax(300px,0.8fr);
+    gap:34px;align-items:start}
+  .hero-main h1{margin:14px 0 0;font-family:'Baloo 2',cursive;font-weight:800;font-size:52px;line-height:1.02;
+    color:var(--hero-title);text-shadow:0 2px 0 rgba(255,255,255,0.45)}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:13px;
+    background:rgba(255,255,255,0.62);font-size:11px;font-weight:900;letter-spacing:0.05em;text-transform:uppercase;
+    color:var(--hero-body);box-shadow:inset 0 1px 2px #fff,0 4px 8px rgba(var(--flt),0.12)}
+  .eyebrow i{width:7px;height:7px;border-radius:50%;background:#f2789a;display:inline-block}
+  .lede{margin:16px 0 0;max-width:520px;font-size:15px;line-height:1.65;font-weight:700;color:var(--hero-body)}
+  .install-card{border-radius:22px;background:rgba(255,255,255,0.74);padding:18px 18px 16px;
+    box-shadow:inset 0 2px 3px #fff,inset 0 -3px 6px rgba(var(--flt),0.14),0 10px 18px rgba(var(--flt),0.14)}
+  .install-head{display:flex;align-items:center;gap:9px;font-size:10.5px;font-weight:900;letter-spacing:0.06em;
+    text-transform:uppercase;color:var(--mut)}
+  .install-head span{flex:1;height:1px;background:rgba(var(--flt),0.16)}
+  .hero-stats{display:flex;align-items:center;gap:34px;flex-wrap:wrap;margin-top:28px;padding-top:22px;
+    border-top:1px solid rgba(255,255,255,0.45)}
+  .hero-stats .sep{width:1px;height:22px;background:rgba(255,255,255,0.5)}
   .cta{display:flex;gap:12px;margin-top:20px}
   .quick{margin-top:20px;border-radius:16px;background:var(--pill);padding:14px 16px 12px;
     box-shadow:inset 0 3px 6px rgba(var(--flt),0.2),inset 0 -2px 2px rgba(255,255,255,0.8)}
@@ -540,10 +594,12 @@ const html = `<!doctype html>
   .fact-ico{flex:none;width:38px;height:38px;border-radius:12px;display:grid;place-items:center}
   .fact p{margin:0;font-size:12.5px;font-weight:800;color:var(--sub);line-height:1.5}
 
-  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:15px;margin-top:18px}
-  .stat{border-radius:22px;padding:16px 18px 18px}
-  .stat .big{font-family:'Baloo 2',cursive;font-weight:800;font-size:23px}
-  .stat p{margin:3px 0 0;font-size:11.5px;font-weight:800;line-height:1.5}
+  /* Inside the hero now, as a single horizontal band — four coloured tiles stacked down
+     the page was the most obviously portrait-shaped part of the old layout. */
+  .stats{display:flex;align-items:baseline;gap:9px}
+  .stat{border-radius:0;padding:0;background:none!important;box-shadow:none!important;display:flex;align-items:baseline;gap:9px}
+  .stat .big{font-family:'Baloo 2',cursive;font-weight:800;font-size:25px;color:var(--hero-title)}
+  .stat p{margin:0;font-size:12px;font-weight:800;line-height:1.4;color:var(--hero-body)}
   .stat-green{background:linear-gradient(180deg,#b9dfb1,#9bce92);
     box-shadow:inset 0 3px 4px rgba(255,255,255,0.55),inset 0 -5px 8px rgba(30,90,40,0.2),0 10px 20px rgba(var(--amb),0.25)}
   .stat-green .big{color:#2f6b35} .stat-green p{color:#3f7a45}
@@ -605,24 +661,35 @@ const html = `<!doctype html>
   .chip{display:inline-flex;align-items:center;gap:7px;padding:7px 15px;border-radius:15px;font-size:11.5px;font-weight:900}
   .chip-dot{width:8px;height:8px;border-radius:50%;background:#fffaf2}
   .summary{margin:12px 0 0;font-size:13px;line-height:1.6;font-weight:700;color:var(--sub);max-width:760px}
-  .roles{display:flex;flex-wrap:wrap;gap:10px;margin-top:15px}
-  .role{display:inline-flex;align-items:center;gap:8px;padding:8px 15px;border-radius:16px;background:var(--pill);
+  /* Two columns inside the panel: the command reference reads as a table, the roles and
+     install sit beside it. On a wide screen this is the difference between a reference and
+     a scroll. */
+  .pattern-cols{display:grid;grid-template-columns:minmax(0,1.75fr) minmax(260px,0.85fr);gap:24px;margin-top:22px;align-items:start}
+  .pattern-side{display:flex;flex-direction:column}
+  .install-mini{margin-top:16px;border-radius:16px;background:var(--pill);padding:12px 14px;
+    box-shadow:inset 0 3px 6px rgba(var(--ins),0.25),inset 0 -2px 2px rgba(255,255,255,0.8)}
+  .install-mini code{display:block;margin-top:7px;font-family:var(--mono);font-size:11px;font-weight:700;
+    color:var(--code);line-height:1.55;word-break:break-all}
+  .roles{display:flex;flex-direction:column;gap:9px;margin-top:10px}
+  .role{display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:16px;background:var(--pill);
     box-shadow:inset 0 2px 2px #fff,inset 0 -3px 5px rgba(var(--ins),0.25),0 5px 10px rgba(var(--amb),0.2)}
   .role .dot{width:9px;height:9px;border-radius:50%}
   .role b{font-size:12px;font-weight:900;color:var(--ink)}
   .role .sep{font-size:11px;font-weight:700;color:var(--mut)}
   .role code{font-family:var(--mono);font-size:11px;font-weight:700;color:#8a5fd0}
   .role .eff{color:#e7548c}
-  .links{display:flex;gap:12px;margin-top:17px}
+  .links{display:flex;flex-direction:column;gap:10px;margin-top:16px}
 
   .cmds{margin-top:16px;border-radius:16px;background:var(--pill);padding:14px 16px 12px;
     box-shadow:inset 0 3px 6px rgba(var(--flt),0.14),inset 0 -2px 2px rgba(255,255,255,0.7)}
   .cmds-label{font-family:'Baloo 2',cursive;font-weight:700;font-size:13px;color:var(--ink);margin-bottom:9px}
-  .cmd{display:flex;align-items:baseline;flex-wrap:wrap;gap:8px;padding:5px 0;border-top:1px solid rgba(var(--flt),0.1)}
+  .cmd{display:grid;grid-template-columns:minmax(230px,0.85fr) minmax(0,1.4fr);gap:22px;padding:11px 0;
+    border-top:1px solid rgba(var(--flt),0.1)}
+  .cmd-sig{font-family:var(--mono);font-size:11.5px;line-height:1.55;word-break:break-word}
   .cmd:first-of-type{border-top:0}
   .cmd-name{font-family:var(--mono);font-size:12px;font-weight:700;color:#8a5fd0;white-space:nowrap}
   .cmd-hint{font-family:var(--mono);font-size:10.5px;font-weight:700;color:var(--mut);white-space:nowrap}
-  .cmd-desc{font-size:11.5px;font-weight:700;color:var(--sub);line-height:1.5;flex:1;min-width:180px}
+  .cmd-desc{font-size:11.5px;font-weight:700;color:var(--sub);line-height:1.55}
   .cmd-opt{font-size:9.5px;font-weight:800;letter-spacing:0.03em;text-transform:uppercase;color:var(--mut);background:rgba(var(--flt),0.09);border-radius:5px;padding:2px 6px;white-space:nowrap}
 
   .steps{display:grid;grid-template-columns:repeat(5,1fr);gap:14px}
@@ -640,8 +707,22 @@ const html = `<!doctype html>
      they are NOT variants of each other — one has an independent reviewer, one deliberately
      does not. Rendering both flows on one scroll invited a reader to mix commands and
      guarantees between them. Each pattern gets its own pane; only one is ever visible. */
-  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 18px}
-  .tab{font-family:var(--head);font-weight:700;font-size:14px;cursor:pointer;border:0;
+  /* A vertical RAIL rather than a row of pills. Each entry carries the pattern's name,
+     status and one-line positioning, so choosing between them is a reading task rather
+     than a guessing one — and the rail stays visible (sticky) while the detail scrolls. */
+  .pattern-layout{display:grid;grid-template-columns:minmax(300px,0.9fr) minmax(0,3fr);gap:20px;align-items:start}
+  .rail{display:flex;flex-direction:column;gap:11px;position:sticky;top:78px}
+  .tabs{display:flex;flex-direction:column;gap:11px;margin:0}
+  .tab{text-align:left;width:100%;padding:16px 18px 17px;border-radius:22px;
+    background:rgba(var(--flt),0.05);box-shadow:inset 0 3px 6px rgba(var(--flt),0.13)}
+  .tab-name{font-family:var(--head);font-weight:700;font-size:17px;line-height:1.2;color:var(--mut)}
+  .tab-sub{display:block;font-family:var(--body);font-weight:800;font-size:11.5px;margin-top:7px;color:var(--mut)}
+  .tab-tag{display:block;font-weight:700;font-size:11.5px;line-height:1.55;margin-top:9px;color:var(--mut)}
+  .tab[aria-selected=true]{background:linear-gradient(180deg,#fff,var(--card));transform:translateY(-1px);
+    box-shadow:inset 0 2px 2px #fff,inset 0 -3px 6px rgba(var(--ins),0.2),0 12px 22px rgba(var(--amb),0.3)}
+  .tab[aria-selected=true] .tab-name{color:var(--ink)}
+  .tab[aria-selected=true] .tab-sub,.tab[aria-selected=true] .tab-tag{color:var(--sub)}
+  .tab-old{font-family:var(--head);font-weight:700;font-size:14px;cursor:pointer;border:0;
        padding:9px 16px;border-radius:14px;color:var(--ink);background:var(--card);
        box-shadow:0 3px 0 rgba(var(--amb),0.18),0 6px 12px rgba(var(--amb),0.14);
        transition:transform .12s ease,box-shadow .12s ease}
@@ -653,45 +734,83 @@ const html = `<!doctype html>
   /* Restated because an author display rule must beat the UA [hidden] rule; without it
      every pane renders at once and the tabs do nothing. */
   .pane[hidden]{display:none}
+  /* Landscape is the design target, but the page must degrade rather than break. Each
+     step collapses the widest grid first: hero 3->2->1, patterns rail beside -> above,
+     steps 5->3->2->1. */
+  @media (max-width:1360px){
+    .hero-cols{grid-template-columns:minmax(360px,1.15fr) minmax(300px,0.85fr)}
+    .hero-side{grid-column:1/-1;flex-direction:row;flex-wrap:wrap}
+    .hero-side .fact{flex:1 1 260px}
+    .steps{grid-template-columns:repeat(3,1fr)}
+  }
+  @media (max-width:1100px){
+    .pattern-layout{grid-template-columns:1fr}
+    .rail{position:static}
+    .tabs{flex-direction:row;flex-wrap:wrap}
+    .tab{flex:1 1 260px}
+    .pattern-cols{grid-template-columns:1fr}
+  }
   @media (max-width:912px){.wrap{padding-left:16px;padding-right:16px}}
-  @media (max-width:860px){.hero{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}.steps{grid-template-columns:repeat(2,1fr)}}
-  @media (max-width:540px){.stats,.steps{grid-template-columns:1fr}.pattern-head h3{flex-basis:100%}}
+  @media (max-width:860px){.hero-cols{grid-template-columns:1fr}.hero-stats{gap:18px}.steps{grid-template-columns:repeat(2,1fr)}}
+  @media (max-width:540px){.steps{grid-template-columns:1fr}.pattern-head h3{flex-basis:100%}.hero-main h1{font-size:38px}}
 </style>
 </head>
 <body>
-<div class="wrap">
+<div class="navbar"><div class="wrap">
   <header class="nav">
     <span class="logo">${LOGO_ICON}<b>agent-templates</b></span>
-    <span class="nav-links">
+    <span class="nav-sec">
+      <a href="#patterns">Patterns</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="${GITHUB}/blob/main/ADOPTING.md">Adopting</a>
+      <a href="${GITHUB}/blob/main/CHANGELOG.md">Changelog</a>
+    </span>
+    <span class="nav-links" style="margin-left:auto">
+      <span class="nav-note">Deterministic E2E gates · MIT</span>
       <a class="btn btn-green" href="${GITHUB}">${STAR_ICON} GitHub</a>
       <a class="btn btn-orange" href="${NPM}">${NPM_ICON} npm&nbsp;&nbsp;<span data-npm-version>v${esc(pkg.version)}</span></a>
     </span>
   </header>
+</div></div>
 
+<div class="wrap page-body">
   <div class="hero">
-    <div class="hero-main">
-      <h1>Multi-agent patterns,<br>ready to drop in.</h1>
-      <p class="lede">Field-proven architectures for AI-agent development — each one a design write-up <em>plus</em> working scaffolding. Humans decide at two gates; the agents do the rest.</p>
-      <div class="cta">
-        <a class="btn btn-lg btn-blue" href="${GITHUB}/blob/main/ADOPTING.md">Adoption guide</a>
-        <a class="btn btn-lg btn-purple" href="${GITHUB}/blob/main/CLAUDE.md">Operating manual</a>
+    <div class="hero-cols">
+      <div class="hero-main">
+        <span class="eyebrow"><i></i>Open source · MIT · ${patterns.length} pattern${patterns.length === 1 ? '' : 's'}</span>
+        <h1>Multi-agent patterns,<br>ready to drop in.</h1>
+        <p class="lede">Field-proven architectures for AI-agent development — each one a design write-up <em>plus</em> working scaffolding, E2E-tested before it ships. Humans decide at two gates; the agents do the rest.</p>
+        <div class="cta">
+          <a class="btn btn-lg btn-blue" href="${GITHUB}/blob/main/ADOPTING.md">Adoption guide</a>
+          <a class="btn btn-lg btn-purple" href="${GITHUB}/blob/main/CLAUDE.md">Operating manual</a>
+        </div>
       </div>
-      <div class="quick">
-        <code id="qs">${esc(QUICKSTART)}</code>
-        <button class="copy" id="copy-btn" type="button">Copy</button>
-      </div>
-      <p class="update-note">Already installed? Update to the latest catalog version: <code>${esc(UPDATE)}</code> (commit first — <code>--force</code> overwrites).</p>
-    </div>
-    <div class="hero-side">
-      ${FACTS.map(([tile, glyph, copy]) => `<div class="fact"><span class="fact-ico" style="${tile}">${glyph}</span><p>${copy}</p></div>`).join('\n      ')}
-    </div>
-  </div>
 
-  <div class="stats">
-    <div class="stat stat-green"><span class="big">${patterns.length}</span><p>pattern${patterns.length === 1 ? '' : 's'} in the catalog</p></div>
-    <div class="stat stat-orange"><span class="big" data-npm-version>v${esc(pkg.version)}</span><p>on npm · MIT</p></div>
-    <div class="stat stat-yellow"><span class="big">E2E</span><p>gated merges — deterministic, zero-token tests</p></div>
-    <div class="stat stat-blue"><span class="big">2</span><p>human gates per phase: sign-off &amp; smoke test</p></div>
+      <div class="install-card">
+        <div class="install-head">Install<span></span><code id="qs-name" style="font-family:var(--mono);font-size:10.5px;text-transform:none;letter-spacing:0">${esc(ordered[0] ? ordered[0].dir : '')}</code></div>
+        <div class="quick">
+          <code id="qs">${esc(QUICKSTART)}</code>
+          <button class="copy" id="copy-btn" type="button">Copy</button>
+        </div>
+        <p class="update-note">Already installed? Update with <code>${esc(UPDATE)}</code> — commit first, <code>--force</code> overwrites changed files.</p>
+      </div>
+
+      <div class="hero-side">
+        ${FACTS.map(([tile, glyph, copy]) => `<div class="fact"><span class="fact-ico" style="${tile}">${glyph}</span><p>${copy}</p></div>`).join('\n        ')}
+      </div>
+    </div>
+
+    <div class="hero-stats">
+      <div class="stats">
+        <div class="stat stat-green"><span class="big">${patterns.length}</span><p>pattern${patterns.length === 1 ? '' : 's'} in the catalog</p></div>
+      </div>
+      <span class="sep"></span>
+      <div class="stats"><div class="stat stat-orange"><span class="big" data-npm-version>v${esc(pkg.version)}</span><p>on npm · MIT</p></div></div>
+      <span class="sep"></span>
+      <div class="stats"><div class="stat stat-yellow"><span class="big">0</span><p>tokens spent in the E2E gate</p></div></div>
+      <span class="sep"></span>
+      <div class="stats"><div class="stat stat-blue"><span class="big">2</span><p>human gates per phase: sign-off &amp; smoke test</p></div></div>
+    </div>
   </div>
 
   <section>
@@ -700,10 +819,20 @@ const html = `<!doctype html>
       <div class="fact-ico" style="${TILE_PINK}"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:1px;top:1px;width:6px;height:14px;border-radius:3px;background:#fffaf2"></span><span style="position:absolute;right:1px;top:4px;width:6px;height:11px;border-radius:3px;background:#fffaf2"></span></span></div>
       <p><b>Choose by runtime and assurance boundary.</b> The two three-agent entries preserve the same independent-review topology on different runtimes; hub-and-spoke trades that independence for parallel throughput. Commands and guarantees do <em>not</em> carry across — <code>adopt</code> installs exactly one pattern.</p>
     </div>
-    <div class="tabs" role="tablist" aria-label="Patterns">
-      ${tabButtons}
-    </div>
   </section>
+
+  <div class="pattern-layout">
+    <div class="rail">
+      <div class="tabs" role="tablist" aria-label="Patterns">
+        ${tabButtons}
+      </div>
+      <div class="fact" style="padding:14px 16px">
+        <div class="fact-ico" style="${TILE_PINK};width:22px;height:22px;border-radius:8px"><span style="width:7px;height:7px;border-radius:50%;background:#fff;display:block"></span></div>
+        <p style="font-size:11.5px">These are not versions of each other. Commands, artifacts and guarantees do <em>not</em> carry across — <code>adopt</code> installs exactly one pattern.</p>
+      </div>
+    </div>
+
+    <div class="panes">
 
   ${paneOpen(THREE, isFirst(THREE))}
   <section>
@@ -770,6 +899,20 @@ const html = `<!doctype html>
       <div class="step"><span class="step-ico" style="background:#f4cd6d;box-shadow:inset 2px 3px 4px rgba(255,255,255,0.6),inset -3px -4px 6px rgba(180,120,20,0.25)"><span class="gx" style="width:16px;height:16px"><span style="position:absolute;left:6.5px;top:1px;width:3px;height:9px;border-radius:2px;background:#7a5a15"></span><span style="position:absolute;left:6.5px;bottom:1px;width:3px;height:3px;border-radius:50%;background:#7a5a15"></span></span></span><h3>Nothing is skipped silently</h3><p>The run reports every ticket it dropped as already delivered. Edit a ticket <i>after</i> it shipped and it comes back as <b>drift</b> for a human to judge — the scheduler never re-runs it, and never hides it either.</p></div>
     </div>
   </section>
+  <section>
+    <div class="sec-head"><span class="gx" style="width:22px;height:18px;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="position:absolute;left:0;top:1px;width:9px;height:16px;border-radius:3px;background:#9ed095"></span><span style="position:absolute;right:0;top:5px;width:9px;height:12px;border-radius:3px;background:#c3abe9"></span></span><h2>Finish first, publish later</h2></div>
+    <div class="fact" style="display:block;margin-bottom:15px">
+      <p style="margin:0 0 8px"><b>The tracker is not on the critical path unless you put it there.</b> Pass <code>none</code> and every ticket merges to your <b>local</b> default branch — no push, no PR/MR, no tracker.</p>
+      <p style="margin:0 0 10px"><code style="font-family:var(--mono);font-size:12px;color:var(--code)">/start-all autonomous 1 none</code></p>
+      <p style="margin:0">Every delivery defect this catalog has recorded lives at the forge boundary — a pipeline gate, a protected branch, a 403 MR API, squash-merge ancestry, an expired token — and each one stopped a whole run. <b>Review is unchanged:</b> a ticket still only merges on CLEAR. What is deferred is publication, not judgement.</p>
+    </div>
+    <div class="steps" style="grid-template-columns:repeat(3,1fr)">
+      <div class="step"><span class="step-ico" style="${TILE_GREEN}">${dotGlyph(1)}</span><h3>A committed ledger, not a scratch file</h3><p><code>docs/delivered.json</code> records each delivered ticket and the commit it landed as. That is the resume signal — a re-run executes only the new work — and what you or an agent read afterwards to know what still needs pushing. A gitignored file would vanish on the first clean checkout, exactly when it is needed.</p></div>
+      <div class="step"><span class="step-ico" style="${TILE_YELLOW}">${dotGlyph(2)}</span><h3>It hands the work over</h3><p>The run ends by stating that nothing was pushed and giving the exact command — <code>git push origin main</code>. A mode that quietly accumulates work on one machine and says nothing is indistinguishable from work nobody can see.</p></div>
+      <div class="step"><span class="step-ico" style="${TILE_BLUE}">${dotGlyph(3)}</span><h3>Same filter, different signal</h3><p>With no tracker there is no closed issue to resume from, so the ledger carries that role — at launch <em>and</em> at every mid-run rescan. One rule, two sources; a delivered ticket is never re-planned and re-built against work it already contains.</p></div>
+    </div>
+  </section>
+
   </div><!-- /pane three-agent -->
 
   ${paneOpen(CODEX_THREE, isFirst(CODEX_THREE))}
@@ -784,6 +927,19 @@ const html = `<!doctype html>
       <div class="step"><span class="step-ico" style="${TILE_BLUE}">${dotGlyph(3)}</span><h3>Sequential by design</h3><p>The global dependency DAG is preserved, but v1 rejects parallel Builders because they share a checkout. That is a stated safety boundary, not hidden missing isolation.</p></div>
     </div>
   </section>
+  <section>
+    <div class="sec-head"><span class="gx" style="width:24px;height:18px;filter:drop-shadow(0 2px 3px rgba(var(--flt),0.3))"><span style="position:absolute;left:0;top:2px;width:10px;height:14px;border-radius:3px;background:#9ed095"></span><span style="position:absolute;right:0;top:2px;width:10px;height:14px;border-radius:3px;background:#b3cdf0"></span><span style="position:absolute;left:9px;top:7px;width:6px;height:4px;border-radius:2px;background:#f6a5bb"></span></span><h2>Both runtimes, one project</h2></div>
+    <div class="fact" style="display:block;margin-bottom:15px">
+      <p style="margin:0 0 8px"><b>Install this pattern <em>and</em> the Claude one in the same repo.</b> They do not collide — <code>.claude/</code> + <code>CLAUDE.md</code> sit beside <code>.codex/</code> + <code>.agents/</code> + <code>AGENTS.md</code>.</p>
+      <p style="margin:0 0 10px"><code style="font-family:var(--mono);font-size:11.5px;color:var(--code)">npx agent-templates@latest adopt three-agent-architect-builder-reviewer .<br>npx agent-templates@latest adopt codex-three-agent-architect-builder-reviewer .</code></p>
+      <p style="margin:0">So teammates with different tools work the same project, and one person can switch runtimes on a token budget without development stalling. <b>No hybrid pattern is offered</b> — it would add a third scaffold to maintain and a model table pinning two vendors at once, for no capability these two installs lack.</p>
+    </div>
+    <div class="steps" style="grid-template-columns:repeat(2,1fr)">
+      <div class="step"><span class="step-ico" style="${TILE_GREEN}">${dotGlyph(1)}</span><h3>Shared: the project</h3><p>The <code>docs/prd/</code> ticket tree, the <code>[&lt;id&gt;]</code> tracker title prefix, <code>ticket/&lt;ID&gt;</code> branch names, <code>docs/plans/</code>, and the delivery ledger. A ticket planned in one runtime and built in the other works, because none of these belong to a runtime.</p></div>
+      <div class="step"><span class="step-ico" style="${TILE_BLUE}">${dotGlyph(2)}</span><h3>Separate: the machinery</h3><p>Roles, entry points and guidance are runtime-native and never overlap. The E2E suite asserts that shared state is <em>not</em> runtime-scoped — a ledger under one runtime's directory would let the other re-run delivered tickets.</p></div>
+    </div>
+  </section>
+
   </div><!-- /pane codex three-agent -->
 
   ${paneOpen(HUB, isFirst(HUB))}
@@ -834,6 +990,9 @@ const html = `<!doctype html>
   </section>
   </div><!-- /pane hub-and-spoke -->
 
+    </div><!-- /panes -->
+  </div><!-- /pattern-layout -->
+
   <footer>
     Generated from the pattern catalog by <a href="${GITHUB}/blob/main/scripts/build-site.mjs"><code>scripts/build-site.mjs</code></a>
     · ${new Date().toISOString().slice(0, 10)} · <a href="${GITHUB}/blob/main/LICENSE">MIT</a>
@@ -851,6 +1010,8 @@ const html = `<!doctype html>
     document.querySelectorAll('.pane').forEach(function(p){p.hidden=p.dataset.pane!==dir})
     document.querySelectorAll('.tab').forEach(function(t){t.setAttribute('aria-selected',String(t.dataset.tab===dir))})
     if(qs&&QS[dir])qs.textContent=QS[dir]
+    var qsName=document.getElementById('qs-name')
+    if(qsName)qsName.textContent=dir
     if(note&&QS[dir])note.textContent=QS[dir]+' --force'
   }
   document.querySelectorAll('.tab').forEach(function(t){
