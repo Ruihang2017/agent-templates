@@ -2,6 +2,32 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
+## 0.13.2 — 2026-08-12
+
+**Scaffold change — re-adopt to get it.** `deliver-ticket.mjs` changes in both runtimes, and the Codex pattern's `run-ticket` skill and `delivery` agent contract change. `npx agent-templates@latest adopt <pattern> .` over your existing install.
+
+Both fixes are the same defect wearing two hats: a report that reads complete while describing something that did not happen — in the two places a human actually reads.
+
+### Fixed — supervised delivery said two untrue things on one run (#192)
+
+If you run `deliver-ticket.mjs --no-merge` (supervised mode, and the on-ramp we recommend for a first pipeline), the PR it opened carried an AI-attribution block reading that the change was *"written and merged by AI"*. Nothing had been merged — the entire point of the mode is that the PR waits for you. Anyone trusting that sentence reviewed a change believing it was already live, which inverts the decision they were being asked to make.
+
+The same run reported `planExists: false` for a plan sitting on disk, because the check was computed after the early exits. An unperformed check reported as a failed one is worse than no check: it spends your attention on a defect that does not exist, and teaches you to discount the rest of the summary.
+
+Now: the marker is conditional on the mode and states plainly that the PR is open and awaiting human review; `planExists` is evaluated before any exit; and a genuinely missing plan is a refusal rather than a footnote under an otherwise-clean summary.
+
+### Fixed — the Codex pattern shipped two contracts that contradicted each other (#193)
+
+`run-ticket` step 5 told the orchestrating thread to have the `delivery` agent *compose* your repository's PR/MR template. `delivery.toml` defines that same agent as a mechanical actuator at low reasoning effort that may write only **supplied** text and must not invent a verdict or a body. Whichever document an operator followed, the other was violated.
+
+It resolves one way only. A complete PR body carries the bounce count, the Reviewer's actual findings, the Builder's declared deviations, the test evidence and the known gaps — none of which `delivery` ever sees. Asking it to compose meant asking a deliberately low-effort role to produce fluent, plausible review history for the one document you read *instead of* re-running the pipeline.
+
+Now: the orchestrating thread composes the body from named stage artifacts (the skill carries a section→source table), any fact absent from an artifact must be written as unavailable **with a reason** rather than inferred, and `delivery` writes the supplied bytes verbatim. `delivery.toml` refuses a compose request outright.
+
+### Also
+
+The E2E suite asserts both sides of the #193 contract — a one-sided assertion is how those two documents drifted apart with every gate green — and the suite's own `assertAiMarker` was rewritten, because it had been asserting the false "merged" wording and was therefore part of the defect rather than a witness to it. Suite: 1620/1620.
+
 ## 0.13.1 — 2026-08-12
 
 **No scaffold change.** Nothing under `.claude/`, `.codex/`, `.agents/` or `integrations/` differs from 0.13.0, so there is nothing to re-adopt — this is the catalog site and the README. Upgrade only if you read the docs from the package.
