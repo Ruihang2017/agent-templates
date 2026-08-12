@@ -2,6 +2,38 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
+## 0.13.1 — 2026-08-12
+
+**No scaffold change.** Nothing under `.claude/`, `.codex/`, `.agents/` or `integrations/` differs from 0.13.0, so there is nothing to re-adopt — this is the catalog site and the README. Upgrade only if you read the docs from the package.
+
+### Changed — the site is a landscape layout now
+
+It was built at `max-width: 880px`: a phone layout stretched down a desktop monitor, on a catalog people read in a browser next to an editor. Almost every section laid out **down** the page when it had room to lay out **across**.
+
+| | Was | Now |
+|---|---|---|
+| Container | `max-width:880px` | `min(1560px, 94vw)` |
+| Nav | none | sticky bar — section links, GitHub, npm |
+| Hero | panel + narrow sidebar, stats stacked below | three columns (title / install / facts), stats as one horizontal band |
+| Pattern selection | a row of pills above one column | a sticky rail beside a detail panel, each entry saying what the pattern is *for* |
+| Commands | one wrapping line | a two-column reference: signature + arguments, then description |
+| Breakpoints | 1 | 5 |
+
+Landscape-**first**, not landscape-only: the rail collapses above the panel below 1100px and the hero collapses below 1360px.
+
+### Changed — the docs stop making you guess
+
+The site and the README could not answer four questions an adopter actually has. They can now:
+
+- **What do I need before adopting** — host, Node, git, tracker CLI and what your project must already contain, per pattern.
+- **What lands in my repo** — the installed file tree. Nobody should have to run `adopt` to find out what it writes.
+- **What will I actually see** — a step-by-step first run, including that `/breakdown-prd` *stops* and waits for you.
+- **What do I do when it breaks** — a symptom → cause → fix table built from defects real adopters hit. The symptoms are listed because they are rarely obvious: *"every ticket reports not-delivered but the code is on `main` and the issues are closed"* does not read like a squash-merge ancestry bug.
+
+Also added: **what the agents will not do** — the boundaries enforced by config and deterministic scripts rather than by prose. And each pattern panel now carries **its own** install command, so the copyable command always matches the pattern you are reading; previously one command sat in the hero regardless.
+
+Local delivery and two-runtime coexistence shipped in 0.13.0 but existed only in this changelog. Both are now explained on the site with their exact commands.
+
 ## 0.13.0 — 2026-08-12
 
 ### Upgrading from 0.12.0
