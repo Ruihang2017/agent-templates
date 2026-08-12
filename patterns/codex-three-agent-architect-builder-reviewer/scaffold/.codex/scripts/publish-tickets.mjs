@@ -414,7 +414,10 @@ let driftedClosed = 0
 
 for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort()) {
   const path = join(ticketsDir, f).replaceAll('\\', '/')
-  const text = readFileSync(path, 'utf8').replace(/^﻿/, '') // strip BOM (PowerShell 5.1 utf8 writes one)
+  // strip BOM (PowerShell 5.1 utf8 writes one) AND any HTML comment preceding the
+  // frontmatter (catalog issue #185): the shipped ticket template opens with one, so a
+  // ticket written literally from it parsed as having no frontmatter and was skipped here.
+  const text = readFileSync(path, 'utf8').replace(/^﻿/, '').replace(/^(?:s*<!--[sS]*?-->s*)*/, '')
   const fmMatch = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
   if (!fmMatch) {
     console.log(`  skip (no frontmatter): ${path}`)

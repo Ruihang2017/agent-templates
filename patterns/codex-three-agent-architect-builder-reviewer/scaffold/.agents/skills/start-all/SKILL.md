@@ -5,6 +5,14 @@ description: Gate 1 for the complete Codex three-agent docs/prd dependency graph
 
 Treat invocation as Gate 1 sign-off and issue-creation authorization. Resolve the optional supervised/autonomous mode. Reject any concurrency argument greater than 1.
 
+**State what you are about to upload, and where, before you upload it** (catalog issue #190). Generic "issue-creation authorization" is not consent an approval system can act on, and a system that requires destination- and payload-specific consent will stop the first supervised run. Before step 3, print and let the operator confirm:
+
+- **Destination** — the resolved tracker repository, and the platform from `AGENTS.md`'s **Tracker** line.
+- **Payload** — for each ticket: the issue **title** (`[<id>] <title>`), the **Markdown ticket body** read verbatim from `docs/prd/<module>/tickets/<file>.md`, and **dependency metadata** (`blocked_by` / `blocks` rendered as issue references). Nothing else from the repository leaves it.
+- **Count** — how many issues will be created, and in which modules.
+
+In `none` mode there is nothing to state: that mode is forge-free, uploads nothing, and must not ask for upload consent at all.
+
 **`none` = local delivery.** If the arguments contain the bare word `none`, this run touches **no forge**: skip step 3 entirely (publish nothing), pass `--delivery local` instead of `--platform <Tracker>` to `deliver-ticket.mjs`, and pass no `--issue`. Every ticket then merges to the local default branch — no push, no PR/MR, no tracker — so a pipeline gate, a protected branch, an expired token or a 403 MR API cannot stop the run.
 
 Review is unchanged in this mode: a ticket still only merges on CLEAR. What is deferred is **publication**, not judgement.

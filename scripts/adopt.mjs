@@ -55,8 +55,12 @@ let UPSTREAM_REPO = CATALOG_REPO
 if (uIx !== -1 && argv[uIx + 1] && !argv[uIx + 1].startsWith('--')) UPSTREAM_REPO = argv[uIx + 1]
 
 // positional args = everything that isn't a flag or a flag's consumed value
+// --default-branch and --test-cmd are consumed here, with the others, because positional
+// parsing runs immediately below: a value left unconsumed becomes the target directory.
+const dbIx = argv.indexOf('--default-branch')
+const tcIx = argv.indexOf('--test-cmd')
 const consumed = new Set()
-for (const ix of [pIx, uIx]) {
+for (const ix of [pIx, uIx, dbIx, tcIx]) {
   if (ix !== -1 && argv[ix + 1] && !argv[ix + 1].startsWith('--')) consumed.add(ix + 1)
 }
 const positional = argv.filter((a, i) => !a.startsWith('--') && !consumed.has(i))
@@ -110,6 +114,55 @@ if (!NEEDS_TRACKER) {
   console.log(`platform: not required — ${pattern} declares no tracker integration (scaffold/pattern.json)`)
   if (PLATFORM) console.log(`  (--platform ${PLATFORM} accepted but unused: nothing this pattern installs reads it)`)
 }
+
+// ---------------------------------------------------------------------------
+// Required project facts (catalog issue #190).
+//
+// The Codex `run-ticket` skill reads the default branch and the repository test command
+// from AGENTS.md and stops if either is missing. The snippet supplied neither, so a
+// completed fresh adoption produced a scaffold whose very first supervised run had to
+// stop. Detected here, at adoption time, where the answers are actually available.
+//
+// Both are overridable, because detection can be wrong and being wrong silently is worse
+// than asking: --default-branch <name> and --test-cmd "<command>".
+// ---------------------------------------------------------------------------
+const flagValue = (name) => {
+  const i = argv.indexOf(name)
+  if (i === -1) return ''
+  const v = argv[i + 1]
+  if (!v || v.startsWith('--')) {
+    console.error(`missing value for ${name}`)
+    process.exit(1)
+  }
+  return v
+}
+
+const detectDefaultBranch = () => {
+  const git = (args) => {
+    try { return execFileSync('git', ['-C', target, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() } catch { return '' }
+  }
+  // origin/HEAD is the forge's own answer, so prefer it over whatever happens to be
+  // checked out — a contributor sitting on a feature branch must not rename main.
+  const originHead = git(['symbolic-ref', '--short', 'refs/remotes/origin/HEAD'])
+  if (originHead) return originHead.replace(/^origin\//, '')
+  const current = git(['rev-parse', '--abbrev-ref', 'HEAD'])
+  if (current && current !== 'HEAD') return current
+  return 'main'
+}
+
+const detectTestCmd = () => {
+  const pkgPath = join(target, 'package.json')
+  if (!existsSync(pkgPath)) return ''
+  try {
+    const scripts = (JSON.parse(readFileSync(pkgPath, 'utf8')).scripts) || {}
+    // Only `test`. Guessing at `check`/`ci`/`verify` would be inventing a project's
+    // contract, and a wrong test command is worse than an unset one: it reads as verified.
+    return typeof scripts.test === 'string' && scripts.test.trim() ? 'npm test' : ''
+  } catch { return '' }
+}
+
+const DEFAULT_BRANCH = flagValue('--default-branch') || detectDefaultBranch()
+const TEST_CMD = flagValue('--test-cmd') || detectTestCmd() || '(unset)'
 
 // Platform detection (deterministic, offline). Signals in order:
 //   1. origin host contains 'gitlab' / 'github'      (covers *.gitlab.com, gitlab.corp, github.com)
@@ -360,6 +413,12 @@ let snippet = readFileSync(snippetPath, 'utf8')
   // line, so this is a no-op there — but leaving the rewrite unconditional would bake a
   // platform into any future snippet that happened to mention one.
   .replace('**Tracker: `gh`**', NEEDS_TRACKER ? `**Tracker: \`${PLATFORM}\`**` : '**Tracker: none**')
+  // Required project facts (catalog issue #190). The Codex `run-ticket` skill reads the
+  // default branch and the repository test command from the guidance file and STOPS if
+  // either is missing — so a scaffold that omitted them made the very first supervised run
+  // stop. Detect what can be detected; write `(unset)` for the rest and say so loudly.
+  .replace('**Default branch: `main`**', `**Default branch: \`${DEFAULT_BRANCH}\`**`)
+  .replace('**Test command: `(unset)`**', `**Test command: \`${TEST_CMD}\`**`)
 // Upstream-escalation bullet is opt-in (issue #40): keep it only with --upstream (pointing
 // at the chosen catalog repo), otherwise strip the whole marked block so no catalog repo
 // slug or "file issues upstream" instruction lands in the adopted CLAUDE.md.

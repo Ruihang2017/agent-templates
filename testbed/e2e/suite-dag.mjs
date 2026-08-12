@@ -3,13 +3,14 @@
 // (dangling reference, cycle) that must fail loudly (zero-silence).
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { check, eq } from './lib.mjs'
 
 const S = 'dag'
+const SCAN = fileURLToPath(new URL('../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/dag-scan.mjs', import.meta.url))
 const SCRIPT = fileURLToPath(new URL('../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/milestone-dag.mjs', import.meta.url))
 
 const ticket = (id, blockedBy = []) =>
@@ -34,6 +35,38 @@ function runDag(prdPath) {
 }
 
 export async function run() {
+  // The shipped template must survive the shipped parser (catalog issue #185).
+  //
+  // `templates/ticket.template.md` opens with an HTML comment, and every frontmatter
+  // regex was anchored at position 0 — so a ticket written LITERALLY from the file the
+  // Architect is told to follow extracted no frontmatter, was reported as "missing
+  // frontmatter id", never entered the DAG, and the run still reported clean. It worked
+  // only because authors happened to know to delete the comment; the template was
+  // documentation that must not be followed literally.
+  //
+  // This drives the real template through the real scan, so the two cannot drift apart
+  // again — the parser could be tightened, or the template regrown a preamble, and either
+  // one fails here.
+  {
+    const root = mkdtempSync(join(tmpdir(), 'e2e-dag-tpl-'))
+    try {
+      const tdir = join(root, 'docs', 'prd', '00-x', 'tickets')
+      mkdirSync(tdir, { recursive: true })
+      const template = readFileSync(fileURLToPath(new URL('../../templates/ticket.template.md', import.meta.url)), 'utf8')
+      check(S, 'the shipped ticket template still opens with a comment', /^\s*<!--/.test(template))
+      writeFileSync(join(tdir, 'MOD-NN.md'), template)
+      const r = spawnSync(process.execPath, [SCAN, join(root, 'docs', 'prd')], { encoding: 'utf8' })
+      const line = (r.stdout || '').split('\n').find((l) => l.startsWith('SCAN-JSON: '))
+      const scan = line ? JSON.parse(line.slice('SCAN-JSON: '.length)) : null
+      check(S, 'a ticket written literally from the template is VISIBLE to the DAG',
+        scan && scan.count === 1, (r.stdout || '') + (r.stderr || ''))
+      check(S, 'and it is not reported as missing its frontmatter id',
+        !/missing frontmatter id/.test((r.stdout || '') + (r.stderr || '')))
+      eq(S, 'its id is read from the template frontmatter',
+        scan && scan.tickets && scan.tickets[0] && scan.tickets[0].id, 'MOD-NN')
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  }
+
   // D1: chain + diamond — 00-f <- (01-a, 02-b) <- 03-c
   const t1 = makeTree({
     '00-f': [['FND-1', []]],

@@ -176,6 +176,20 @@ Three properties worth knowing before adopting it:
 - **`quarantined` outranks green tests.** A spoke that passed its tests while writing outside its declared file-scope does not merge — passing tests is exactly what would otherwise wave it through.
 - **`unverified` is not a pass.** A branch whose tests could not be re-run does not merge.
 
+### Merging a docs change (not a ticket)
+
+The pipeline generates merge requests that are not deliveries: spec amendments, sub-PRD bumps, ticket corrections, README updates. There is a sanctioned path for those, and using it matters for a reason that is easy to miss:
+
+```
+node .claude/scripts/merge-docs-mr.mjs --title "docs: amend FR-3" [--body-file notes.md] [--no-merge]
+```
+
+**It does not poll.** `glab mr merge` enables auto-merge by default and `gh pr merge --auto` is the GitHub equivalent — issue the merge once and the forge lands it when its checks pass. Left to improvise, an agent writes a wait-for-CI loop instead: one measured run burned **~4,000 tokens** printing a status line every 15 seconds while a documentation merge waited on a 4–9 minute pipeline, and nothing was learned from any line except the last. A phase that produces five docs MRs pays that five times.
+
+It deliberately carries **none** of the ticket machinery — no Reviewer verdict comment, no `Closes #N`, no tracker close, no Definition-of-Done check. That is what distinguishes a docs change from a delivery, and why reusing `deliver-ticket.mjs` here would be wrong: it would record a delivery that never happened.
+
+It does keep the destructive-diff guard. A docs branch cut before a large merge produces the same revert-shaped diff as a stale ticket branch — one measured at `+99 / -7688`.
+
 ### Local delivery — finish first, publish later (opt-in)
 
 `/start-all` and `/start-milestone` accept `platform: 'none'`, which drives every ticket to the **local** default branch and touches no forge: no push, no PR/MR, no tracker.

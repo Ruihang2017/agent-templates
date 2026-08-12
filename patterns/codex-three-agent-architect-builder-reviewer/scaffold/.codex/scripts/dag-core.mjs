@@ -11,7 +11,25 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 
-const fmOf = (text) => (text.replace(/^﻿/, '').match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
+// Frontmatter may be preceded by HTML comments and blank lines (catalog issue #185).
+//
+// `templates/ticket.template.md` — the file the Architect is told to follow — opens with
+// an explanatory HTML comment. The old regex was anchored at position 0 with no `m` flag,
+// so a ticket written LITERALLY from the shipped template extracted no frontmatter and was
+// reported as "missing frontmatter id": invisible to the DAG, never scheduled, and the run
+// still reported clean. The shipped template did not survive the shipped parser.
+//
+// Fixed in the parser rather than only in the template, because an author may reasonably
+// add a comment above the frontmatter of any ticket, and the failure is silent in the
+// direction that hurts — nobody sees it at authoring time, and the scheduler just omits
+// the work.
+//
+// Deliberately narrow: only HTML comments and whitespace may precede the opening `---`.
+// Anything else still fails, so this does not become "find frontmatter anywhere".
+const fmOf = (text) => {
+  const body = String(text).replace(/^﻿/, '').replace(/^(?:\s*<!--[\s\S]*?-->\s*)*/, '')
+  return (body.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
+}
 const field = (fm, name) => ((fm.match(new RegExp(`^${name}\\s*:\\s*(.+)$`, 'm')) || [])[1] || '').trim()
 const listField = (fm, name) =>
   field(fm, name)

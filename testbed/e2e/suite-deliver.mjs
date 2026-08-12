@@ -879,6 +879,100 @@ const assertAiMarker = (label, body) => {
     } finally { cleanup(root) }
   }
 
+  // ================================================== docs MR (issue #191)
+  // The pattern had a guarded path for delivering a TICKET and none for the merge
+  // requests it generates constantly — spec amendments, sub-PRD bumps, ticket
+  // corrections. With no helper to reach for, every agent wrote its own wait-for-CI loop:
+  // ~4,000 tokens burned watching one documentation merge, five such MRs in one phase.
+  const DOCS = fileURLToPath(new URL('../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/merge-docs-mr.mjs', import.meta.url))
+  const docsMr = (repo, args, env = {}) => {
+    const r = spawnSync(process.execPath, [DOCS, ...args], {
+      cwd: repo, encoding: 'utf8',
+      env: { ...process.env, GH_BIN: `node ${FAKE_GH}`, GLAB_BIN: `node ${FAKE_GLAB}`, ...env },
+    })
+    const line = (r.stdout || '').split('\n').reverse().find((l) => l.startsWith('DOCS-MR-JSON: '))
+    return { r, sum: line ? JSON.parse(line.slice('DOCS-MR-JSON: '.length)) : null }
+  }
+
+  // M1: it opens the MR and requests auto-merge in ONE call — no polling.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      git(repo, ['checkout', '-q', '-b', 'docs/spec-bump'])
+      writeFileSync(join(repo, 'NOTES.md'), 'a spec amendment\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'docs: amend the spec'])
+      const argvLog = join(root, 'argv.txt')
+      const { r, sum } = docsMr(repo, ['--title', 'docs: amend the spec', '--base', 'main', '--platform', 'glab'],
+        { FAKE_GLAB_ARGV_LOG: argvLog })
+      eq(S, 'M1 exit 0', r.status, 0)
+      check(S, 'M1 the branch was pushed', sum && sum.pushed)
+      check(S, 'M1 an MR was opened', sum && /merge_requests\/\d+/.test(sum.url || ''), sum && sum.notes)
+      check(S, 'M1 auto-merge was requested', sum && sum.autoMerge, sum && sum.notes)
+      // the load-bearing assertion: it must ask the FORGE to wait, not wait itself
+      const argvSeen = existsSync(argvLog) ? readFileSync(argvLog, 'utf8') : ''
+      check(S, 'M1 it passed --auto-merge', /--auto-merge/.test(argvSeen), argvSeen)
+      check(S, 'M1 it NEVER polled mergeability', !/merge_requests\/\d+$/m.test(argvSeen.split('\n').filter((l) => l === 'api').join('')) && !/detailed_merge_status/.test(String(r.stdout)))
+      check(S, 'M1 and it printed no waiting line', !/waiting/i.test(String(r.stdout)), String(r.stdout))
+    } finally { cleanup(root) }
+  }
+
+  // M2: it carries NONE of the ticket machinery. Reusing deliver-ticket here would record
+  // a delivery that never happened — that is the distinction, not a detail.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      git(repo, ['checkout', '-q', '-b', 'docs/readme'])
+      writeFileSync(join(repo, 'NOTES.md'), 'readme tweak\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'docs: tweak'])
+      const closed = join(root, 'closed.txt')
+      const bodyLog = join(root, 'bodies.txt')
+      const { r, sum } = docsMr(repo, ['--title', 'docs: tweak', '--base', 'main', '--platform', 'glab'],
+        { FAKE_GLAB_CLOSED_STATE: closed, FAKE_GLAB_BODY_LOG: bodyLog })
+      eq(S, 'M2 exit 0', r.status, 0)
+      check(S, 'M2 no tracker issue was closed', !existsSync(closed))
+      check(S, 'M2 no Closes #N was written', !/Closes #/.test(existsSync(bodyLog) ? readFileSync(bodyLog, 'utf8') : ''))
+      check(S, 'M2 the summary has no delivery fields', sum && sum.dodPassed === undefined && sum.issueClosed === undefined)
+    } finally { cleanup(root) }
+  }
+
+  // M3: it keeps the destructive-diff guard. A docs branch cut before a large merge
+  // produces the same revert-shaped diff — one measured +99 / -7688 in the field.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      git(repo, ['checkout', '-q', '-b', 'docs/stale'])
+      writeFileSync(join(repo, 'NOTES.md'), 'small docs edit\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'docs: small edit'])
+      git(repo, ['checkout', '-q', 'main'])
+      writeFileSync(join(repo, 'big.txt'), Array.from({ length: 600 }, (_, i) => `line ${i}`).join('\n') + '\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'a lot of work merged since'])
+      git(repo, ['push', '-q', 'origin', 'main'])
+      git(repo, ['checkout', '-q', 'docs/stale'])
+      const { sum } = docsMr(repo, ['--title', 'docs: small edit', '--base', 'main', '--platform', 'glab'])
+      check(S, 'M3 a stale docs branch is REFUSED', sum && !sum.url && /would REMOVE \d+ lines/.test(sum.notes), sum && sum.notes)
+      check(S, 'M3 it names the remedy', sum && /rebase/.test(sum.notes))
+    } finally { cleanup(root) }
+  }
+
+  // M4: --no-merge opens and stops, for a change that wants a human read.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      git(repo, ['checkout', '-q', '-b', 'docs/review-me'])
+      writeFileSync(join(repo, 'NOTES.md'), 'wants eyes\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'docs: wants eyes'])
+      const { sum } = docsMr(repo, ['--title', 'docs: wants eyes', '--base', 'main', '--platform', 'glab', '--no-merge'])
+      check(S, 'M4 the MR is opened', sum && sum.url)
+      check(S, 'M4 auto-merge was NOT requested', sum && !sum.autoMerge)
+      check(S, 'M4 it says it stopped for a human', sum && /left for a human/.test(sum.notes))
+    } finally { cleanup(root) }
+  }
+
   // G6: a project with no pipeline gate is unchanged and gains no wait latency — the
   // default status is `mergeable`, so the poll returns on its first call.
   {

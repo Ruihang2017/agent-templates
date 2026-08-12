@@ -7,6 +7,7 @@
       "Bash(node .claude/scripts/prd-phase.mjs:*)",
       "Bash(node .claude/scripts/publish-tickets.mjs:*)",
       "Bash(node .claude/scripts/deliver-ticket.mjs:*)",
+      "Bash(node .claude/scripts/merge-docs-mr.mjs:*)",
       "Bash(git status:*)",
       "Bash(git log:*)",
       "Bash(git diff:*)",
