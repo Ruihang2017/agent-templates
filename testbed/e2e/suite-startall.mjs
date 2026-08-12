@@ -336,6 +336,74 @@ export async function run() {
     check(S, 'SA5h an unknown platform is rejected', !!error && /platform must be/.test(error.message), error && error.message)
   }
 
+  // ---- SA5i (issue #183): a CLEAR carrying an UNMET acceptance row is not a CLEAR.
+  //
+  // A ticket was delivered with three [machine] rows unsatisfiable by inspection: the
+  // Builder refused to implement them and documented why, and the Reviewer passed it
+  // anyway. The shape is what makes it dangerous — a well-documented blocker reads like
+  // diligence, and diligence reads like grounds to pass, so the better the disclosure the
+  // safer a wrong CLEAR feels. This converts that judgement into a check.
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    let delivered = false
+    const respond = async (a) => {
+      if (kind(a.label) === 'review') {
+        return {
+          verdict: 'CLEAR',
+          checkedNote: 'Builder documented a blocker; work looks careful.',
+          machineChecks: [
+            { row: '[machine] npm test green', met: true },
+            { row: '[machine] the new field serialises', met: false, note: 'field never added — contradicts a delivered ticket' },
+          ],
+        }
+      }
+      if (kind(a.label) === 'deliver') { delivered = true; return OK_DELIVERY }
+      if (a.label === 'cleanup') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
+      return makeRespond(st)(a)
+    }
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    check(S, 'SA5i no error', !error, error && error.message)
+    check(S, 'SA5i the ticket did NOT deliver', !delivered)
+    eq(S, 'SA5i it is escalated, not delivered', statusOf(result, 'A-1'), 'escalated')
+    const row = result.results.find((r) => r.id === 'A-1') || {}
+    eq(S, 'SA5i the stage names the cause', row.stage, 'acceptance-unmet')
+    check(S, 'SA5i the detail quotes the unmet row',
+      /the new field serialises/.test(row.detail || ''), row.detail)
+    check(S, 'SA5i and it carries the reason the reviewer gave',
+      /contradicts a delivered ticket/.test(row.detail || ''), row.detail)
+  }
+
+  // SA5j: a CLEAR whose acceptance rows are all met still delivers. Without this, the
+  // guard could be satisfied by rejecting every CLEAR, which would be worse than the bug.
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    const respond = async (a) => {
+      if (kind(a.label) === 'review') {
+        return { verdict: 'CLEAR', checkedNote: 'ok', machineChecks: [{ row: '[machine] npm test green', met: true }] }
+      }
+      if (a.label === 'cleanup') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
+      return makeRespond(st)(a)
+    }
+    const { result } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    eq(S, 'SA5j all rows met still delivers', statusOf(result, 'A-1'), 'delivered')
+  }
+
+  // SA5k: a reviewer that reports NO machineChecks is not punished — the field is new, and
+  // an older reviewer definition must not stall every run. The guard fires on an explicit
+  // `met: false`, which is the claim that matters.
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    const respond = async (a) => {
+      if (a.label === 'cleanup') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
+      return makeRespond(st)(a)
+    }
+    const { result } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    eq(S, 'SA5k a verdict with no machineChecks still delivers', statusOf(result, 'A-1'), 'delivered')
+  }
+
   // ---- SA6: reload cadence honors rescanEvery, and 0 disables it ----------------------
   {
     const mk = () => [tk('A-1', [], 'x'), tk('A-2', [], 'x'), tk('A-3', [], 'x'), tk('A-4', [], 'x'), tk('A-5', [], 'x'), tk('A-6', [], 'x')]

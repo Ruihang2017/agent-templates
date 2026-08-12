@@ -93,6 +93,17 @@ const VERDICT = {
   properties: {
     verdict: { enum: ['CLEAR', 'BOUNCE'] },
     checkedNote: { type: 'string' },
+    // One entry per [machine]/[fixture] acceptance row (catalog issue #183). A CLEAR
+    // carrying an unmet row is REJECTED below, which is what turns 'did the Reviewer
+    // check acceptance?' from a judgement into a check.
+    machineChecks: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: { row: { type: 'string' }, met: { type: 'boolean' }, note: { type: 'string' } },
+        required: ['row', 'met'],
+      },
+    },
     findings: {
       type: 'array',
       items: {
@@ -165,7 +176,8 @@ async function runTicket(t, opts) {
       ', diff = branch ' + branch + ' vs ' + cfg.defaultBranch + '. ' +
       (isolate ? 'You are in a fresh isolated worktree: `git fetch` if needed, then `git checkout --detach ' + branch + '` (detached, so a busy branch elsewhere is fine) to get the code, and run the tests there. ' : '') +
       'Review per your role definition; run the tests yourself — no test results are provided on purpose. ' +
-      'Return verdict CLEAR or BOUNCE with findings (a BOUNCE with zero findings is invalid).',
+      'FIRST take every [machine] and [fixture] acceptance row in the ticket, run it, and report it in machineChecks with met true/false -- one entry per row, a reason on any false. An unmet row is disqualifying: BOUNCE, or escalate where the ticket contradicts itself. A Builder-documented blocker is NOT grounds for CLEAR. ' +
+    'Return verdict CLEAR or BOUNCE with findings (a BOUNCE with zero findings is invalid).',
       Object.assign({ agentType: 'reviewer', label: 'review:' + t.id + '#' + tag, phase: P, schema: VERDICT }, isolate ? { isolation: 'worktree' } : {})
     )
   }
@@ -194,6 +206,25 @@ async function runTicket(t, opts) {
     verdict = await reviewOnce(String(bounces))
     if (!reviewValid(verdict)) { log('[' + t.id + '] reviewer returned no usable verdict — retrying once'); verdict = await reviewOnce(bounces + '-retry') }
     reviewerBroken = !reviewValid(verdict)
+  }
+
+
+  // A CLEAR carrying an UNMET acceptance row is not a CLEAR (catalog issue #183). A ticket
+  // was delivered with three [machine] rows unsatisfiable by inspection: the Builder
+  // refused to implement them and said so, and the Reviewer passed it anyway — a
+  // well-documented blocker reads like diligence, and diligence reads like grounds to
+  // pass. This turns that judgement into a check, and it escalates rather than bounces,
+  // because a ticket that contradicts itself is a human's decision.
+  const unmet = reviewValid(verdict) && verdict.verdict === 'CLEAR'
+    ? (verdict.machineChecks || []).filter(function (c) { return c && c.met === false })
+    : []
+  if (unmet.length) {
+    log('[' + t.id + '] CLEAR REJECTED -- ' + unmet.length + ' acceptance row(s) reported unmet')
+    return {
+      id: t.id, status: 'escalated', stage: 'acceptance-unmet', bounces: bounces,
+      findings: verdict.findings || [],
+      detail: 'reviewer returned CLEAR with unmet acceptance: ' + unmet.map(function (c) { return c.row + (c.note ? ' (' + c.note + ')' : '') }).join('; '),
+    }
   }
 
   if (reviewerBroken || fixBroken || verdict.verdict !== 'CLEAR') {

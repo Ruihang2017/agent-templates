@@ -303,7 +303,8 @@ const readTickets = (moduleDir) => {
   const out = []
   for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort()) {
     const path = join(ticketsDir, f).replaceAll('\\', '/')
-    const text = readFileSync(path, 'utf8').replace(/^﻿/, '')
+    // BOM + any HTML comment above the frontmatter (catalog issue #185)
+    const text = readFileSync(path, 'utf8').replace(/^﻿/, '').replace(/^(?:s*<!--[sS]*?-->s*)*/, '')
     const fm = (text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/) || [])[1]
     if (!fm) continue
     const id = field(fm, 'id')

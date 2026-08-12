@@ -12,17 +12,36 @@
      The body below the frontmatter becomes the tracker issue body verbatim
      (.claude/scripts/publish-tickets.mjs); the file stays the content source of truth. -->
 ---
-id: MOD-NN            # unique + stable; becomes the issue-title prefix "[MOD-NN]" (the dedupe key)
+id: MOD-NN
 title: Short imperative title
-module: NN-module     # = parent directory name under docs/prd/
-lane: NN-module       # parallel lane; lanes may run concurrently ONLY with disjoint file-scopes
-size: S               # S | M | L
-agent: builder        # primary executing stage; justify in the "Why" line below
-status: draft         # draft -> ready -> done
+module: NN-module
+lane: NN-module
+size: S
+agent: builder
+status: draft
 date: YYYY-MM-DD
-blocked_by: []        # ticket ids this one cannot start before (machine-readable dependency DAG)
-blocks: []            # ticket ids waiting on this one
+blocked_by: []
+blocks: []
 ---
+
+<!-- FRONTMATTER FIELDS — kept out of the block above on purpose (catalog issue #185).
+     End-of-line `# ...` annotations used to sit on those values, and the pipeline's
+     parsers read a field to end of line, so `id` came through as
+     "MOD-NN            # unique + stable; ..." — the shipped template did not survive the
+     shipped parser. Annotating below keeps the frontmatter literally usable: copy this
+     file, fill it in, and it enters the DAG unedited.
+
+     id         unique + stable; becomes the issue-title prefix "[MOD-NN]" — the dedupe key
+     title      short imperative. Quote it if it contains a colon or a `#`
+     module     = the parent directory name under docs/prd/
+     lane       parallel lane; lanes may run concurrently ONLY with disjoint file-scopes
+     size       S | M | L — a review budget, not an effort estimate
+     agent      primary executing stage; justify in the "Why" line below
+     status     draft -> ready -> done
+     date       YYYY-MM-DD
+     blocked_by ticket ids this one cannot start before — the machine-readable DAG
+     blocks     ticket ids waiting on this one -->
+
 
 # MOD-NN — Short imperative title
 

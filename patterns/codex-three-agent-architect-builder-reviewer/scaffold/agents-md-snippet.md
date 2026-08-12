@@ -5,6 +5,17 @@
 **Operating mode: `supervised`**
 **Tracker: `gh`**
 **Integration branch: `(none)`**
+**Default branch: `main`**
+**Test command: `(unset)`**
+
+<!-- Default branch and Test command are REQUIRED project facts, written here by adopt
+     (catalog issue #190). `run-ticket` reads both from this file and stops if either is
+     missing — so a scaffold that omitted them made the very first supervised run stop.
+     adopt detects them where it can (git's default branch; package.json `scripts.test`)
+     and writes `(unset)` where it cannot. `(unset)` is deliberately a value rather than an
+     absence: a missing line reads like an older install, a present `(unset)` reads like a
+     question nobody answered. Replace it with the exact command a reviewer should run. -->
+
 
 Every non-trivial ticket uses three independent stages. The primary Codex thread orchestrates only; it never plans, implements, reviews, or delivers inline.
 

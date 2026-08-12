@@ -174,6 +174,34 @@ export async function run() {
     check(S, 'it tells the agent NOT to publish in that mode', /skip step 3|publish nothing/i.test(startAllSkill))
     check(S, 'it names the ledger as the resume signal', /docs\/delivered\.json/.test(startAllSkill))
     check(S, 'it requires the run to hand the work over', /nothing was pushed/i.test(startAllSkill))
+
+    // Issue #190. Two first-run contract gaps, both visible from the scaffold itself.
+    //
+    // 1. run-ticket reads the default branch and the repository test command from
+    //    AGENTS.md and STOPS if either is missing — and the snippet supplied neither, so a
+    //    completed fresh adoption produced a scaffold whose first supervised run had to
+    //    stop. Asserted against the SNIPPET, because that is what adopt installs.
+    const agentsSnippet = readFileSync(join(SCAFFOLD, 'agents-md-snippet.md'), 'utf8')
+    const runTicketSkill = readFileSync(join(SCAFFOLD, '.agents', 'skills', 'run-ticket', 'SKILL.md'), 'utf8')
+    for (const fact of ['Default branch', 'Test command']) {
+      check(S, `the AGENTS.md snippet supplies "${fact}"`, new RegExp(`\\*\\*${fact}:`).test(agentsSnippet))
+    }
+    // guard the guard: the skill really does demand them, so these are not decorative
+    check(S, 'run-ticket does require those facts',
+      /default branch/i.test(runTicketSkill) && /test command/i.test(runTicketSkill))
+    check(S, 'and it still stops when a required fact is missing',
+      /[Ss]top if required project facts are missing/.test(runTicketSkill))
+
+    // 2. Upload consent must name the payload categories and the destination. An approval
+    //    system that requires destination- and payload-specific consent cannot act on
+    //    "issue-creation authorization".
+    check(S, 'start-all names the upload destination', /resolved tracker repository/i.test(startAllSkill))
+    for (const payload of ['title', 'Markdown ticket body', 'dependency metadata']) {
+      check(S, `start-all names the "${payload}" payload category`, startAllSkill.includes(payload))
+    }
+    check(S, 'it bounds the payload rather than implying more', /Nothing else from the repository leaves it/.test(startAllSkill))
+    // and the forge-free mode must NOT ask for upload consent it does not need
+    check(S, 'none mode asks for no upload consent', /must not ask for upload consent/i.test(startAllSkill))
   }
 }
 
