@@ -4,57 +4,50 @@ What changed for someone **using** this catalog. The full decision record — wh
 
 ## 0.14.0 — 2026-08-18
 
-**Breaking, and it needs a re-adopt.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .` over your existing install. Two workflow files are **retired** and `adopt` now deletes them for you — the removal shows up in your git diff, so review it before committing if you had customised either.
+**Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .` over your existing install.
 
-### The delivery agent is gone (#206)
+### Fixed — a Reviewer's approval was being re-typed by another agent (#201)
 
-If you ran this pattern, there was a fourth agent you probably never noticed. It had no role file, no `agentType`, no model pin — just an inline prompt. Its whole job was: check a file is non-empty, fill in your PR template, run one command, repeat back the JSON that command printed.
+When a ticket cleared review, the Reviewer's note was pasted into the delivery stage's prompt with an instruction to write it to disk **verbatim** — and where the Reviewer returned no note, a stub reading `CLEAR (the reviewer returned no note text)` was written in its place.
 
-It made no judgement, and having its own context was actively harmful. Because the Reviewer's approval lived in one context and delivery in another, the verdict had to be **handed across and re-typed by a third party** — which safety classifiers read as one agent writing another agent's approval, and blocked. Three times, in one adopting repo, each time stranding a ticket that had already been cleared.
+A safety classifier read that for what it was: one agent authoring another agent's approval. It blocked delivery **three times** in one adopting repo, each time stranding a ticket that had already passed review, until a human intervened.
 
-So it is deleted rather than patched. Delivery is now yours: your session, which was idle for the entire run and already held every artifact that agent had to be handed. `/deliver-ticket <id>` is the new command for one ticket; the wave commands run the same procedure for a whole wave.
+Now the Reviewer writes `.claude/tmp/<id>-verdict.md` itself before returning — on BOUNCE as well as CLEAR — with the acceptance rows it checked, the commands it ran and their real output, and anything it could not verify. Nothing downstream re-types it: the delivery stage **verifies** the file is non-empty and stops if it is not. An unevidenced review does not become a merge. The stub is gone.
 
-The remaining agents map exactly onto the three judgements this pattern exists to separate: **architect · builder · reviewer** (plus `triage` for the nightly sweep). The name stopped being an approximation.
+In an isolated worktree the Reviewer resolves the main repository root first, so its record outlives the worktree.
 
-### What that changes for you: the pipeline runs in waves
+The suite's own assertion had required that `VERBATIM` instruction to be present — it was pinning the defect in place, and stayed green throughout. It now asserts the opposite.
 
-This follows from a constraint rather than a preference. A workflow script has no filesystem and no exec, so the only thing inside a running workflow that could invoke the delivery script was an agent. No agent means no merge inside a run — and a ticket therefore cannot share a run with its blocker, because a dependent builds from a default branch that must already contain its dependency.
+### New — `/deliver-ticket <ticket-id> [supervised]`
 
-Work moves in **waves**: a set of tickets whose blockers have all landed.
+The manual path had a hole: `/review-ticket` ends at the verdict, and there was no sanctioned way to deliver a single ticket outside a pipeline run. Operators were invoking `deliver-ticket.mjs` by hand, outside anything the pattern described.
 
-```
-wave-plan.mjs  ->  Workflow(run-wave)  ->  compose PR bodies  ->  deliver-wave.mjs  ->  repeat
- which tickets      plan / build /          your only            merge, close,
- may run now          review                writing job           clean up
-```
+It runs in your own session: verify the Reviewer's record, compose the PR/MR body from the stage artifacts, run the delivery script. The main-session write guard now allows `.claude/tmp/` — and nothing else — because composing a report from artifacts that already exist is not planning, implementing or reviewing. Containment is a real path comparison, so `.claude/tmp/../../src/app.ts` is still denied.
 
-**The cost, stated plainly:** a fast ticket now waits for the slowest ticket in its wave before its dependents start. `dag-report.mjs` already modelled the run this way and described its round count as an upper bound ("actual wall-clock is at most this many rounds") — that count is now exact rather than pessimistic.
+### Fixed — local delivery (`none`) was broken two ways
 
-**What you gain:** the DAG is live for free. `wave-plan.mjs` re-reads `docs/prd` every wave, so a ticket added mid-run is simply in the graph next time it is read. No reload agent, no `rescanEvery` to tune, no runaway guard on reloads.
+- The mid-run DAG reload was told to read the ledger at `.claude/delivered.json`, but `deliver-ticket.mjs` writes `docs/delivered.json`. Every delivered ticket therefore read as **open** and was re-planned and re-built against a codebase that already contained its work.
+- The completion check required `issueClosed` in a mode that has **no tracker to close**, so a ticket that delivered correctly was reported `delivery-incomplete`. The check now trusts `deliver-ticket.mjs`'s own mode-aware verdict instead of re-deriving a second opinion.
 
-### Migration
+### Changed — post-run cleanup is a script, not a prompt
 
-| Was | Now |
-|---|---|
-| `.claude/workflows/run-milestone.js` | `.claude/workflows/run-wave.js` (retired file auto-removed) |
-| `.claude/workflows/start-all.js` | `.claude/workflows/run-wave.js` + `.claude/scripts/wave-plan.mjs` |
-| scheduling inside the workflow | `.claude/scripts/wave-plan.mjs` — deterministic, exits non-zero on a broken graph |
-| delivery inside the workflow | `.claude/scripts/deliver-wave.mjs` + your session |
-| ticket status `delivered` from the workflow | `reviewed-clear` — **nothing has been delivered** until you run the delivery step |
+Which branches may be deleted after a run used to be prose in an agent's instructions. The rule is mechanical and the error is asymmetric: deleting a delivered ticket's branch is tidy-up; deleting a **failed** ticket's branch destroys the only copy of work a human still has to look at.
 
-`/start-all`, `/start-milestone` and `/nightly-issues` keep their names and arguments. If you drive the workflows directly rather than through the commands, the args changed — see the header of `run-wave.js`.
+`cleanup-run.mjs` holds the rule now. It refuses the default branch outright, only removes worktrees under `.claude/worktrees/`, never touches a remote branch, and reports every branch it could **not** delete along with why that matters — a stale ticket branch is what later opens a merge request proposing to revert the default branch.
 
-### Also fixed
+### Changed — `adopt` removes files the pattern has retired
 
-- **The Reviewer writes its own review record** to `.claude/tmp/<id>-verdict.md`. Nothing re-types it anywhere: the workflow carries the path, your session checks the file is non-empty, `deliver-ticket.mjs` posts it. A missing or empty record is now a **refusal to deliver** — an unevidenced review must not become a merge (#201).
-- **Local delivery (`none`) was broken in two ways.** The mid-run reload read the ledger at `.claude/delivered.json` while `deliver-ticket.mjs` writes `docs/delivered.json`, so every delivered ticket read as open and got re-planned and re-built; and the completion check required `issueClosed` in a mode that has no tracker, so a ticket that delivered correctly was reported `delivery-incomplete`. Both are gone with the retired files.
-- **A failed ticket no longer stops its wave.** A wave is independent by construction, so there is nothing inside it to cascade to; its dependents surface as `unreachable` at the next boundary, named with the blocker that failed them, never silently dropped.
-- **A mistyped `--module` exits non-zero** instead of reporting "nothing left to run". A run that executed zero tickets must never read as complete.
-- **The write guard is narrower where it should be and unchanged everywhere else.** The main session may now write under `.claude/tmp/` — that is where it composes the PR body — and nowhere else. Containment is checked with `path.relative`, so `.claude/tmp/../../src/app.ts` is still denied.
-- **`adopt` removes retired files.** Declared in `scaffold/pattern.json`; previously nothing told a re-adopt that an old file had become wrong.
-- **The Codex pattern deliberately keeps its `delivery` actuator.** Its primary thread runs `sandbox_mode = "read-only"` and physically cannot write a file or run git, so the role exists for a mechanical reason rather than an architectural one; opening that sandbox would trade a real enforcement mechanism for symmetry, and `workspace-write` is separately reported unusable on restricted Windows hosts (#203). It gains `wave-plan.mjs` and `deliver-wave.mjs` under the existing parity gate, and its skills now take the ready set from the planner instead of reading `blocked_by` in prose.
+Declared in `scaffold/pattern.json`. Copying new files in was never enough on its own: a withdrawn file would sit in your repo beside its replacement, still loadable. Removals are reported with a reason and show up in your next `git diff` — review them before committing if you had customised anything.
 
-Suite: 1647 checks. The three retired suites (`suite-runner`, `suite-parallel`, `suite-startall`) were replaced by `suite-wave`, `suite-waveplan` and `suite-deliverwave` — ported, not dropped, because removing a scheduler must not quietly remove the checks that made it trustworthy.
+### Note on the architecture
+
+An earlier build of 0.14.0 (never published) deleted the delivery stage entirely, moved delivery into the orchestrator, and restructured the pipeline into waves, following the proposal in #206. It was reverted before release (#208).
+
+The reported defect — the re-typed verdict above — is closed by the Reviewer-authored record alone. The restructure additionally cost continuous dispatch (**+3% to +28%** wall-clock in simulation over uneven ticket durations, worst on a long dependency chain beside independent work), the determinism of the top-level scheduling loop (only a model can invoke the Workflow tool, so the loop necessarily became instructions), and the retry boundary. `/start-milestone` and `/start-all` keep their in-workflow deterministic schedulers.
+
+A delivery stage that makes no judgement is legitimate when it exists for a **mechanical** reason: a workflow script has no filesystem and no exec, so an agent is the only actor inside a run that can invoke a command. That is the same reason the Codex pattern keeps its own delivery actuator, and the earlier build had accepted that argument there while rejecting it here. The stage is held to the narrowest remit the constraint allows — it verifies rather than authors a verdict, it is *given* the bounce count and declared deviations rather than inferring them, and it decides nothing about cleanup.
+
+Suite: 1691 checks, including new behavioural coverage for the write-guard carve-out and `cleanup-run.mjs`.
 
 ## 0.13.2 — 2026-08-12
 

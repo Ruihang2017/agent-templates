@@ -51,7 +51,7 @@
 // never fail a ticket that actually shipped. With no config the step makes no process
 // call at all — no latency, no notes.
 //
-// Last line of stdout is machine-readable for deliver-wave.mjs and the orchestrator:
+// Last line of stdout is machine-readable for run-milestone:
 //   DELIVER-SUMMARY-JSON: {"id","branch","deliveryMode","merged","issueClosed",
 //     "dodPassed","awaitingMerge","prUrl","checks":{...},"asana":{...}|null,"notes"}
 // In checks, a boolean means CHECKED; `testsPassed: null` means the check was not run at
@@ -297,7 +297,7 @@ const completeAsana = () => {
     const it = (asana.items || [])[0]
     console.log(`+ asana   subtask ${it && it.alreadyCompleted ? 'already complete' : 'completed'} for ${ID}`)
   } else {
-    // Surfaced in notes so deliver-wave's escalation path carries it. Fail-soft means
+    // Surfaced in notes so run-milestone's escalation path carries it. Fail-soft means
     // do not block; it never means do not mention (issue #124).
     for (const e of asana.errors || []) note(`Asana mirror: ${e.code} — ${e.message}`)
   }
@@ -402,7 +402,7 @@ const closeIssue = () => {
   try {
     const closeNote = checks.mergedToIntegration
       ? `Delivered: ${BRANCH} merged to ${deliveredTo} — NOT to ${DEFAULT_BRANCH}, which refused the merge (branch protection). The Definition of Done is not met until ${deliveredTo} lands on ${DEFAULT_BRANCH}. Closed so re-runs do not rebuild this ticket.`
-      : `Delivered: ${BRANCH} merged to ${DEFAULT_BRANCH} (pipeline, CLEAR verdict).`
+      : `Delivered: ${BRANCH} merged to ${DEFAULT_BRANCH} (run-milestone, CLEAR verdict).`
     cli(['issue', 'close', String(issueNum), ...(PLATFORM === 'gh' ? ['--comment', closeNote] : [])])
   } catch (e) {
     note(`issue close command failed: ${firstLine(errText(e))}`) // verification below still decides
@@ -436,7 +436,7 @@ const buildBody = () => {
     `- Plan: \`docs/plans/${ID}.md\`\n` +
     `- Builder branch: \`${BRANCH}\` -> \`${DEFAULT_BRANCH}\`\n` +
     `- Reviewer verdict: **CLEAR** (full text posted as a comment below)\n` +
-    `- Delivered deterministically by \`deliver-ticket.mjs\`, the only sanctioned merge path\n`
+    `- Delivered deterministically by \`run-milestone\` / \`deliver-ticket.mjs\`\n`
 }
 
 // the repo's own MR/PR template file, used as the body skeleton (issue #58) instead of a
@@ -706,7 +706,7 @@ try {
   process.chdir(git(['rev-parse', '--show-toplevel']).trim())
 
   // 1. clean tree — merging over uncommitted work is never sanctioned. `.claude/tmp/`
-  // is ignored: the Reviewer writes its own record there for --verdict-file,
+  // is ignored: run-milestone stages the Reviewer's verdict there for --verdict-file,
   // and that ephemeral scratch must not read as "dirty" and block delivery.
   // `.claude/tmp/` (staged verdict/body) and `docs/plans/` (the Architect's HOW plan —
   // ephemeral, and the DoD needs it to EXIST on disk, not be committed) are ignored so

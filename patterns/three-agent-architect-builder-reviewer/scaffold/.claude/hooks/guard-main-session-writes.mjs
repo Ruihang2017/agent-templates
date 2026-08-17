@@ -13,12 +13,16 @@
 //   - override switch for a human-approved out-of-pipeline edit: create the file
 //     .claude/allow-main-writes (and delete it afterwards to re-arm the guard)
 //
-// THE .claude/tmp/ CARVE-OUT (catalog issue #206). Delivery is the orchestrator's job now,
-// and delivering means writing two ephemeral files: the PR/MR body it composes from the
-// stage artifacts the pipeline returned, and nothing else. The guard used to match
-// Edit|Write globally, which is blunter than the rule it enforces: the rule is that the
-// main session must not PLAN, IMPLEMENT or REVIEW a ticket inline, and composing a report
-// out of artifacts that already exist is none of those three.
+// THE .claude/tmp/ CARVE-OUT (catalog issues #206, #208). The pipeline delivers through
+// its own executor stage, but the MANUAL path — /deliver-ticket, after a /review-ticket
+// CLEAR — is the main session's, and delivering means writing one ephemeral file: the
+// PR/MR body, composed from artifacts that already exist. Before this, that path did not
+// exist at all: /review-ticket ended at the verdict and an operator had to run the
+// delivery script by hand, outside anything the pattern described.
+//
+// The guard used to match Edit|Write globally, which is blunter than the rule it enforces:
+// the rule is that the main session must not PLAN, IMPLEMENT or REVIEW a ticket inline,
+// and composing a report out of artifacts that already exist is none of those three.
 //
 // Scoped as narrowly as the need: one directory, already gitignored, already the
 // `--body-file` destination. The alternative was the existing .claude/allow-main-writes

@@ -2,14 +2,19 @@
   "tracker": true,
   "retired": [
     {
-      "path": ".claude/workflows/run-milestone.js",
+      "path": ".claude/workflows/run-wave.js",
       "since": "0.14.0",
-      "why": "replaced by run-wave.js — delivery moved to the orchestrator (catalog issue #206)"
+      "why": "the wave restructure was reverted (catalog issue #208) — run-milestone.js and start-all.js are the schedulers again"
     },
     {
-      "path": ".claude/workflows/start-all.js",
+      "path": ".claude/scripts/wave-plan.mjs",
       "since": "0.14.0",
-      "why": "replaced by run-wave.js + wave-plan.mjs — scheduling is deterministic, delivery is the orchestrator’s (catalog issue #206)"
+      "why": "scheduling is back inside the workflow, where it is deterministic JS rather than a loop a model drives (catalog issue #208)"
+    },
+    {
+      "path": ".claude/scripts/deliver-wave.mjs",
+      "since": "0.14.0",
+      "why": "superseded by the in-workflow delivery executor plus cleanup-run.mjs (catalog issue #208)"
     }
   ]
 }

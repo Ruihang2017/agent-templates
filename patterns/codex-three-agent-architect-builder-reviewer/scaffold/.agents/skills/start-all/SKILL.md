@@ -25,10 +25,8 @@ Finish the run by stating plainly that nothing was pushed and no PR/MR was opene
 2. Run `node .codex/scripts/dag-scan.mjs docs/prd`; stop on cycles, duplicate ids, or dangling dependencies.
 3. Ask `delivery` to publish every module with `node .codex/scripts/publish-tickets.mjs <module> --create --platform <Tracker>`.
 4. Report and filter closed issues as already delivered. Escalate every drifted closed issue.
-5. **Choose the next ticket with the planner, not by reading `blocked_by` yourself** (catalog issue #206):
-   `node .codex/scripts/wave-plan.mjs docs/prd --delivered <ids> --failed <ids>` — take its `WAVE-PLAN-JSON` `ready` list, seeded from step 4's closed issues. Which tickets may run now is control flow, and control flow this catalog left in prose has been got wrong before. A non-zero exit (cycle, dangling dependency) stops the run; `ready` empty with `done: false` is NOT completion — report `blocked`, `unreachable` and `cycle` and stop.
-   Then read `.agents/skills/run-ticket/SKILL.md` completely and take one ready ticket at a time through the loaded procedure. Cross-module edges gate directly — the planner already accounts for them. Supervised mode stops after the first PR/MR is opened; autonomous mode continues independent branches after failures, and the planner reports their dependents as `unreachable` rather than silently dropping them.
-6. Re-run `wave-plan.mjs` after each settled ticket so newly added tickets join the graph and newly unblocked ones become available. Never alter dependencies of an already-started ticket.
-7. Return a complete per-ticket report — delivered · delivered-to-integration · awaiting-human-merge · escalated · failed · refused · unreachable (naming the blocker) · already-delivered · drift · not-started — plus every planner `note`, graph reload error, and other escalation. A run that executed 3 of 15 tickets and does not say why the other 12 were not attempted is not a report.
+5. Read `.agents/skills/run-ticket/SKILL.md` completely. Across the one flat graph, repeatedly choose one ready open ticket and follow the loaded run-ticket procedure. Preserve cross-module `blocked_by` edges. Supervised mode stops after the first PR/MR is opened; autonomous mode continues independent branches after failures and skips dependents.
+6. Re-run `dag-scan.mjs` after each settled ticket so newly added tickets join the graph. Never alter dependencies of an already-started ticket.
+7. Return a complete per-ticket report plus graph reload errors and other escalations.
 
 Sequential execution is a deliberate v1 safety boundary. Do not simulate parallelism by spawning multiple Builders in the same checkout.

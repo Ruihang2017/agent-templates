@@ -24,8 +24,9 @@ const EXPECTED_FILES = [
   '.claude/scripts/dag-scan.mjs',
   '.claude/scripts/prd-phase.mjs',
   '.claude/scripts/deliver-ticket.mjs',
-  '.claude/workflows/run-wave.js',
+  '.claude/workflows/run-milestone.js',
   '.claude/workflows/nightly-issues.js',
+  '.claude/workflows/start-all.js',
   '.claude/agents/architect.md',
   '.claude/agents/builder.md',
   '.claude/agents/reviewer.md',
@@ -38,8 +39,7 @@ const EXPECTED_FILES = [
   '.claude/commands/start-milestone.md',
   '.claude/commands/start-all.md',
   '.claude/commands/deliver-ticket.md',
-  '.claude/scripts/wave-plan.mjs',
-  '.claude/scripts/deliver-wave.mjs',
+  '.claude/scripts/cleanup-run.mjs',
   '.claude/commands/nightly-issues.md',
   '.claude/commands/breakdown-prd.md',
 ]
@@ -227,7 +227,7 @@ export async function run() {
       check(S, `settings does NOT pre-allow ${re.source}`, !allow.some((r) => re.test(r)))
     }
   }
-  for (const [wf, name] of [['run-wave.js', 'run-wave'], ['nightly-issues.js', 'nightly-issues']]) {
+  for (const [wf, name] of [['run-milestone.js', 'run-milestone'], ['nightly-issues.js', 'nightly-issues'], ['start-all.js', 'start-all']]) {
     const path = p('.claude/workflows/' + wf)
     if (!existsSync(path)) continue
     const text = readFileSync(path, 'utf8')
@@ -238,8 +238,9 @@ export async function run() {
   // issue #21: workflow/hook/script runtime files must be LF in the working tree —
   // the Workflow tool rejects \r, and git autocrlf can silently reintroduce it.
   const LF_CRITICAL = [
-    p('.claude/workflows/run-wave.js'),
+    p('.claude/workflows/run-milestone.js'),
     p('.claude/workflows/nightly-issues.js'),
+    p('.claude/workflows/start-all.js'),
     p('.claude/hooks/guard-main-session-writes.mjs'),
     p('.claude/scripts/publish-tickets.mjs'),
     p('.claude/scripts/milestone-dag.mjs'),
@@ -248,7 +249,7 @@ export async function run() {
     p('.claude/scripts/dag-scan.mjs'),
     p('.claude/scripts/prd-phase.mjs'),
     p('.claude/scripts/deliver-ticket.mjs'),
-    REPO_ROOT + '.claude/workflows/run-wave.js',
+    REPO_ROOT + '.claude/workflows/run-milestone.js',
     REPO_ROOT + '.claude/workflows/nightly-issues.js',
   ]
   for (const f of LF_CRITICAL) {
@@ -321,8 +322,9 @@ export async function run() {
     '.claude/agents/builder.md': SCAFFOLD + '.claude/agents/builder.md',
     '.claude/agents/reviewer.md': SCAFFOLD + '.claude/agents/reviewer.md',
     '.claude/agents/triage.md': SCAFFOLD + '.claude/agents/triage.md',
-    '.claude/workflows/run-wave.js': SCAFFOLD + '.claude/workflows/run-wave.js',
+    '.claude/workflows/run-milestone.js': SCAFFOLD + '.claude/workflows/run-milestone.js',
     '.claude/workflows/nightly-issues.js': SCAFFOLD + '.claude/workflows/nightly-issues.js',
+    '.claude/workflows/start-all.js': SCAFFOLD + '.claude/workflows/start-all.js',
     '.claude/scripts/dag-core.mjs': SCAFFOLD + '.claude/scripts/dag-core.mjs',
     '.claude/scripts/dag-scan.mjs': SCAFFOLD + '.claude/scripts/dag-scan.mjs',
     '.claude/scripts/prd-phase.mjs': SCAFFOLD + '.claude/scripts/prd-phase.mjs',
@@ -330,8 +332,7 @@ export async function run() {
     '.claude/scripts/milestone-dag.mjs': SCAFFOLD + '.claude/scripts/milestone-dag.mjs',
     '.claude/scripts/publish-tickets.mjs': SCAFFOLD + '.claude/scripts/publish-tickets.mjs',
     '.claude/scripts/deliver-ticket.mjs': SCAFFOLD + '.claude/scripts/deliver-ticket.mjs',
-    '.claude/scripts/wave-plan.mjs': SCAFFOLD + '.claude/scripts/wave-plan.mjs',
-    '.claude/scripts/deliver-wave.mjs': SCAFFOLD + '.claude/scripts/deliver-wave.mjs',
+    '.claude/scripts/cleanup-run.mjs': SCAFFOLD + '.claude/scripts/cleanup-run.mjs',
     '.claude/commands/plan-ticket.md': SCAFFOLD + '.claude/commands/plan-ticket.md',
     '.claude/commands/build-ticket.md': SCAFFOLD + '.claude/commands/build-ticket.md',
     '.claude/commands/review-ticket.md': SCAFFOLD + '.claude/commands/review-ticket.md',
