@@ -273,7 +273,7 @@
     <span class="nav-links" style="margin-left:auto">
       <span class="nav-note">Deterministic E2E gates · MIT</span>
       <a class="btn btn-green" href="https://github.com/Ruihang2017/agent-templates"><span style="width:14px;height:14px;background:#f9d66e;clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%);display:inline-block"></span> GitHub</a>
-      <a class="btn btn-orange" href="https://www.npmjs.com/package/agent-templates"><span class="gx" style="width:14px;height:14px"><span style="position:absolute;inset:0;border-radius:4px;background:#fff3df;box-shadow:inset 0 -2px 3px rgba(190,110,60,0.4)"></span><span style="position:absolute;left:0;right:0;top:5.5px;height:3px;background:#e8b48c"></span></span> npm&nbsp;&nbsp;<span data-npm-version>v0.13.2</span></a>
+      <a class="btn btn-orange" href="https://www.npmjs.com/package/agent-templates"><span class="gx" style="width:14px;height:14px"><span style="position:absolute;inset:0;border-radius:4px;background:#fff3df;box-shadow:inset 0 -2px 3px rgba(190,110,60,0.4)"></span><span style="position:absolute;left:0;right:0;top:5.5px;height:3px;background:#e8b48c"></span></span> npm&nbsp;&nbsp;<span data-npm-version>v0.14.0</span></a>
     </span>
   </header>
 </div></div>
@@ -312,7 +312,7 @@
         <div class="stat stat-green"><span class="big">3</span><p>patterns in the catalog</p></div>
       </div>
       <span class="sep"></span>
-      <div class="stats"><div class="stat stat-orange"><span class="big" data-npm-version>v0.13.2</span><p>on npm · MIT</p></div></div>
+      <div class="stats"><div class="stat stat-orange"><span class="big" data-npm-version>v0.14.0</span><p>on npm · MIT</p></div></div>
       <span class="sep"></span>
       <div class="stats"><div class="stat stat-yellow"><span class="big">0</span><p>tokens spent in the E2E gate</p></div></div>
       <span class="sep"></span>
@@ -357,12 +357,13 @@
             <div class="cmds-label">Commands</div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/breakdown-prd</code> <code class="cmd-hint">[prd-path] [focus notes, e.g. module-count hint or what to defer]</code></div><div class="cmd-desc">Decompose a PRD into sub-PRDs + template-compliant tickets (three-agent pattern, pre-Gate-1 planning); appends a new phase to an existing PRD tree without touching delivered work</div></div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/build-ticket</code> <code class="cmd-hint">&lt;ticket-id&gt;</code></div><div class="cmd-desc">Run the Builder stage on a planned ticket (three-agent pattern)</div></div>
-            <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/nightly-issues</code> <code class="cmd-hint">[max-issues]</code></div><div class="cmd-desc">Nightly issue sweep — triage open issues, auto-fix the fixable ones through the three-agent pipeline, post the morning report (designed for headless `claude -p &quot;/nightly-issues&quot;`)</div></div>
+            <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/deliver-ticket</code> <code class="cmd-hint">&lt;ticket-id&gt; [supervised]</code></div><div class="cmd-desc">Deliver one reviewed-CLEAR ticket — you run this yourself; delivery is not a subagent's job</div></div>
+            <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/nightly-issues</code> <code class="cmd-hint">[max-issues]</code></div><div class="cmd-desc">Nightly issue sweep — triage open issues, auto-fix the fixable ones through the three-agent pipeline, deliver what cleared, post the morning report (designed for headless `claude -p &quot;/nightly-issues&quot;`)</div></div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/plan-ticket</code> <code class="cmd-hint">&lt;ticket-id or path to ticket file&gt;</code></div><div class="cmd-desc">Run the Architect stage on a ticket (three-agent pattern)</div></div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/publish-tickets</code> <code class="cmd-hint">&lt;module dir, e.g. docs/prd/01-foo&gt; [--all]</code></div><div class="cmd-desc">Publish a module's tickets as tracker issues (and Asana subtasks if connected), then STOP — no pipeline run</div></div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/review-ticket</code> <code class="cmd-hint">&lt;ticket-id&gt; [branch-or-PR-ref]</code></div><div class="cmd-desc">Run the Reviewer stage on a built ticket (three-agent pattern) — requires a fresh context</div></div>
-            <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/start-all</code> <code class="cmd-hint">[supervised|autonomous] [concurrency] [none]</code></div><div class="cmd-desc">Gate 1 for the whole PRD — publish every module's tickets, then run them all through the pipeline scheduled from one dependency DAG</div></div>
-            <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/start-milestone</code> <code class="cmd-hint">&lt;module dir, e.g. docs/prd/01-foo&gt; [supervised|autonomous] [concurrency]</code></div><div class="cmd-desc">Gate 1 start signal — publish the module's tickets as tracker issues, then run the milestone pipeline (three-agent pattern)</div></div>
+            <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/start-all</code> <code class="cmd-hint">[supervised|autonomous] [concurrency] [none]</code></div><div class="cmd-desc">Gate 1 for the whole PRD — publish every module's tickets, then drive the wave loop until the PRD is done</div></div>
+            <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/start-milestone</code> <code class="cmd-hint">&lt;module dir, e.g. docs/prd/01-foo&gt; [supervised|autonomous] [concurrency]</code></div><div class="cmd-desc">Gate 1 start signal — publish one module's tickets as tracker issues, then drive the wave loop for that module</div></div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/verify-delivery</code> <code class="cmd-hint">&lt;ticket-id&gt;</code></div><div class="cmd-desc">Post-merge Definition-of-Done check for a ticket (three-agent pattern) — verifies delivery instead of assuming it</div></div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/connect-asana</code> <code class="cmd-hint">&quot;[asana-task-url]&quot;</code><span class="cmd-opt">asana · optional</span></div><div class="cmd-desc">Connect this repo to an Asana task so the pipeline mirrors milestones and tickets as Asana subtasks (optional; the pipeline runs fine without it)</div></div>
           </div>
@@ -924,7 +925,7 @@
 
   <footer>
     Generated from the pattern catalog by <a href="https://github.com/Ruihang2017/agent-templates/blob/main/scripts/build-site.mjs"><code>scripts/build-site.mjs</code></a>
-    · 2026-08-12 · <a href="https://github.com/Ruihang2017/agent-templates/blob/main/LICENSE">MIT</a>
+    · 2026-08-17 · <a href="https://github.com/Ruihang2017/agent-templates/blob/main/LICENSE">MIT</a>
     · <a href="https://github.com/Ruihang2017/agent-templates/issues/new/choose">Feedback → issues</a>
   </footer>
 </div>
