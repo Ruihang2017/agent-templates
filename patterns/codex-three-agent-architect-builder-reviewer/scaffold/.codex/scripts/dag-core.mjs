@@ -120,7 +120,7 @@ export function intraModuleDeps(mod) {
   return Object.fromEntries(mod.tickets.map((t) => [t.id, t.blockedBy.filter((d) => ids.has(d))]))
 }
 
-// Replay run-milestone's scheduler: each round, dispatch every ready ticket up to
+// Replay the wave scheduler: each round, dispatch every ready ticket up to
 // `cap`. Returns rounds as arrays of ids, or null if the graph has a cycle (callers
 // validate with topoSort first, so null means a caller bug rather than a spec defect).
 //
@@ -182,13 +182,18 @@ export function allDeps(modules) {
 // The two schedules the report contrasts. Both return rounds as arrays of ticket ids
 // over the whole PRD, so one renderer draws either.
 //
-// runnerSchedule — what /start-all does TODAY: start-all.js awaits each run-milestone,
-// so a module barrier sits between every pair of modules and `cap` only fans out
-// within the module currently running. Rounds are each module's waves, concatenated.
+// runnerSchedule — the MODULE-BARRIER schedule: each module runs to completion before
+// the next starts, so `cap` only fans out within the module currently running. Rounds are
+// each module's waves, concatenated. This is what /start-milestone does, one module at a
+// time, and what /start-all used to do before catalog issue #71.
 //
-// globalSchedule — what the dependency graph alone would permit, module boundaries
-// ignored. The runner cannot do this yet; the report shows the gap rather than
-// presenting it as achievable.
+// globalSchedule — what the dependency graph alone permits, module boundaries ignored.
+// This is what /start-all does today: wave-plan.mjs computes the ready set over the WHOLE
+// prd every wave, so two modules with no edge between them run together.
+//
+// The report contrasts them so the cost of module boundaries is visible. Note the wave
+// model is now EXACT rather than an upper bound: delivery happens between waves, in the
+// orchestrator, so a wave really does end before the next begins (catalog issue #206).
 export function runnerSchedule(order, modules, ticketOrder, cap) {
   let rounds = []
   for (const m of order) {

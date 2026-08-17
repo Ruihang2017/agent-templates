@@ -1,3 +1,15 @@
 {
-  "tracker": true
+  "tracker": true,
+  "retired": [
+    {
+      "path": ".claude/workflows/run-milestone.js",
+      "since": "0.14.0",
+      "why": "replaced by run-wave.js — delivery moved to the orchestrator (catalog issue #206)"
+    },
+    {
+      "path": ".claude/workflows/start-all.js",
+      "since": "0.14.0",
+      "why": "replaced by run-wave.js + wave-plan.mjs — scheduling is deterministic, delivery is the orchestrator’s (catalog issue #206)"
+    }
+  ]
 }
