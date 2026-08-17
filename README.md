@@ -152,6 +152,7 @@ Installed into your project by `adopt`; run them in Claude Code. Full list is ge
 | `/breakdown-prd` | `[prd-path] [focus notes]` | Decompose a PRD (default `docs/PRD.md`) into sub-PRDs + template-compliant tickets (pre-Gate-1 planning). Point it at a phase PRD to append work after Gate 2. |
 | `/start-milestone` | `<module dir> [supervised\|autonomous] [concurrency]` | Gate 1 for one module — publish its tickets as tracker issues, then run the milestone pipeline (parallel lanes when `concurrency > 1`). |
 | `/start-all` | `[supervised\|autonomous] [concurrency] [none]` | Gate 1 for the **whole PRD** — compute the module DAG, publish every module, run all modules in dependency order. Add `none` for local delivery: no tracker, no push, publish afterwards. |
+| `/deliver-ticket` | `<ticket-id> [supervised]` | Deliver one reviewed-CLEAR ticket from your own session — the manual path that `/review-ticket` stops short of. The pipeline runs the same script for you. |
 | `/publish-tickets` | `<module dir> [--all]` | Publish only — create the tracker issues (and Asana subtasks if connected), then **stop**. For populating the board before any work starts. |
 | `/plan-ticket` | `<ticket-id>` | Architect stage on a ticket. |
 | `/build-ticket` | `<ticket-id>` | Builder stage on a planned ticket. |

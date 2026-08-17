@@ -7,7 +7,7 @@ Resolve one ticket and its id. Read `AGENTS.md` for Operating mode, Tracker, Int
 
 1. Spawn `architect` with only the ticket path. Wait for `docs/plans/<id>.md`.
 2. Spawn `builder` with ticket path, plan path, default branch, and `ticket/<id>`. Wait for a committed implementation and exact test evidence.
-3. Spawn a new `reviewer`. Pass only ticket path, plan path, and branch/commit diff reference.
+3. Spawn a new `reviewer`. Pass only ticket path, plan path, and branch/commit diff reference. Ask it to WRITE ITS OWN REVIEW RECORD to `.codex/tmp/<id>-verdict.md` before returning — on BOUNCE as well as CLEAR — and to return that path. Nobody re-types it, and a verdict with no record is refused at delivery.
 4. On BOUNCE, send the numbered findings back to the same Builder thread. After it commits repairs, spawn another new Reviewer with artifact-only input. Permit at most two BOUNCE cycles; then escalate.
 5. On CLEAR, identify the tracker issue created from `[<id>]`. **You compose the PR/MR body yourself, in this thread** — `delivery` never composes it (catalog issue #193).
 
@@ -26,7 +26,9 @@ Resolve one ticket and its id. Read `AGENTS.md` for Operating mode, Tracker, Int
 
    **If a required fact is not in an artifact, write that it is unavailable and say why — never infer it.** A body that reads complete but is partly invented is worse than one that admits a gap, because the whole purpose of this document is to let a human trust the run without re-reading it.
 
-   Then spawn `delivery` and ask it to write the two files **verbatim from the bytes you supply** — the verdict to `.codex/tmp/<id>-verdict.md`, your composed body to `.codex/tmp/<id>-body.md` — and run:
+   **The Reviewer writes its own review record**; you do not supply it and `delivery` does not write it (catalog issues #201, #208). Ask the Reviewer, in step 3, to write `.codex/tmp/<id>-verdict.md` itself before returning — its findings, the commands it ran with their real output, and anything it could not verify — and to return that path. Nobody re-types it: it is posted as the Reviewer's own words, and a verdict with no record is refused here rather than filled in by someone else.
+
+   Then spawn `delivery` and ask it to (a) VERIFY `.codex/tmp/<id>-verdict.md` exists and is not empty, stopping if it is not, and (b) write your composed body to `.codex/tmp/<id>-body.md` **verbatim from the bytes you supply**, then run:
 
    `node .codex/scripts/deliver-ticket.mjs --id <id> --branch ticket/<id> --default-branch <default> --issue <n> --platform <gh|glab> --verdict-file .codex/tmp/<id>-verdict.md --body-file .codex/tmp/<id>-body.md [--test-cmd <command>]`
 

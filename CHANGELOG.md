@@ -2,6 +2,53 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
+## 0.14.0 — 2026-08-18
+
+**Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .` over your existing install.
+
+### Fixed — a Reviewer's approval was being re-typed by another agent (#201)
+
+When a ticket cleared review, the Reviewer's note was pasted into the delivery stage's prompt with an instruction to write it to disk **verbatim** — and where the Reviewer returned no note, a stub reading `CLEAR (the reviewer returned no note text)` was written in its place.
+
+A safety classifier read that for what it was: one agent authoring another agent's approval. It blocked delivery **three times** in one adopting repo, each time stranding a ticket that had already passed review, until a human intervened.
+
+Now the Reviewer writes `.claude/tmp/<id>-verdict.md` itself before returning — on BOUNCE as well as CLEAR — with the acceptance rows it checked, the commands it ran and their real output, and anything it could not verify. Nothing downstream re-types it: the delivery stage **verifies** the file is non-empty and stops if it is not. An unevidenced review does not become a merge. The stub is gone.
+
+In an isolated worktree the Reviewer resolves the main repository root first, so its record outlives the worktree.
+
+The suite's own assertion had required that `VERBATIM` instruction to be present — it was pinning the defect in place, and stayed green throughout. It now asserts the opposite.
+
+### New — `/deliver-ticket <ticket-id> [supervised]`
+
+The manual path had a hole: `/review-ticket` ends at the verdict, and there was no sanctioned way to deliver a single ticket outside a pipeline run. Operators were invoking `deliver-ticket.mjs` by hand, outside anything the pattern described.
+
+It runs in your own session: verify the Reviewer's record, compose the PR/MR body from the stage artifacts, run the delivery script. The main-session write guard now allows `.claude/tmp/` — and nothing else — because composing a report from artifacts that already exist is not planning, implementing or reviewing. Containment is a real path comparison, so `.claude/tmp/../../src/app.ts` is still denied.
+
+### Fixed — local delivery (`none`) was broken two ways
+
+- The mid-run DAG reload was told to read the ledger at `.claude/delivered.json`, but `deliver-ticket.mjs` writes `docs/delivered.json`. Every delivered ticket therefore read as **open** and was re-planned and re-built against a codebase that already contained its work.
+- The completion check required `issueClosed` in a mode that has **no tracker to close**, so a ticket that delivered correctly was reported `delivery-incomplete`. The check now trusts `deliver-ticket.mjs`'s own mode-aware verdict instead of re-deriving a second opinion.
+
+### Changed — post-run cleanup is a script, not a prompt
+
+Which branches may be deleted after a run used to be prose in an agent's instructions. The rule is mechanical and the error is asymmetric: deleting a delivered ticket's branch is tidy-up; deleting a **failed** ticket's branch destroys the only copy of work a human still has to look at.
+
+`cleanup-run.mjs` holds the rule now. It refuses the default branch outright, only removes worktrees under `.claude/worktrees/`, never touches a remote branch, and reports every branch it could **not** delete along with why that matters — a stale ticket branch is what later opens a merge request proposing to revert the default branch.
+
+### Changed — `adopt` removes files the pattern has retired
+
+Declared in `scaffold/pattern.json`. Copying new files in was never enough on its own: a withdrawn file would sit in your repo beside its replacement, still loadable. Removals are reported with a reason and show up in your next `git diff` — review them before committing if you had customised anything.
+
+### Note on the architecture
+
+An earlier build of 0.14.0 (never published) deleted the delivery stage entirely, moved delivery into the orchestrator, and restructured the pipeline into waves, following the proposal in #206. It was reverted before release (#208).
+
+The reported defect — the re-typed verdict above — is closed by the Reviewer-authored record alone. The restructure additionally cost continuous dispatch (**+3% to +28%** wall-clock in simulation over uneven ticket durations, worst on a long dependency chain beside independent work), the determinism of the top-level scheduling loop (only a model can invoke the Workflow tool, so the loop necessarily became instructions), and the retry boundary. `/start-milestone` and `/start-all` keep their in-workflow deterministic schedulers.
+
+A delivery stage that makes no judgement is legitimate when it exists for a **mechanical** reason: a workflow script has no filesystem and no exec, so an agent is the only actor inside a run that can invoke a command. That is the same reason the Codex pattern keeps its own delivery actuator, and the earlier build had accepted that argument there while rejecting it here. The stage is held to the narrowest remit the constraint allows — it verifies rather than authors a verdict, it is *given* the bounce count and declared deviations rather than inferring them, and it decides nothing about cleanup.
+
+Suite: 1691 checks, including new behavioural coverage for the write-guard carve-out and `cleanup-run.mjs`.
+
 ## 0.13.2 — 2026-08-12
 
 **Scaffold change — re-adopt to get it.** `deliver-ticket.mjs` changes in both runtimes, and the Codex pattern's `run-ticket` skill and `delivery` agent contract change. `npx agent-templates@latest adopt <pattern> .` over your existing install.

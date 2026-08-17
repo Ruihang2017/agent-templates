@@ -38,6 +38,8 @@ const EXPECTED_FILES = [
   '.claude/commands/publish-tickets.md',
   '.claude/commands/start-milestone.md',
   '.claude/commands/start-all.md',
+  '.claude/commands/deliver-ticket.md',
+  '.claude/scripts/cleanup-run.mjs',
   '.claude/commands/nightly-issues.md',
   '.claude/commands/breakdown-prd.md',
 ]
@@ -110,7 +112,7 @@ export async function run() {
     }
   }
 
-  for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'publish-tickets', 'start-milestone', 'start-all', 'nightly-issues', 'breakdown-prd']) {
+  for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'publish-tickets', 'start-milestone', 'start-all', 'deliver-ticket', 'nightly-issues', 'breakdown-prd']) {
     const path = p(`.claude/commands/${cmd}.md`)
     if (!existsSync(path)) continue
     check(S, `command ${cmd} has description`, fmField(readFileSync(path, 'utf8'), 'description').length > 0)
@@ -330,6 +332,7 @@ export async function run() {
     '.claude/scripts/milestone-dag.mjs': SCAFFOLD + '.claude/scripts/milestone-dag.mjs',
     '.claude/scripts/publish-tickets.mjs': SCAFFOLD + '.claude/scripts/publish-tickets.mjs',
     '.claude/scripts/deliver-ticket.mjs': SCAFFOLD + '.claude/scripts/deliver-ticket.mjs',
+    '.claude/scripts/cleanup-run.mjs': SCAFFOLD + '.claude/scripts/cleanup-run.mjs',
     '.claude/commands/plan-ticket.md': SCAFFOLD + '.claude/commands/plan-ticket.md',
     '.claude/commands/build-ticket.md': SCAFFOLD + '.claude/commands/build-ticket.md',
     '.claude/commands/review-ticket.md': SCAFFOLD + '.claude/commands/review-ticket.md',
@@ -339,6 +342,7 @@ export async function run() {
     '.claude/commands/nightly-issues.md': SCAFFOLD + '.claude/commands/nightly-issues.md',
     '.claude/commands/verify-delivery.md': SCAFFOLD + '.claude/commands/verify-delivery.md',
     '.claude/commands/publish-tickets.md': SCAFFOLD + '.claude/commands/publish-tickets.md',
+    '.claude/commands/deliver-ticket.md': SCAFFOLD + '.claude/commands/deliver-ticket.md',
     '.github/ISSUE_TEMPLATE/bug-report.md': 'templates/tracker/github/ISSUE_TEMPLATE/bug-report.md',
     '.github/ISSUE_TEMPLATE/task.md': 'templates/tracker/github/ISSUE_TEMPLATE/task.md',
     '.github/ISSUE_TEMPLATE/decision-record.md': 'templates/tracker/github/ISSUE_TEMPLATE/decision-record.md',

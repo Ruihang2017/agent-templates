@@ -234,10 +234,29 @@ export async function run() {
     const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
     check(S, 'SA5c no error', !error, error && error.message)
     check(S, 'SA5c a cleanup step runs after the tickets', !!cleanupPrompt)
-    check(S, 'SA5c it names only the DELIVERED ticket ids', /A-1, A-2/.test(cleanupPrompt), cleanupPrompt.slice(0, 200))
-    check(S, 'SA5c it explains WHY, so it cannot be optimised away as tidying',
-      /REVERTS the default branch/.test(cleanupPrompt))
-    check(S, 'SA5c it forbids touching remote branches', /not delete any REMOTE branch/i.test(cleanupPrompt))
+    check(S, 'SA5c it names only the DELIVERED ticket ids', /--delivered A-1,A-2\b/.test(cleanupPrompt), cleanupPrompt.slice(0, 240))
+    // The RULES moved into cleanup-run.mjs (catalog issue #208). They used to be prose in
+    // this prompt, and "delete only the DELIVERED ones" is one summarisation away from
+    // deleting the only copy of work a human still has to look at. The prompt is now an
+    // executor; the assertions follow the rule to where the rule actually lives.
+    check(S, 'SA5c the stage only RUNS the script, it does not decide', /Run EXACTLY this command/.test(cleanupPrompt))
+    check(S, 'SA5c and is forbidden from deleting anything itself',
+      /Do NOT delete anything yourself/.test(cleanupPrompt) && /do NOT touch remote branches/i.test(cleanupPrompt))
+    {
+      const script = readFileSync(
+        new URL('../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/cleanup-run.mjs', import.meta.url),
+        'utf8'
+      )
+      check(S, 'SA5c cleanup-run.mjs deletes only the ids it is given',
+        /for \(const id of delivered\)/.test(script))
+      check(S, 'SA5c it refuses the default branch outright',
+        /refusing to delete .*it is the default branch/.test(script))
+      check(S, 'SA5c it only removes worktrees under .claude/worktrees/',
+        /\\.claude\[\/\\\\\]worktrees/.test(script))
+      check(S, 'SA5c it explains WHY, so it cannot be optimised away as tidying',
+        /revert everything merged since/.test(script))
+      check(S, 'SA5c it never touches a remote branch', /Never delete a REMOTE branch/.test(script))
+    }
     check(S, 'SA5c the result is reported', result.cleanup && result.cleanup.branchesDeleted.length === 2)
   }
 
@@ -297,14 +316,18 @@ export async function run() {
       !/run `node \.claude\/scripts\/publish-tickets\.mjs/.test(rescanPrompt))
     check(S, 'SA5f and it is explicitly forbidden from publishing',
       /Do NOT publish anything/.test(rescanPrompt))
+    check(S, 'SA5f the ledger path is the one deliver-ticket.mjs WRITES (docs/, not .claude/)',
+      /docs\/delivered\.json/.test(rescanPrompt) && !/\.claude\/delivered\.json/.test(rescanPrompt))
     check(S, 'SA5f the rescan reads the local delivery ledger',
-      /\.claude\/delivered\.json/.test(rescanPrompt), rescanPrompt.slice(0, 300))
+      /delivered\.json/.test(rescanPrompt), rescanPrompt.slice(0, 300))
     check(S, 'SA5f it must not report every ticket as open when the ledger is unreadable',
       /rather than reporting every ticket as "open"/.test(rescanPrompt))
     // the run hands the work over rather than hoarding it silently
     check(S, 'SA5f the run reports a local handoff', result.localHandoff && result.localHandoff.pushed === false)
     check(S, 'SA5f the handoff says nothing was pushed',
       result.localHandoff && result.localHandoff.next.some((l) => /Nothing was pushed/.test(l)))
+    check(S, 'SA5f the handoff names the committed ledger, not the scratch path',
+      result.localHandoff.ledger === 'docs/delivered.json')
     check(S, 'SA5f the handoff gives the exact push command',
       result.localHandoff && result.localHandoff.next.some((l) => l.includes('git push origin main')))
     eq(S, 'SA5f the tickets still delivered', statusOf(result, 'A-1'), 'delivered')

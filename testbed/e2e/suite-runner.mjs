@@ -73,11 +73,51 @@ export async function run() {
     check(S, 'S1 deliver prompt invokes deliver-ticket.mjs with exact args', !!dcall && dcall.prompt.includes('node .claude/scripts/deliver-ticket.mjs --id T-01 --branch ticket/T-01 --default-branch main --platform gh --issue 1'))
     // issue #50: the verdict is forwarded to the script (for the PR/MR comment); autonomous never passes --no-merge
     check(S, 'S1 deliver forwards the verdict file', !!dcall && dcall.prompt.includes('--verdict-file .claude/tmp/T-01-verdict.md'))
-    check(S, 'S1 deliver instructs writing the verdict verbatim', !!dcall && dcall.prompt.includes('VERBATIM'))
+    // #201: nothing may re-type a verdict. The Reviewer writes its own record; this stage
+    // VERIFIES it. The previous assertion here required the opposite and therefore pinned
+    // the defect in place — an assertion that locks in a bug is part of the bug.
+    check(S, 'S1 deliver is NOT told to write the verdict', !!dcall && !/VERBATIM/.test(dcall.prompt))
+    check(S, 'S1 deliver verifies the record instead', !!dcall && /verify .*-verdict\.md exists and is NOT empty/i.test(dcall.prompt))
+    check(S, 'S1 deliver is forbidden from substituting for a missing record',
+      !!dcall && /Do NOT write it, do NOT summarise the verdict/.test(dcall.prompt))
+    check(S, 'S1 deliver stops rather than delivering an unevidenced review',
+      !!dcall && /unevidenced review must not become a merge/.test(dcall.prompt))
+    // #193: the body needs facts only the run holds. They are SUPPLIED, and anything not
+    // supplied must be declared unavailable rather than guessed.
+    check(S, 'S1 deliver is given the bounce count', !!dcall && /BOUNCE cycles = 0/.test(dcall.prompt))
+    check(S, 'S1 deliver is given the declared deviations', !!dcall && dcall.prompt.includes('SENTINEL_DEVIATIONS'))
+    check(S, 'S1 deliver must not infer a missing fact', !!dcall && /never infer one/.test(dcall.prompt))
     check(S, 'S1 autonomous deliver does NOT pass --no-merge', !!dcall && !dcall.prompt.includes('--no-merge'))
     // issue #58: the deliver agent composes the MR/PR body from the repo template + fills Constraint check
     check(S, 'S1 deliver forwards a composed --body-file', !!dcall && dcall.prompt.includes('--body-file .claude/tmp/T-01-mrbody.md'))
     check(S, 'S1 deliver composes body from the repo template + Constraint check', !!dcall && /merge_request_templates|pull_request_template/.test(dcall.prompt) && dcall.prompt.includes('Constraint check'))
+  }
+
+  // S1b: the Reviewer AUTHORS its own record (catalog issues #201, #206, #208).
+  // This is the whole fix for #201 — the reported harm was a verdict crossing a context
+  // boundary and being re-typed, not the existence of a delivery stage.
+  {
+    const { result, calls } = await runWorkflow({ ...baseArgs, tickets: [tickets2[0]] }, ({ label }) => {
+      if (kind(label) === 'plan') return plan(tid(label))
+      if (kind(label) === 'build') return goodBuild(tid(label))
+      if (kind(label) === 'review') return CLEAR
+      if (kind(label) === 'deliver') return goodDelivery
+      return null
+    })
+    const rev = calls.find((c) => kind(c.label) === 'review')
+    check(S, 'S1b the reviewer is told to write its OWN record', !!rev && /WRITE YOUR OWN REVIEW RECORD/.test(rev.prompt))
+    check(S, 'S1b at the exact path delivery will read', !!rev && rev.prompt.includes('.claude/tmp/T-01-verdict.md'))
+    check(S, 'S1b told nobody re-types it', !!rev && /nobody re-types it/.test(rev.prompt))
+    check(S, 'S1b told to write it on BOUNCE too', !!rev && /on BOUNCE as well as CLEAR/.test(rev.prompt))
+    // The stub is what made the transcription possible at all: a missing note became
+    // 'CLEAR (the reviewer returned no note text)', written to disk as if the Reviewer
+    // had said it. It must not exist anywhere in either scheduler.
+    const src = readFileSync(SRC_URL, 'utf8')
+    check(S, 'S1b no "returned no note text" stub survives', !/returned no note text/.test(src))
+    check(S, 'S1b the schema carries a record PATH, not verdict text', /recordPath: \{ type: 'string' \}/.test(src))
+    check(S, 'S1b delivery is documented as an executor, not a judge',
+      /You are an EXECUTOR, not a judge/.test(calls.find((c) => kind(c.label) === 'deliver').prompt))
+    eq(S, 'S1b the ticket still delivers', result && result.results[0].status, 'delivered')
   }
 
   // S2: bounce once, then clear; fix prompt carries findings + no-merge guard

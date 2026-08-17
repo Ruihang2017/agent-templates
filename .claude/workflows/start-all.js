@@ -93,7 +93,7 @@ const PLAN = {
 }
 const BUILD = {
   type: 'object',
-  properties: { branch: { type: 'string' }, testsPassed: { type: 'boolean' }, testOutput: { type: 'string' }, deviations: { type: 'string' } },
+  properties: { branch: { type: 'string' }, testsPassed: { type: 'boolean' }, testOutput: { type: 'string' }, deviations: { type: 'string' }, summary: { type: 'string' } },
   required: ['branch', 'testsPassed', 'testOutput'],
 }
 const VERDICT = {
@@ -102,6 +102,11 @@ const VERDICT = {
     verdict: { type: 'string', enum: ['CLEAR', 'BOUNCE'] },
     findings: { type: 'array', items: { type: 'object', properties: { file: { type: 'string' }, line: { type: 'number' }, severity: { type: 'string' }, issue: { type: 'string' } }, required: ['file', 'issue'] } },
     checkedNote: { type: 'string' },
+    // The PATH the Reviewer wrote its own record to — never the record's text.
+    // Carrying the text is what forced a third party to re-type a verdict, which a
+    // safety classifier correctly read as one agent authoring another agent's approval
+    // and blocked, stranding CLEAR tickets (catalog issue #201).
+    recordPath: { type: 'string' },
     // One entry per [machine]/[fixture] acceptance row (catalog issue #183). A CLEAR
     // carrying an unmet row is REJECTED below, which is what turns "did the Reviewer
     // check acceptance?" from a judgement into a check.
@@ -196,7 +201,8 @@ async function runTicket(t, opts) {
   let build = await agent(
     'Builder stage. Ticket: ' + t.path + '. ' + planForBuilder + 'Create branch ' + branch +
     ' from ' + cfg.defaultBranch + ', implement it there, commit, run the tests. Do NOT merge and do NOT touch the tracker. ' +
-    'Return branch (must be ' + branch + '), testsPassed, testOutput (paste real output), deviations.',
+    'Return branch (must be ' + branch + '), testsPassed, testOutput (paste real output), deviations, ' +
+    'and summary = one paragraph on WHAT you changed and why, written for a human reviewer and describing only what you actually did -- it is quoted into the pull request body.',
     Object.assign({ agentType: 'builder', label: 'build:' + t.id, phase: P, schema: BUILD }, buildIsolation)
   )
   if (buildBad(build)) {
@@ -210,6 +216,9 @@ async function runTicket(t, opts) {
       (isolate ? 'You are in a fresh isolated worktree: `git fetch` if needed, then `git checkout --detach ' + branch + '` (detached, so a busy branch elsewhere is fine) to get the code, and run the tests there. ' : '') +
       'Review per your role definition; run the tests yourself -- no test results are provided on purpose. ' +
       'FIRST take every [machine] and [fixture] acceptance row in the ticket, run it, and report it in machineChecks with met true/false -- one entry per row, a reason on any false. An unmet row is disqualifying: BOUNCE, or escalate where the ticket contradicts itself. A Builder-documented blocker is NOT grounds for CLEAR. ' +
+      'THEN WRITE YOUR OWN REVIEW RECORD to EXACTLY .claude/tmp/' + t.id + '-verdict.md -- your findings, the commands you ran with their real output, and anything you could not verify. ' +
+      (isolate ? 'That path is relative to the MAIN repository, not your worktree: get the main root with `git rev-parse --path-format=absolute --git-common-dir` and write under <that directory minus the trailing /.git>. A record written inside a throwaway worktree disappears with it. ' : '') +
+      'Nobody else writes this file and nobody re-types it -- it is posted on the pull request as YOUR words, and a verdict with no record is refused at delivery. Write it on BOUNCE as well as CLEAR, and return recordPath. ' +
     'Return verdict CLEAR or BOUNCE with findings (a BOUNCE with zero findings is invalid).',
       Object.assign({ agentType: 'reviewer', label: 'review:' + t.id + '#' + tag, phase: P, schema: VERDICT }, isolate ? { isolation: 'worktree' } : {})
     )
@@ -270,23 +279,28 @@ async function runTicket(t, opts) {
     }
   }
 
-  const verdictNote = verdict && verdict.checkedNote ? verdict.checkedNote : 'CLEAR (the reviewer returned no note text)'
-  const verdictFile = '.claude/tmp/' + t.id + '-verdict.md'
+  const recordPath = '.claude/tmp/' + t.id + '-verdict.md'
   const bodyFile = '.claude/tmp/' + t.id + '-mrbody.md'
   const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
     ' --default-branch ' + cfg.defaultBranch + (LOCAL_ONLY ? ' --delivery local' : ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '')) +
-    (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : '') + ' --verdict-file ' + verdictFile + ' --body-file ' + bodyFile +
+    (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : '') + ' --verdict-file ' + recordPath + ' --body-file ' + bodyFile +
     (cfg.mode === 'supervised' ? ' --no-merge' : '')
+  // The Reviewer wrote its own record. This stage VERIFIES it and points the script at
+  // it; it never writes or summarises a verdict (catalog issues #201, #206). Delivery is
+  // an executor here for a MECHANICAL reason -- a workflow script has no filesystem and no
+  // exec, so an agent is the only actor inside a run that can invoke a command -- which is
+  // the same reason the Codex pattern keeps its own delivery actuator.
   const deliverPrompt =
-    'Delivery step. Delivery is DETERMINISTIC -- you only (1) record the verdict, (2) compose the PR/MR body, and (3) run one command; never merge, push, open PRs/MRs, or close issues yourself. ' +
-    'First write the following Reviewer CLEAR verdict text VERBATIM to ' + verdictFile + ' (create the .claude/tmp directory if needed):\n' +
-    '<<<VERDICT\n' + verdictNote + '\nVERDICT\n' +
+    'Delivery step. You are an EXECUTOR, not a judge: you (1) verify the Reviewer wrote its record, (2) compose the PR/MR body from the artifacts below, and (3) run one command. Never merge, push, open PRs/MRs, or close issues yourself. ' +
+    'FIRST verify ' + recordPath + ' exists and is NOT empty. If it is missing or empty, STOP: return merged/issueClosed/dodPassed = false with that as the reason. Do NOT write it, do NOT summarise the verdict, do NOT substitute anything -- the Reviewer authors that file and an unevidenced review must not become a merge. ' +
     'Next compose the PR/MR body and write it to ' + bodyFile + ': START from the repo\'s MR/PR template ' +
     '(.gitlab/merge_request_templates/default.md on GitLab, else .github/pull_request_template.md; if neither exists, write nothing and skip this file) and FILL its sections from the ticket ' + t.path +
-    ', the diff (`git diff ' + cfg.defaultBranch + '...' + branch + '` -- summarize, do not paste it whole), the CLEAR verdict above, and the repo CLAUDE.md non-negotiables for the **Constraint check** section (tick what the diff touches, mark the rest N/A). Include `Closes #' + (t.issue || '<n>') + '`. Do not invent spec the ticket lacks. ' +
+    ', the diff (`git diff ' + cfg.defaultBranch + '...' + branch + '` -- summarize, do not paste it whole), the Reviewer\'s record above (quote it; do not paraphrase it into an approval), and the repo CLAUDE.md non-negotiables for the **Constraint check** section (tick what the diff touches, mark the rest N/A). ' +
+    'These facts are supplied because only this run holds them, and a body that reads complete but is partly invented is worse than one that admits a gap: BOUNCE cycles = ' + bounces + '; Builder-declared deviations = ' + JSON.stringify((build && build.deviations) || 'none declared') + '; Builder summary = ' + JSON.stringify((build && build.summary) || '(none returned)') + '. ' +
+    'Any section you cannot fill from an artifact must say it is unavailable and why -- never infer one. Include `Closes #' + (t.issue || '<n>') + '`. Do not invent spec the ticket lacks. ' +
     'Then, from the repo root, run EXACTLY this command and let it do all git and tracker work: ' + deliverCmd +
     ' -- this is the only sanctioned delivery path. Parse the DELIVER-SUMMARY-JSON line it prints last and return ' +
-    'merged, issueClosed, dodPassed, awaitingMerge, and prUrl EXACTLY as reported there, with notes = its notes field plus anything unusual. ' +
+    'merged, issueClosed, dodPassed, awaitingMerge, outcome, deliveredTo, and prUrl EXACTLY as reported there, with notes = its notes field plus anything unusual. ' +
     'If the command cannot run or prints no DELIVER-SUMMARY-JSON, return merged/issueClosed/dodPassed = false with the output tail in notes.'
 
   if (cfg.mode === 'supervised') {
@@ -301,8 +315,16 @@ async function runTicket(t, opts) {
 
   log('[' + t.id + '] deliver: PR/MR + forge-merge + close + DoD (deterministic script, serialized)')
   const delivery = await deliverLock(function () { return agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY }) })
-  if (!delivery || !(delivery.merged && delivery.issueClosed && delivery.dodPassed)) {
-    const missing = !delivery ? 'delivery agent returned nothing' : ['merged', 'issueClosed', 'dodPassed'].filter(function (k) { return !delivery[k] }).join(', ') + ' = false'
+  // Trust deliver-ticket.mjs's own verdict rather than re-deriving one. `dodPassed`
+  // already encodes the mode (local delivery swaps the closed issue for a ledger write),
+  // and requiring `issueClosed` here reported every correct LOCAL delivery as incomplete
+  // -- the false-negative class issue #152 removed, reintroduced by issue #180's new mode.
+  const landed = delivery && delivery.merged === true && delivery.dodPassed === true
+  if (!landed) {
+    const missing = !delivery
+      ? 'delivery agent returned nothing'
+      : ['merged', 'dodPassed'].filter(function (k) { return delivery[k] !== true }).join(', ') + ' = false' +
+        (delivery.outcome ? ' (outcome: ' + delivery.outcome + ')' : '')
     return { id: t.id, status: 'delivery-incomplete', detail: missing + (delivery && delivery.notes ? ' -- ' + delivery.notes : '') }
   }
   return { id: t.id, status: 'delivered', bounces: bounces, prUrl: delivery.prUrl || '' }
@@ -470,7 +492,7 @@ const rescan = async function (reason) {
     // tracker issue, or a row in the local ledger (catalog issues #136, #180).
     (LOCAL_ONLY
       ? '2. There is NO tracker in this run (platform: none). Do NOT publish anything and do NOT run publish-tickets.mjs.\n' +
-        '2b. Report each ticket\'s `state` from the LOCAL DELIVERY LEDGER instead: read `.claude/delivered.json` (it may not exist yet -- then every state is "open"). ' +
+        '2b. Report each ticket\'s `state` from the LOCAL DELIVERY LEDGER instead: read `docs/delivered.json` (it may not exist yet -- then every state is "open"). ' +
         'A ticket whose id appears in its `delivered` array is "closed"; every other ticket is "open". ' +
         'This is the same filter the run applies at launch, reading the only signal that exists without a tracker: re-admitting an already-delivered ticket re-plans and re-builds it against a codebase that already contains its work. ' +
         'If you cannot read the ledger, say so in detail rather than reporting every ticket as "open".\n'
@@ -602,16 +624,19 @@ const cleanupReport = { branchesDeleted: [], branchesKept: [], worktreesPruned: 
     .filter(function (r) { return r.status === 'delivered' })
     .map(function (r) { return r.id })
   if (deliveredIds.length || concurrency > 1) {
+    // The cleanup RULE lives in cleanup-run.mjs, not in this prompt (catalog issue #208).
+    // It used to be prose — which branches may be deleted, which are evidence and must be
+    // left — and an agent asked to 'delete only the DELIVERED ones' is one summarisation
+    // away from deleting the only copy of work a human still has to look at. This stage is
+    // an executor: it runs one command because a workflow script cannot, and relays JSON.
     const clean = await agent(
-      'Post-run cleanup for /start-all. You are NOT implementing anything and you must NOT touch any ticket, plan, or source file.\n' +
-      '1. `git worktree prune` — drop administrative entries for worktrees whose directories are already gone.\n' +
-      (concurrency > 1
-        ? '2. `git worktree list` — for every worktree under .claude/worktrees/, run `git worktree remove --force <path>`. These belong to THIS finished run.\n'
-        : '2. (skip — this run used concurrency 1 and created no worktrees)\n') +
-      '3. Delete the local branch of each DELIVERED ticket, and ONLY these: ' + (deliveredIds.join(', ') || '(none)') + '. ' +
-      'For each id run `git branch -D ticket/<id>`. A leftover ticket branch is what later opens a merge request that REVERTS the default branch, ' +
-      'so this step is the point of the cleanup — but a branch for a ticket NOT in that list is evidence of a failure and must be left alone.\n' +
-      '4. Report exactly what you deleted and what you could not, verbatim. Do not delete any REMOTE branch, and do not touch the default branch.',
+      'Post-run cleanup. You are NOT implementing anything and must NOT touch any ticket, plan, or source file. ' +
+      'Run EXACTLY this command from the repo root and nothing else:\n' +
+      'node .claude/scripts/cleanup-run.mjs --delivered ' + (deliveredIds.join(',') || '') + ' --default-branch ' + cfg.defaultBranch +
+      (concurrency > 1 ? '' : ' --keep-worktrees') + '\n' +
+      'Parse its CLEANUP-JSON line and return ok=true with branchesDeleted, branchesKept and worktreesPruned taken EXACTLY from it, ' +
+      'plus detail = its escalations joined. Do NOT delete anything yourself, do NOT touch remote branches, and if the command ' +
+      'cannot run return ok=false with the output tail in detail.',
       { label: 'cleanup', phase: 'Deliver', effort: 'low', schema: CLEANUP }
     )
     if (clean && clean.ok) {
@@ -640,7 +665,7 @@ const cleanupReport = { branchesDeleted: [], branchesKept: [], worktreesPruned: 
 const localHandoff = LOCAL_ONLY
   ? {
       branch: cfg.defaultBranch,
-      ledger: '.claude/delivered.json',
+      ledger: 'docs/delivered.json',
       pushed: false,
       next: [
         'Nothing was pushed and no PR/MR was opened — this run touched no forge.',
