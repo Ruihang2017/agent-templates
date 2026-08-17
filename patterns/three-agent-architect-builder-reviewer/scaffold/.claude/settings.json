@@ -6,6 +6,8 @@
       "Bash(node .claude/scripts/dag-scan.mjs:*)",
       "Bash(node .claude/scripts/prd-phase.mjs:*)",
       "Bash(node .claude/scripts/publish-tickets.mjs:*)",
+      "Bash(node .claude/scripts/wave-plan.mjs:*)",
+      "Bash(node .claude/scripts/deliver-wave.mjs:*)",
       "Bash(node .claude/scripts/deliver-ticket.mjs:*)",
       "Bash(node .claude/scripts/merge-docs-mr.mjs:*)",
       "Bash(git status:*)",

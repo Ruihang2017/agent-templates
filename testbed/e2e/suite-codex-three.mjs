@@ -14,7 +14,7 @@ const expected = [
   'README.md', 'scaffold/INSTALL.md', 'scaffold/agents-md-snippet.md', 'scaffold/next-steps.txt',
   'scaffold/.codex/config.toml',
   ...['architect', 'builder', 'reviewer', 'delivery', 'triage'].map((n) => `scaffold/.codex/agents/${n}.toml`),
-  ...['dag-core', 'dag-report', 'dag-scan', 'deliver-ticket', 'milestone-dag', 'prd-phase', 'publish-tickets'].map((n) => `scaffold/.codex/scripts/${n}.mjs`),
+  ...['dag-core', 'dag-report', 'dag-scan', 'deliver-ticket', 'deliver-wave', 'milestone-dag', 'prd-phase', 'publish-tickets', 'wave-plan'].map((n) => `scaffold/.codex/scripts/${n}.mjs`),
   ...['breakdown-prd', 'plan-ticket', 'build-ticket', 'review-ticket', 'run-ticket', 'publish-tickets', 'start-milestone', 'start-all', 'verify-delivery'].map((n) => `scaffold/.agents/skills/${n}/SKILL.md`),
 ]
 
@@ -217,6 +217,15 @@ export async function run() {
       deliveryToml.includes('never COMPOSE a PR/MR body'))
     check(S, 'delivery refuses rather than filling gaps', /refuse and say the parent must supply it/.test(deliveryToml))
     check(S, 'the skill sources every section from a stage artifact', /Comes from/.test(runTicketSkill))
+
+    // Issue #206: this pattern KEEPS the delivery actuator while the Claude sibling deletes
+    // it. That divergence is only defensible while its cause is documented — the primary
+    // thread is sandboxed read-only and physically cannot deliver. If someone later opens
+    // the sandbox, the actuator loses its justification and this assertion should fail.
+    const codexConfig = readFileSync(join(SCAFFOLD, '.codex', 'config.toml'), 'utf8')
+    check(S, 'the primary thread is sandboxed read-only', /^sandbox_mode = "read-only"$/m.test(codexConfig))
+    check(S, 'and the README explains that this is WHY the delivery actuator survives',
+      /mechanical, not architectural/.test(patternReadme) && /sandbox_mode/.test(patternReadme))
     check(S, 'and forbids inferring an unavailable fact',
       /never infer it/i.test(runTicketSkill))
   }

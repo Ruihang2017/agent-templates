@@ -73,10 +73,11 @@ patterns/three-agent-architect-builder-reviewer/
         ├── scripts/
         │   ├── publish-tickets.mjs
         │   ├── milestone-dag.mjs
+        │   ├── wave-plan.mjs
+        │   ├── deliver-wave.mjs
         │   └── deliver-ticket.mjs
         ├── workflows/
-        │   ├── run-milestone.js
-        │   ├── start-all.js
+        │   ├── run-wave.js
         │   └── nightly-issues.js
         ├── agents/
         │   ├── architect.md
@@ -91,6 +92,7 @@ patterns/three-agent-architect-builder-reviewer/
             ├── verify-delivery.md
             ├── start-milestone.md
             ├── start-all.md
+            ├── deliver-ticket.md
             └── nightly-issues.md
 ```
 
