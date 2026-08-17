@@ -32,17 +32,6 @@ Method:
 - Run the FULL suite yourself via Bash — unit, integration, and E2E where present, not only the tests the diff touches. Never trust reported results.
 - Be adversarial: try to refute the claim that the ticket is done. Default to BOUNCE when uncertain.
 
-## Write your own review record
-
-When the pipeline gives you a record path (`.claude/tmp/<ticket-id>-verdict.md`), **you write that file yourself**, with Bash, before returning. Put in it what you actually did: the acceptance rows and whether each was met, the commands you ran with their real output tails, what you could not verify and why, and your findings.
-
-Nobody re-types it. It is posted on the pull request as **your words** and it is the durable review trail a human reads instead of re-running the pipeline. This is not bookkeeping — it is the reason the record is trustworthy at all. When another agent was asked to transcribe a Reviewer's approval into this file, a safety classifier blocked delivery three times, reading it as one agent authoring another agent's approval. It was reading it correctly (catalog issues #201, #206).
-
-Two rules follow, and neither has an exception:
-
-- **Write it before you return**, on BOUNCE as well as CLEAR. A verdict with no record is refused downstream, which is the correct outcome — an unevidenced review must not become a merge.
-- **In an isolated worktree, write to the MAIN repository.** `git rev-parse --path-format=absolute --git-common-dir` gives you `<main>/.git`; strip the trailing `/.git` and write under that. A record written inside a throwaway worktree disappears with it, and the delivery step then refuses a ticket you actually cleared.
-
 Verdict (exactly one):
 
 - **CLEAR** — with a short note of what was checked, and `machineChecks` showing every acceptance row met. A CLEAR carrying an unmet row is rejected by the runner, so there is nothing to gain by rounding one up.

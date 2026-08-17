@@ -26,7 +26,7 @@
 // Idempotent: re-running skips everything that exists (--force overwrites files, never
 // re-appends the snippet). Exit 0 = installed/verified; exit 1 = bad invocation.
 
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { createInterface } from 'node:readline/promises'
 import { basename, dirname, join, relative, resolve } from 'node:path'
@@ -95,16 +95,9 @@ if (!targetOk) {
 // this can never weaken the gate for the pattern that genuinely needs it.
 const manifestPath = join(scaffold, 'pattern.json')
 let NEEDS_TRACKER = true
-// Files this pattern USED to install and no longer does. Re-adopting copies new files in
-// but has no way to know an old one became wrong, so a retired scheduler would sit in the
-// target beside its replacement — still loadable, still carrying the behaviour the new
-// version exists to remove. Declared as data in scaffold/pattern.json so retiring a file
-// is a manifest edit, not a code change.
-let RETIRED = []
 if (existsSync(manifestPath)) {
   try {
     const m = JSON.parse(readFileSync(manifestPath, 'utf8'))
-    if (Array.isArray(m.retired)) RETIRED = m.retired.filter((r) => r && typeof r.path === 'string' && r.path)
     if (m.tracker === false) NEEDS_TRACKER = false
     else if (m.tracker !== undefined && m.tracker !== true) {
       console.error(`${manifestPath}: "tracker" must be true or false, got ${JSON.stringify(m.tracker)}`)
@@ -285,25 +278,6 @@ for (const runtimeRoot of runtimeRoots) {
       note('  (note) existing .codex/config.toml kept — merge the [agents] settings and sandbox defaults from the scaffold manually')
     }
   }
-}
-
-// 1a. Remove files this pattern retired. Deletion is REPORTED, never silent: the target is
-// a git repository, so the removal shows up in the user's next diff, which is the right
-// place to notice that a file they had customised is going away.
-let retiredCount = 0
-for (const r of RETIRED) {
-  const dst = join(target, r.path)
-  if (!existsSync(dst)) continue
-  try {
-    rmSync(dst, { force: true })
-    console.log(`- retire  ${r.path} — ${r.why || 'no longer part of this pattern'}`)
-    retiredCount++
-  } catch (e) {
-    console.log(`! could not remove retired ${r.path}: ${e.message} — delete it by hand; leaving it installed keeps the old behaviour available`)
-  }
-}
-if (retiredCount) {
-  note(`  (note) ${retiredCount} retired file(s) removed. Your git diff will show the deletion — review it before committing if you had customised any of them.`)
 }
 
 // 1b. Runtime-compatible integrations. Installed unconditionally for that runtime but

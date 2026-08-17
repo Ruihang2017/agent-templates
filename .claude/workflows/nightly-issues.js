@@ -1,7 +1,7 @@
 export const meta = {
   name: 'nightly-issues',
-  description: 'Nightly sweep: triage open issues and run the fixable ones through the three-agent pipeline. Delivery and the morning report belong to the caller.',
-  phases: [{ title: 'Triage' }, { title: 'Fix' }],
+  description: 'Nightly sweep: triage open issues, run fixable ones through the three-agent pipeline, post the morning report',
+  phases: [{ title: 'Triage' }, { title: 'Fix' }, { title: 'Report' }],
 }
 
 // Deterministic nightly orchestrator. The command (/nightly-issues) collects the
@@ -16,17 +16,11 @@ export const meta = {
 //   reportDate: 'YYYY-MM-DD',     // required — stamped by the caller
 // }
 //
-// Design: triage never touches the tracker; the pipeline (child run-wave workflow)
-// plans, implements and reviews. Nothing here merges, closes or comments.
-//
-// Delivery and the morning report are the CALLER's (catalog issue #206). A workflow
-// script has no filesystem and no exec, so the only actor inside one that could run
-// deliver-ticket.mjs was an agent with no judgement to make — and the tracker writes
-// were a second such agent. Both are gone: /nightly-issues delivers the cleared
-// tickets with deliver-wave.mjs and posts the report itself, from the digest below.
-//
-// Nightly issues are INDEPENDENT of one another, so they form exactly one wave — the
-// wave loop that /start-all runs collapses to a single pass here.
+// Design: triage never touches the tracker; the pipeline (child run-milestone
+// workflow) does the fixing with continueOnFailure=true (issues are independent,
+// unlike milestone tickets); a single report step does ALL tracker writes at the
+// end — comments, labels, and the "Nightly report <date>" issue the human reads
+// over morning email (tracker notifications).
 
 // args may arrive as a JSON string depending on the harness (catalog issue #23)
 const parsedArgs = typeof args === 'string' ? JSON.parse(args) : (args || {})
@@ -53,6 +47,11 @@ const TRIAGE = {
     ticketPath: { type: 'string' },
   },
   required: ['classification', 'reason'],
+}
+const REPORT = {
+  type: 'object',
+  properties: { reportUrl: { type: 'string' }, notes: { type: 'string' } },
+  required: ['reportUrl'],
 }
 
 // ---- Phase 1: triage (parallel, read-only + ticket synthesis) ----
@@ -83,78 +82,60 @@ log('triage: ' + fixable.length + ' fixable, ' +
   outcomes.filter(function (o) { return o.triage.classification === 'invalid' }).length + ' invalid, ' +
   outcomes.filter(function (o) { return o.triage.classification === 'needs-human' }).length + ' needs-human')
 
-// ---- Phase 2: fix via the wave runner (child workflow, one nesting level) ----
+// ---- Phase 2: fix via the milestone runner (child workflow, one nesting level) ----
 let pipeline_results = []
 if (fixable.length > 0) {
   const tickets = fixable.map(function (o) {
     return { id: 'ISS-' + o.issue.number, path: o.triage.ticketPath, issue: o.issue.number }
   })
   try {
-    // One wave: every nightly ticket is independent, so none blocks another and a
-    // single failure cannot strand the rest. `blockedBy` is deliberately absent — a
-    // triage-synthesised ticket that declared a dependency would be refused by the
-    // wave guard, which is the correct outcome rather than a silent reorder.
-    const child = await workflow('run-wave', {
+    const child = await workflow('run-milestone', {
       tickets: tickets,
+      mode: 'autonomous',
       defaultBranch: cfg.defaultBranch,
-      concurrency: 1,
-      waveNumber: 1,
+      platform: cfg.platform,
+      continueOnFailure: true, // nightly issues are independent; one failure must not strand the rest
     })
     pipeline_results = (child && child.results) || []
   } catch (e) {
     log('pipeline failed to run: ' + (e && e.message ? e.message : String(e)))
-    pipeline_results = tickets.map(function (t) { return { id: t.id, status: 'failed', stage: 'pipeline', detail: 'the wave runner did not run' } })
+    pipeline_results = tickets.map(function (t) { return { id: t.id, status: 'failed', stage: 'pipeline', detail: 'milestone runner did not run' } })
   }
 }
 const resultFor = function (issueNumber) {
   return pipeline_results.find(function (r) { return r.id === 'ISS-' + issueNumber }) || null
 }
 
-// ---- Phase 3: hand the digest back. NOTHING here writes to the tracker ----
-// The report used to be an agent inside this workflow, running AFTER delivery. Both moved
-// out together and for the same reason: the caller is the only actor that can deliver, so
-// it is also the only actor that knows what actually landed. A report composed here would
-// be describing merges that had not happened yet.
+// ---- Phase 3: report (the ONLY tracker-writing step) ----
 const digest = outcomes.map(function (o) {
   const r = resultFor(o.issue.number)
   return {
     number: o.issue.number,
     title: o.issue.title,
-    url: o.issue.url || '',
     isNew: Boolean(o.issue.isNew),
     classification: o.triage.classification,
     reason: o.triage.reason,
-    ticketPath: o.triage.ticketPath || null,
-    // `reviewed-clear` is NOT `fixed`. It means a Reviewer cleared the work and nothing has
-    // been merged or closed — the caller decides that after deliver-wave.mjs reports.
-    pipeline: r
-      ? {
-          status: r.status,
-          stage: r.stage || null,
-          bounces: r.bounces || 0,
-          detail: r.detail || null,
-          branch: r.branch || null,
-          recordPath: r.recordPath || null,
-          issue: r.issue || o.issue.number,
-          path: r.path || null,
-          buildSummary: r.buildSummary || '',
-          deviations: r.deviations || '',
-          testOutput: r.testOutput || '',
-        }
-      : null,
+    pipeline: r ? { status: r.status, stage: r.stage || null, bounces: r.bounces || 0, detail: r.detail || null } : null,
   }
 })
 
-const clearedCount = digest.filter(function (d) { return d.pipeline && d.pipeline.status === 'reviewed-clear' }).length
-log('sweep finished: ' + clearedCount + ' ticket(s) reviewed CLEAR and awaiting delivery by the caller')
+const report = await agent(
+  'You are the nightly report step — the only step allowed to write to the tracker (' + cfg.platform + ' CLI via Bash). ' +
+  'Process this digest of tonight\'s sweep (JSON): ' + JSON.stringify({ date: cfg.reportDate, digest: digest, notProcessed: eligible.length - candidates.length }) + '\n' +
+  'Do, in order:\n' +
+  '1. Per issue: post ONE comment stating the outcome — fixed (link the merge) / attempted-but-not-solved (why, findings) / needs-human (why) / invalid (why). Base every statement on the digest; fabricate nothing.\n' +
+  '2. Labels: add `triage:invalid` to invalid issues (do NOT close them — the human decides in the morning); add `nightly:escalated` to attempted-but-not-solved and pipeline-failed issues; add `needs-human` to needs-human issues.\n' +
+  '3. For issues whose pipeline status is `delivered`: verify the issue is actually closed; close it if the deliver step missed it.\n' +
+  '4. Create a tracker issue titled exactly "Nightly report ' + cfg.reportDate + '" (search first; if it already exists, comment on it instead of duplicating) with sections: New overnight · Fixed & closed · Attempted, not solved · Needs human · Invalid (ignore) · Not processed (cap). Use issue references (#N) so the tracker links them.\n' +
+  'Return reportUrl and notes (anything that went wrong).',
+  { label: 'report:' + cfg.reportDate, phase: 'Report', schema: REPORT }
+)
 
 return {
   date: cfg.reportDate,
   processed: digest,
   notProcessed: eligible.length - candidates.length,
-  // Named so it cannot be mistaken for a delivery count. Nothing merged, nothing closed,
-  // no comment posted — the caller must run deliver-wave.mjs and then report.
-  reviewedClear: clearedCount,
-  // Ready to hand straight to deliver-wave.mjs once the caller adds each bodyFile.
-  waveResults: pipeline_results,
+  fixed: digest.filter(function (d) { return d.pipeline && d.pipeline.status === 'delivered' }).length,
+  reportUrl: report ? report.reportUrl : null,
+  reportNotes: report ? report.notes : 'report step returned nothing',
 }
