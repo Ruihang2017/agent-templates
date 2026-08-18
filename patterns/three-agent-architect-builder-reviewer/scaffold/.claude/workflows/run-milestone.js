@@ -62,6 +62,18 @@ if (cfg.mode !== 'supervised' && cfg.mode !== 'autonomous') {
 if (cfg.testCmd !== undefined && (typeof cfg.testCmd !== 'string' || !cfg.testCmd || cfg.testCmd.includes('"'))) {
   throw new Error('args.testCmd must be a non-empty string without double quotes when provided')
 }
+// The Definition of Done includes "tests green". Without a test command that item cannot be
+// EVALUATED, and an unevaluated item used to pass by default — on the adopter that
+// reported catalog issue #205, across all 32 delivered tickets. Fail at launch instead of
+// discovering it afterwards: the answer is known at Gate 1 and nowhere cheaper.
+if (!cfg.testCmd && cfg.noTests !== true) {
+  throw new Error(
+    'args.testCmd is required: the Definition of Done certifies "tests green", and without a ' +
+    'command that item cannot be evaluated. Declare the repository test command in CLAUDE.md ' +
+    '(adopt.mjs detects it), or pass noTests: true to state deliberately that this repository ' +
+    'has no test suite — which is recorded as a waiver, never as a pass.'
+  )
+}
 if (!Number.isInteger(cfg.maxBounces) || cfg.maxBounces < 0) {
   throw new Error('args.maxBounces must be an integer >= 0')
 }
@@ -253,7 +265,7 @@ async function runTicket(t, opts) {
   const bodyFile = '.claude/tmp/' + t.id + '-mrbody.md'
   const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
     ' --default-branch ' + cfg.defaultBranch + ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '') +
-    (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : '') + ' --verdict-file ' + recordPath + ' --body-file ' + bodyFile +
+    (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : ' --no-tests') + ' --verdict-file ' + recordPath + ' --body-file ' + bodyFile +
     // supervised already stops for a human merge, so the fallback is autonomous-only
     (cfg.mode !== 'supervised' && cfg.integrationBranch ? ' --integration-branch ' + cfg.integrationBranch : '') +
     (cfg.mode === 'supervised' ? ' --no-merge' : '')

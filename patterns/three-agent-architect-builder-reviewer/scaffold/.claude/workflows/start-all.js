@@ -78,6 +78,18 @@ if (!Number.isInteger(cfg.maxRescans) || cfg.maxRescans < 1) {
 if (cfg.testCmd !== undefined && (typeof cfg.testCmd !== 'string' || !cfg.testCmd || cfg.testCmd.includes('"'))) {
   throw new Error('args.testCmd must be a non-empty string without double quotes when provided')
 }
+// The Definition of Done includes "tests green". Without a test command that item cannot be
+// EVALUATED, and an unevaluated item used to pass by default -- on the adopter that
+// reported catalog issue #205, across all 32 delivered tickets. Fail at launch instead of
+// discovering it afterwards: the answer is known at Gate 1 and nowhere cheaper.
+if (!cfg.testCmd && cfg.noTests !== true) {
+  throw new Error(
+    'args.testCmd is required: the Definition of Done certifies "tests green", and without a ' +
+    'command that item cannot be evaluated. Declare the repository test command in CLAUDE.md ' +
+    '(adopt.mjs detects it), or pass noTests: true to state deliberately that this repository ' +
+    'has no test suite -- which is recorded as a waiver, never as a pass.'
+  )
+}
 
 // supervised delivery opens a PR and stops for a human merge -- it cannot run parallel lanes
 let concurrency = cfg.concurrency
@@ -283,7 +295,7 @@ async function runTicket(t, opts) {
   const bodyFile = '.claude/tmp/' + t.id + '-mrbody.md'
   const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
     ' --default-branch ' + cfg.defaultBranch + (LOCAL_ONLY ? ' --delivery local' : ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '')) +
-    (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : '') + ' --verdict-file ' + recordPath + ' --body-file ' + bodyFile +
+    (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : ' --no-tests') + ' --verdict-file ' + recordPath + ' --body-file ' + bodyFile +
     (cfg.mode === 'supervised' ? ' --no-merge' : '')
   // The Reviewer wrote its own record. This stage VERIFIES it and points the script at
   // it; it never writes or summarises a verdict (catalog issues #201, #206). Delivery is

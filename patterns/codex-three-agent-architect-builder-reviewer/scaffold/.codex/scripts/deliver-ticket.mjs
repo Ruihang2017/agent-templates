@@ -39,7 +39,7 @@
 //
 // PR/MR body (issue #58): a pre-composed --body-file (the deliver agent fills the repo's
 // .gitlab/merge_request_templates or .github/pull_request_template sections from the ticket,
-// diff, verdict, and AGENTS.md constraints) is used verbatim; else the repo template is the
+// diff, verdict, and CLAUDE.md constraints) is used verbatim; else the repo template is the
 // skeleton (Closes #N ensured); else a hardcoded fallback. The script only assembles/selects.
 //
 // Asana mirror (catalog issue #126, optional): when `.codex/asana.json` exists, the
@@ -50,6 +50,17 @@
 // deliberately absent from the `dodPassed` expression. An expired Asana token must
 // never fail a ticket that actually shipped. With no config the step makes no process
 // call at all — no latency, no notes.
+//
+// CI gate (catalog issue #205): on BOTH platforms delivery reads the forge's own check
+// status before merging and refuses a red one — a CLEAR verdict does not override CI. The
+// GitHub path had no such gate and failed SILENTLY rather than loudly: with no branch
+// protection, `gh pr merge` simply succeeds over red checks, so 32 merges over red CI were
+// indistinguishable from clean ones. `checks.ciStatus` records which of
+// passing / failing / pending / no-checks / unreadable actually happened.
+//
+// "tests green" is likewise no longer satisfiable by omission: without --test-cmd the item
+// is NOT evaluated and dodPassed is false. --no-tests states deliberately that a repository
+// has no suite, and is recorded as a waiver rather than a pass.
 //
 // Last line of stdout is machine-readable for run-milestone:
 //   DELIVER-SUMMARY-JSON: {"id","branch","deliveryMode","merged","issueClosed",
@@ -88,6 +99,10 @@ const DELIVERY = opt('delivery') || 'auto'
 const NO_MERGE = has('no-merge')
 const VERDICT_FILE = opt('verdict-file')
 const BODY_FILE = opt('body-file') // pre-composed PR/MR body (agent-filled from the repo template)
+// Explicit acknowledgement that this repository has no test suite (catalog issue #205).
+// It exists so that "no tests" is a DECISION someone made, recorded in the summary, rather
+// than the default outcome of forgetting --test-cmd.
+const NO_TESTS = process.argv.includes('--no-tests')
 const TEST_CMD = opt('test-cmd')
 
 // Run-end handoff (issue #139): open ONE integration -> default MR/PR and stop. Never
@@ -96,7 +111,7 @@ const TEST_CMD = opt('test-cmd')
 const OPEN_INTEGRATION_MR = has('open-integration-mr')
 
 if (!OPEN_INTEGRATION_MR && (!ID || !BRANCH)) {
-  console.error('usage: node deliver-ticket.mjs --id <ticket-id> --branch <branch> [--default-branch main] [--integration-branch ai-staging] [--issue <n>] [--platform gh|glab] [--delivery pr|direct|auto] [--no-merge] [--verdict-file <path>] [--test-cmd "<command>"]\n   or: node deliver-ticket.mjs --open-integration-mr --integration-branch <name> [--default-branch main] [--platform gh|glab]')
+  console.error('usage: node deliver-ticket.mjs --id <ticket-id> --branch <branch> [--default-branch main] [--integration-branch ai-staging] [--issue <n>] [--platform gh|glab] [--delivery pr|direct|auto] [--no-merge] [--verdict-file <path>] [--body-file <path>] [--test-cmd "<command>"] [--no-tests]\n   or: node deliver-ticket.mjs --open-integration-mr --integration-branch <name> [--default-branch main] [--platform gh|glab]')
   process.exit(1)
 }
 if (OPEN_INTEGRATION_MR && !INTEGRATION_BRANCH) {
@@ -221,6 +236,16 @@ const checks = {
   pushRequired: false, pushed: false, branchPushed: false,
   prCreated: false, prExists: false, verdictPosted: false,
   issueClosed: false, ledgerWritten: false, testsPassed: null,
+  // Whether the FORGE's own checks were read before merging, and what they said
+  // (catalog issue #205). Kept separate from `merged` because the defect being closed is
+  // that a merge over red CI was indistinguishable from a good one: 32 PRs merged, CI red
+  // on every one, every ticket reporting a passing Definition of Done.
+  ciChecked: false, ciStatus: null,
+  // A forge merge call that reported failure. The work may still have landed — that is
+  // precisely the ambiguous state that must not read as a clean delivery.
+  mergeAttemptFailed: false,
+  // Explicit `--no-tests` acknowledgement. An absent test command is NOT this.
+  testsWaived: false,
   // Integration-branch delivery (issue #139). Deliberately SEPARATE from `merged`, which
   // measures ancestry into the DEFAULT branch — so dodPassed reads false, honestly, until
   // the integration branch lands on the default one.
@@ -236,7 +261,19 @@ let asana = null
 const notes = []
 const note = (line) => { notes.push(line); console.log('  (note) ' + line) }
 
+// Recorded once, before the summary is built, so the reason a DoD term failed is in the
+// notes rather than left for the reader to infer from a false.
+const recordTestPolicy = () => {
+  if (NO_TESTS) {
+    checks.testsWaived = true
+    note('--no-tests: this repository declares no test suite, so the Definition of Done cannot certify tests. Recorded as a waiver, not as a pass.')
+  } else if (!TEST_CMD) {
+    note('no --test-cmd supplied, so the "tests green" Definition-of-Done item was NOT evaluated — dodPassed is false. Declare a test command in CLAUDE.md, or pass --no-tests to state deliberately that this repository has none.')
+  }
+}
+
 const finish = (code) => {
+  recordTestPolicy()
   // DO NOT add an Asana term here. Asana is a reporting mirror (issue #126); making the
   // Definition of Done depend on it would let a token expiry fail a delivered ticket.
   // The E2E integrity suite asserts this expression stays Asana-free.
@@ -250,7 +287,15 @@ const finish = (code) => {
     checks.merged &&
     (deliveryMode === 'local' ? checks.ledgerWritten : checks.issueClosed) &&
     (!checks.pushRequired || checks.pushed) &&
-    (TEST_CMD ? checks.testsPassed === true : true)
+    // An optional check that defaults to PASS is not a check (catalog issue #205). Before
+    // this, a run with no --test-cmd satisfied the "tests green" item of the Definition of
+    // Done without evaluating it — on the reporting adopter, across all 32 delivered
+    // tickets. `testsPassed: null` means NOT RUN (issue #192), and not-run is not passed.
+    // `--no-tests` is the explicit way to say a repository has no suite; it is recorded.
+    (checks.testsPassed === true || checks.testsWaived === true) &&
+    // A merge the forge reported as FAILED, whose work landed anyway, is the ambiguous
+    // state this catalog keeps meeting. It is not a delivery until a human looks.
+    !checks.mergeAttemptFailed
   // Branch cleanup deliberately does NOT happen here (issue #151). Deleting the ticket
   // branch on delivery breaks the pattern's idempotent re-run: a second invocation — a
   // resume, or a pass to close the tracker — would find no ref and report "not delivered"
@@ -274,8 +319,8 @@ const finish = (code) => {
 // Complete the ticket's Asana subtask (issue #126). No-op with no config — and it is a
 // true no-op: no child process, so a repo that never connected Asana pays nothing and
 // sees no notes. Everything here is advisory; nothing can change the DoD.
-const ASANA_CONFIG = join('.codex', 'asana.json')
-const ASANA_SCRIPT = join('.codex', 'scripts', 'asana-sync.mjs')
+const ASANA_CONFIG = join('.claude', 'asana.json')
+const ASANA_SCRIPT = join('.claude', 'scripts', 'asana-sync.mjs')
 const completeAsana = () => {
   if (!existsSync(ASANA_CONFIG)) return
   if (!existsSync(ASANA_SCRIPT)) {
@@ -499,14 +544,44 @@ const aiMarker = () =>
   `> It runs under the account whose Personal Access Token authenticated the forge CLI, so **the author shown above is that token's owner, not the code's author.**\n` +
   `> Plan: \`docs/plans/${ID}.md\` · Reviewer verdict: **CLEAR**, posted as a comment below.\n\n`
 
+// Normalised for comparison: an "unfilled" body is one that still IS the template, however
+// its whitespace was mangled on the way through.
+const normalizeBody = (t) => String(t).replace(/\r\n/g, '\n').replace(/[ \t]+$/gm, '').trim()
+
+/**
+ * Resolve the PR/MR body, or REFUSE (catalog issues #193, #205).
+ *
+ * Submitting a repository's own unfilled template as a PR body is not a fallback, it is a
+ * defect wearing a fallback's clothes: any repo carrying a PR-contract check then fails it
+ * BY CONSTRUCTION — on the reporting adopter, `no requirement ID found` on all 32 PRs —
+ * and a human opening the PR is shown a form, not a report. #193 already concluded that
+ * delivery must refuse when required facts are absent; that conclusion reached the Codex
+ * pattern and not this one, where the code did the opposite.
+ *
+ * A repo with NO template keeps the generated fallback body: there is nothing to leave
+ * unfilled, and refusing would break every repository that never adopted a template.
+ */
 const resolvePrBody = () => {
-  if (BODY_FILE && existsSync(BODY_FILE)) return aiMarker() + readFileSync(BODY_FILE, 'utf8')
   const tpl = findMrTemplate()
-  if (tpl) {
-    note(`MR/PR body from repo template ${tpl.path}`)
-    return aiMarker() + ensureCloses(tpl.text)
+  if (BODY_FILE && existsSync(BODY_FILE)) {
+    const body = readFileSync(BODY_FILE, 'utf8')
+    if (!normalizeBody(body)) {
+      return { ok: false, reason: `--body-file ${BODY_FILE} is empty` }
+    }
+    if (tpl && normalizeBody(body) === normalizeBody(tpl.text)) {
+      return { ok: false, reason: `--body-file ${BODY_FILE} is byte-identical to the unfilled repo template ${tpl.path} — nothing was filled in` }
+    }
+    // ensureCloses on the SUPPLIED body too: the composer is told to include it, and a
+    // forgotten `Closes #N` costs the forge's own issue-linking for no reason.
+    return { ok: true, body: aiMarker() + ensureCloses(body) }
   }
-  return aiMarker() + buildBody()
+  if (tpl) {
+    return {
+      ok: false,
+      reason: `this repository has a PR/MR template (${tpl.path}) and no --body-file was supplied. Submitting the template unfilled fails any PR-contract check by construction and shows a human a form instead of a report. Compose the body from the stage artifacts and pass --body-file.`,
+    }
+  }
+  return { ok: true, body: aiMarker() + buildBody() }
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +661,76 @@ const waitForMergeable = (iid) => {
     if (!WAIT_STATUS.has(last)) return { ok: true, status: last || 'unknown', waitedMs: Date.now() - started }
     if (Date.now() - started >= MERGE_WAIT_MS) return { ok: false, status: last, timedOut: true, waitedMs: Date.now() - started }
     console.log(`  … waiting for GitLab: ${last} (${Math.round((Date.now() - started) / 1000)}s)`)
+    sleepSync(MERGE_POLL_MS)
+  }
+}
+
+// GitHub's equivalent of the GitLab wait above (catalog issue #205). It is the mirror of
+// #135, and it fails DIFFERENTLY, which is why it went unnoticed for 32 merges: GitLab
+// returned 405 and stranded the MR loudly, whereas on a GitHub repo whose default branch
+// carries no protection `gh pr merge` simply SUCCEEDS over red CI. There is no error to
+// notice. The #50 escalation is real but only fires on a REQUIRED check, and nothing in
+// this pattern ever makes one required.
+//
+// Read through `gh pr view --json statusCheckRollup`: documented, stable, and typed —
+// rather than `gh pr checks`, whose exit codes carry the same information undocumented.
+const GH_CHECK_FAIL = new Set(['FAILURE', 'ERROR', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
+const GH_CHECK_PENDING = new Set(['QUEUED', 'IN_PROGRESS', 'PENDING', 'WAITING', 'REQUESTED'])
+
+const ghChecks = (number) => {
+  const r = tryCli(['pr', 'view', String(number), '--json', 'statusCheckRollup'])
+  if (!r.ok) return null
+  try {
+    const j = JSON.parse(r.out)
+    return Array.isArray(j.statusCheckRollup) ? j.statusCheckRollup : []
+  } catch { return null }
+}
+
+/**
+ * Poll GitHub's checks until they settle. Bounded, because this runs unattended.
+ *
+ * Returns { ok, status, waitedMs, timedOut, failing }. `status` is one of:
+ *   passing | failing | pending | no-checks | unreadable
+ *
+ * `no-checks` is NOT treated as a failure — plenty of repos have no CI, and refusing
+ * there would break them. It IS reported, in the summary and in the notes, because the
+ * whole defect is that "merged over red CI" and "merged with CI green" looked identical.
+ * A state nobody can distinguish is the thing being fixed, so the honest answer is to name
+ * which of the three actually happened.
+ */
+const waitForGhChecks = (number) => {
+  const started = Date.now()
+  let last = 'unreadable'
+  for (;;) {
+    const rollup = ghChecks(number)
+    if (rollup === null) {
+      // Unreadable is not "green". Proceed — an old gh, or a permissions gap, must not
+      // block delivery forever — but say so, and never let it read as a check that passed.
+      return { ok: true, status: 'unreadable', waitedMs: Date.now() - started }
+    }
+    if (rollup.length === 0) return { ok: true, status: 'no-checks', waitedMs: Date.now() - started }
+
+    const stateOf = (c) => String(c.conclusion || c.state || c.status || '').toUpperCase()
+    const failing = rollup.filter((c) => GH_CHECK_FAIL.has(String(c.conclusion || c.state || '').toUpperCase()))
+    if (failing.length) {
+      return {
+        ok: false,
+        status: 'failing',
+        waitedMs: Date.now() - started,
+        failing: failing.map((c) => `${c.name || c.context || 'check'}=${stateOf(c)}`),
+      }
+    }
+    const pending = rollup.filter((c) => {
+      const st = String(c.status || c.state || '').toUpperCase()
+      return GH_CHECK_PENDING.has(st) || (!c.conclusion && st !== 'COMPLETED' && st === '')
+    })
+    if (!pending.length) return { ok: true, status: 'passing', waitedMs: Date.now() - started }
+
+    last = 'pending'
+    if (Date.now() - started >= MERGE_WAIT_MS) {
+      return { ok: false, status: 'pending', timedOut: true, waitedMs: Date.now() - started, failing: pending.map((c) => c.name || c.context || 'check') }
+    }
+    console.log(`  … waiting for GitHub checks: ${pending.length} pending (${Math.round((Date.now() - started) / 1000)}s)`)
     sleepSync(MERGE_POLL_MS)
   }
 }
@@ -933,7 +1078,15 @@ try {
     if (pr) { checks.prExists = true; prUrl = pr.url; console.log(`= pr      exists for ${BRANCH} (#${pr.number})`) }
     else {
       const title = prTitle()
-      const body = resolvePrBody() // repo MR/PR template (agent-filled) > template skeleton > hardcoded
+      // Composed body > generated fallback, or REFUSE (catalog issues #193, #205). An
+      // unfilled repository template is not a fallback: it fails any PR-contract check by
+      // construction and shows a reviewer a form instead of a report.
+      const resolved = resolvePrBody()
+      if (!resolved.ok) {
+        note(`refusing to open a PR/MR: ${resolved.reason}`)
+        finish(0)
+      }
+      const body = resolved.body
       const tmp = mkdtempSync(join(tmpdir(), 'deliver-'))
       const bodyFile = join(tmp, 'body.md')
       writeFileSync(bodyFile, body)
@@ -986,21 +1139,43 @@ try {
       if (PLATFORM === 'glab') {
         ready = waitForMergeable(pr.number)
         if (ready.waitedMs > 0) console.log(`  waited ${Math.round(ready.waitedMs / 1000)}s for GitLab (${ready.status})`)
+      } else if (PLATFORM === 'gh') {
+        ready = waitForGhChecks(pr.number)
+        checks.ciChecked = ready.status === 'passing' || ready.status === 'failing'
+        checks.ciStatus = ready.status
+        if (ready.waitedMs > 0) console.log(`  waited ${Math.round(ready.waitedMs / 1000)}s for GitHub checks (${ready.status})`)
+        if (ready.status === 'no-checks') {
+          note('no CI checks are configured on this PR — the forge merge gate is inoperative here, so nothing verified this change beyond the local test command')
+        } else if (ready.status === 'unreadable') {
+          note('could not read GitHub check status (old gh, or missing permission) — merging WITHOUT a CI gate; treat this delivery as unverified by CI')
+        }
       }
       if (!ready.ok) {
         // The observed status, verbatim. The old wording was a GUESS covering three
         // unrelated causes at once, and delivery agents chased the wrong ones.
-        note(ready.timedOut
-          ? `merge not attempted: GitLab still reported \`${ready.status}\` after ${Math.round(ready.waitedMs / 1000)}s — MR left open`
-          : `merge refused by GitLab: detailed_merge_status=\`${ready.status}\``)
-        if (INTEGRATION_BRANCH) rerouteToIntegration(pr, ready.status)
+        const detail = (ready.failing || []).join(', ')
+        note(PLATFORM === 'gh'
+          ? (ready.timedOut
+            ? `merge not attempted: GitHub checks still pending after ${Math.round(ready.waitedMs / 1000)}s (${detail || 'unnamed'}) — PR left open`
+            : `merge REFUSED: GitHub checks are red (${detail || 'unnamed'}) — a CLEAR verdict does not override CI`)
+          : (ready.timedOut
+            ? `merge not attempted: GitLab still reported \`${ready.status}\` after ${Math.round(ready.waitedMs / 1000)}s — MR left open`
+            : `merge refused by GitLab: detailed_merge_status=\`${ready.status}\``))
+        // A red CI is NOT a protection refusal, so it must never be rerouted to the
+        // integration branch — that would land unverified work by a different door.
+        if (INTEGRATION_BRANCH && PLATFORM !== 'gh') rerouteToIntegration(pr, ready.status)
       } else {
         const sha = PLATFORM === 'glab' ? headSha() : ''
         const mg = PLATFORM === 'gh'
           ? tryCli(['pr', 'merge', String(pr.number), '--merge'])
           : tryCli(['mr', 'merge', String(pr.number), '--yes', ...(sha ? ['--sha', sha] : [])])
         if (!mg.ok) {
-          note(`forge merge failed${ready.status ? ` (detailed_merge_status=\`${ready.status}\`)` : ''}: ${firstLine(mg.out)}`)
+          // Recorded, not merely noted (catalog issue #205). Execution continues because
+          // the work may have landed anyway — and THAT is the ambiguous state: a merge the
+          // forge reported as failed, sitting on the default branch. It must not read as a
+          // clean delivery, so the Definition of Done fails on it.
+          checks.mergeAttemptFailed = true
+          note(`forge merge failed${ready.status ? ` (status=\`${ready.status}\`)` : ''}: ${firstLine(mg.out)}`)
           // Only a PROTECTION refusal may be rerouted. Anything else stays an escalation.
           if (INTEGRATION_BRANCH) rerouteToIntegration(pr, mg.out)
         } else console.log(`+ merged  #${pr.number} via ${PLATFORM} (forge-side)`)

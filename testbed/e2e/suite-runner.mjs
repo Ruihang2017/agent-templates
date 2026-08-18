@@ -50,7 +50,10 @@ const tickets2 = [
   { id: 'T-01', path: 'docs/prd/00-m/tickets/T-01.md', issue: 1 },
   { id: 'T-02', path: 'docs/prd/00-m/tickets/T-02.md', issue: 2 },
 ]
-const baseArgs = { tickets: tickets2, mode: 'autonomous', defaultBranch: 'main', platform: 'gh' }
+// noTests: this suite is about ORCHESTRATION, not the test policy. Since catalog issue
+// #205 a run must declare one or refuse to start, so saying so keeps the subject under
+// test the subject under test. S13 covers testCmd itself.
+const baseArgs = { tickets: tickets2, mode: 'autonomous', defaultBranch: 'main', platform: 'gh', noTests: true }
 const kind = (label) => label.split(':')[0]
 const tid = (label) => (label.split(':')[1] || '').split('#')[0]
 
@@ -219,6 +222,26 @@ export async function run() {
   // S8: config validation throws
   {
     const bad = await runWorkflow({ ...baseArgs, mode: 'yolo' }, () => null)
+    // catalog issue #205: a run whose Definition of Done cannot certify tests must not
+    // START. The reporting adopter discovered this after 32 tickets had delivered with the
+    // "tests green" item never evaluated — the answer was knowable at Gate 1 and nowhere
+    // cheaper. Both the omission and the explicit waiver are asserted, because a guard that
+    // cannot be satisfied is just an outage.
+    {
+      const { error } = await runWorkflow({ tickets: tickets2, mode: 'autonomous', defaultBranch: 'main', platform: 'gh' }, ({ label }) => { if (kind(label) === 'plan') return plan(tid(label)); if (kind(label) === 'build' || kind(label) === 'fix') return goodBuild(tid(label)); if (kind(label) === 'review') return CLEAR; if (kind(label) === 'deliver') return goodDelivery; return null })
+      check(S, 'S8b a run with neither testCmd nor noTests REFUSES to start', !!error)
+      check(S, 'S8b and the error says how to satisfy it', !!error && /noTests: true/.test(error.message) && /CLAUDE.md/.test(error.message))
+    }
+    {
+      const { error } = await runWorkflow({ tickets: tickets2, mode: 'autonomous', defaultBranch: 'main', platform: 'gh', noTests: true }, ({ label }) => { if (kind(label) === 'plan') return plan(tid(label)); if (kind(label) === 'build' || kind(label) === 'fix') return goodBuild(tid(label)); if (kind(label) === 'review') return CLEAR; if (kind(label) === 'deliver') return goodDelivery; return null })
+      check(S, 'S8b an explicit waiver starts normally', !error, error && error.message)
+    }
+    {
+      const { calls, error } = await runWorkflow({ ...baseArgs, noTests: true }, ({ label }) => { if (kind(label) === 'plan') return plan(tid(label)); if (kind(label) === 'build' || kind(label) === 'fix') return goodBuild(tid(label)); if (kind(label) === 'review') return CLEAR; if (kind(label) === 'deliver') return goodDelivery; return null })
+      const d = calls.find((c) => kind(c.label) === 'deliver')
+      check(S, 'S8b the waiver is FORWARDED to the delivery script', !error && !!d && d.prompt.includes('--no-tests'))
+    }
+
     check(S, 'S8 bad mode throws', bad.error && /mode/.test(bad.error.message))
     const badBounce = await runWorkflow({ ...baseArgs, maxBounces: undefined }, () => null)
     check(S, 'S8 explicit undefined maxBounces throws', badBounce.error && /maxBounces/.test(badBounce.error.message))
