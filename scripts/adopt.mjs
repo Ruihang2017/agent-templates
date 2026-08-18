@@ -627,6 +627,53 @@ if (integrationsMissing.length) {
 // /breakdown-prd and needs an authenticated tracker CLI, hub-and-spoke starts at
 // /hub-brief and needs the codex binary instead. Printing one pattern's steps after
 // installing another is worse than printing none — it names commands that do not exist.
+// ---------------------------------------------------------------------------
+// Branch protection (catalog issue #205).
+//
+// The pattern's merge guarantee is "merge THROUGH the forge, so branch protection is
+// respected". On a default branch with NO protection that guarantee is vacuous, and it
+// fails silently rather than loudly: `gh pr merge` succeeds over red CI with no error to
+// notice. One adopter merged 32 PRs that way, CI red on every one, each reporting a
+// passing Definition of Done.
+//
+// This DETECTS and reports; it does not configure. Setting protection needs admin rights
+// on the repository, which the person adopting a pattern often does not have, and a failed
+// silent attempt would be worse than saying nothing. Delivery has its own CI gate now, so
+// this is defence in depth rather than the only line.
+// ---------------------------------------------------------------------------
+const reportBranchProtection = () => {
+  if (PLATFORM !== 'gh') return null // GitLab exposes this differently; not guessed here
+  let repo = ''
+  try {
+    repo = execFileSync('gh', ['repo', 'view', '--json', 'nameWithOwner', '-q', '.nameWithOwner'], {
+      cwd: target, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  } catch { return null } // no gh, not authenticated, or no remote — nothing to say
+  if (!repo) return null
+  try {
+    execFileSync('gh', ['api', `repos/${repo}/branches/${DEFAULT_BRANCH}/protection`], {
+      cwd: target, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    })
+    return { protected: true, repo }
+  } catch {
+    // 404 is the ordinary answer for an unprotected branch; anything else (403 on a private
+    // repo without admin scope) is equally "we cannot confirm protection exists".
+    return { protected: false, repo }
+  }
+}
+
+const protection = NEEDS_TRACKER ? reportBranchProtection() : null
+if (protection && !protection.protected) {
+  console.log('')
+  console.log(`! ${DEFAULT_BRANCH} on ${protection.repo} has no branch protection (or it could not be read).`)
+  console.log('  The pattern merges THROUGH the forge so that protection is respected — with none,')
+  console.log('  that guarantee is vacuous. Delivery still reads CI status itself and refuses a red')
+  console.log('  merge, but nothing stops a human or another tool landing over red checks.')
+  console.log(`  To close it: require your CI contexts on ${DEFAULT_BRANCH} in the repository settings.`)
+} else if (protection && protection.protected) {
+  console.log(`  branch protection: present on ${DEFAULT_BRANCH}`)
+}
+
 const stepsFile = join(scaffold, 'next-steps.txt')
 const nextSteps = existsSync(stepsFile)
   ? readFileSync(stepsFile, 'utf8').replace(/\r\n/g, '\n').trimEnd()

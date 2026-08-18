@@ -157,9 +157,16 @@ export async function run() {
     check(S, 'deliver-ticket defines an AI attribution banner', /aiMarker/.test(deliver))
     const resolve = (deliver.match(/const resolvePrBody = \(\) => \{[\s\S]*?\n\}/) || [])[0] || ''
     check(S, 'resolvePrBody was found to check', resolve.length > 40)
-    const returns = resolve.match(/return [^\n]+/g) || []
-    check(S, 'every resolvePrBody return path carries the AI banner',
-      returns.length >= 3 && returns.every((r) => r.includes('aiMarker()')), returns.join(' | ').slice(0, 200))
+    // Every path that produces a BODY carries the banner. Since catalog issue #205 the
+    // function also has REFUSAL paths, which produce no body at all — requiring a banner
+    // there would be requiring a banner on a PR that is deliberately never opened.
+    const returns = (resolve.match(/return \{[^\n]+/g) || []).concat(resolve.match(/return aiMarker[^\n]+/g) || [])
+    const bodyReturns = returns.filter((r) => /ok: true/.test(r) || /^return aiMarker/.test(r))
+    const refusals = returns.filter((r) => /ok: false/.test(r))
+    check(S, 'every resolvePrBody body path carries the AI banner',
+      bodyReturns.length >= 2 && bodyReturns.every((r) => r.includes('aiMarker()')), bodyReturns.join(' | ').slice(0, 200))
+    check(S, 'and the refusal paths return no body to brand',
+      refusals.length >= 2 && refusals.every((r) => !r.includes('aiMarker()')), refusals.join(' | ').slice(0, 200))
 
     // 2. No script may read, store, or log a forge token. The user installs it into the
     //    CLI; the scripts only ever ask whether the CLI is authenticated.

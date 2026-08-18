@@ -170,7 +170,46 @@ if (joined.startsWith('pr view')) {
   const number = Number(args[2])
   const m = readMap()
   const pr = m.prs.find((p) => p.number === number)
-  console.log(JSON.stringify({ state: pr && pr.merged ? 'MERGED' : 'OPEN', comments: pr ? pr.comments.map((b) => ({ body: b })) : [], url: pr ? pr.url : '' }))
+  // Check status, driven by FAKE_GH_CHECKS (catalog issue #205). The real `gh pr view
+  // --json statusCheckRollup` returns a mix of CheckRun objects (status + conclusion) and
+  // StatusContext objects (state); both shapes appear here so the reader is exercised
+  // against what GitHub actually returns rather than a tidied-up version of it.
+  //
+  //   FAKE_GH_CHECKS=green   -> one passing CheckRun + one passing StatusContext
+  //   FAKE_GH_CHECKS=red     -> one passing, one FAILURE
+  //   FAKE_GH_CHECKS=pending -> one passing, one IN_PROGRESS
+  //   FAKE_GH_CHECKS=none    -> [] (a repo with no CI at all)
+  //   unset                  -> [] (same as none, so existing cases are unaffected)
+  const mode = process.env.FAKE_GH_CHECKS || 'none'
+  const rollup =
+    mode === 'green'
+      ? [
+          { __typename: 'CheckRun', name: 'build', status: 'COMPLETED', conclusion: 'SUCCESS' },
+          { __typename: 'StatusContext', context: 'ci/legacy', state: 'SUCCESS' },
+        ]
+      : mode === 'red'
+      ? [
+          { __typename: 'CheckRun', name: 'build', status: 'COMPLETED', conclusion: 'SUCCESS' },
+          { __typename: 'CheckRun', name: 'tests', status: 'COMPLETED', conclusion: 'FAILURE' },
+        ]
+      : mode === 'pending'
+      ? [
+          { __typename: 'CheckRun', name: 'build', status: 'COMPLETED', conclusion: 'SUCCESS' },
+          { __typename: 'CheckRun', name: 'tests', status: 'IN_PROGRESS', conclusion: null },
+        ]
+      : mode === 'unreadable'
+      ? null
+      : []
+  if (rollup === null) {
+    console.error('unknown JSON field: "statusCheckRollup"')
+    process.exit(1)
+  }
+  console.log(JSON.stringify({
+    state: pr && pr.merged ? 'MERGED' : 'OPEN',
+    comments: pr ? pr.comments.map((b) => ({ body: b })) : [],
+    url: pr ? pr.url : '',
+    statusCheckRollup: rollup,
+  }))
   process.exit(0)
 }
 

@@ -55,7 +55,7 @@ const tk = (id, blockedBy) => ({ id, path: `docs/prd/x/tickets/${id}.md`, issue:
 export async function run() {
   // PAR1: two independent tickets at concurrency 2 -> both delivered, lanes overlapped
   {
-    const { result, error, maxActive } = await drive({ tickets: [tk('A'), tk('B')], mode: 'autonomous', concurrency: 2 }, stdRespond)
+    const { result, error, maxActive } = await drive({ tickets: [tk('A'), tk('B')], mode: 'autonomous', noTests: true, concurrency: 2 }, stdRespond)
     check(S, 'PAR1 no error', !error, error && error.message)
     eq(S, 'PAR1 both delivered', result && result.results.map((r) => r.status).sort(), ['delivered', 'delivered'])
     check(S, 'PAR1 lanes overlapped (maxActive>1)', maxActive > 1, 'maxActive=' + maxActive)
@@ -65,7 +65,7 @@ export async function run() {
 
   // PAR2: B blocked_by A -> B's build must not start before A delivered
   {
-    const { result, events, error } = await drive({ tickets: [tk('A'), tk('B', ['A'])], mode: 'autonomous', concurrency: 3 }, stdRespond)
+    const { result, events, error } = await drive({ tickets: [tk('A'), tk('B', ['A'])], mode: 'autonomous', noTests: true, concurrency: 3 }, stdRespond)
     check(S, 'PAR2 no error', !error, error && error.message)
     eq(S, 'PAR2 both delivered', result && result.results.map((r) => r.status).sort(), ['delivered', 'delivered'])
     const aDeliverEnd = events.findIndex((e) => e.ev === 'end' && e.label.startsWith('deliver:A'))
@@ -75,7 +75,7 @@ export async function run() {
 
   // PAR3: A fails at build; B depends on A -> B skipped; independent C still delivered
   {
-    const { result, error } = await drive({ tickets: [tk('A'), tk('B', ['A']), tk('C')], mode: 'autonomous', concurrency: 3 }, ({ label }) => {
+    const { result, error } = await drive({ tickets: [tk('A'), tk('B', ['A']), tk('C')], mode: 'autonomous', noTests: true, concurrency: 3 }, ({ label }) => {
       if (kind(label) === 'plan') return plan(tid(label))
       if (kind(label) === 'build') return tid(label) === 'A' ? { branch: 'ticket/A', testsPassed: false, testOutput: 'red' } : goodBuild(tid(label))
       if (kind(label) === 'review') return CLEAR
@@ -91,14 +91,14 @@ export async function run() {
 
   // PAR4: deliver is serialized across lanes -> never more than one deliver at once
   {
-    const { maxDeliver, error } = await drive({ tickets: [tk('A'), tk('B'), tk('C')], mode: 'autonomous', concurrency: 3 }, stdRespond)
+    const { maxDeliver, error } = await drive({ tickets: [tk('A'), tk('B'), tk('C')], mode: 'autonomous', noTests: true, concurrency: 3 }, stdRespond)
     check(S, 'PAR4 no error', !error, error && error.message)
     eq(S, 'PAR4 deliver never overlaps (serialized merge)', maxDeliver, 1)
   }
 
   // PAR5: supervised forces concurrency=1 and stops after the first CLEAR
   {
-    const { result, error } = await drive({ tickets: [tk('A'), tk('B')], mode: 'supervised', concurrency: 5 }, ({ label }) => {
+    const { result, error } = await drive({ tickets: [tk('A'), tk('B')], mode: 'supervised', noTests: true, concurrency: 5 }, ({ label }) => {
       if (kind(label) === 'plan') return plan(tid(label))
       if (kind(label) === 'build') return goodBuild(tid(label))
       if (kind(label) === 'review') return CLEAR
@@ -112,7 +112,7 @@ export async function run() {
 
   // PAR6: parallel builders/reviewers are isolated; architect returns plan content used in the builder prompt
   {
-    const { events, error } = await drive({ tickets: [tk('A')], mode: 'autonomous', concurrency: 2 }, stdRespond)
+    const { events, error } = await drive({ tickets: [tk('A')], mode: 'autonomous', noTests: true, concurrency: 2 }, stdRespond)
     check(S, 'PAR6 no error', !error, error && error.message)
     const bs = events.find((e) => e.ev === 'start' && e.label.startsWith('build:A'))
     const rs = events.find((e) => e.ev === 'start' && e.label.startsWith('review:A'))
@@ -123,14 +123,14 @@ export async function run() {
 
   // PAR7: an in-run dependency cycle is failed by the deadlock guard, never hangs
   {
-    const { result, error } = await drive({ tickets: [tk('A', ['B']), tk('B', ['A'])], mode: 'autonomous', concurrency: 2 }, stdRespond)
+    const { result, error } = await drive({ tickets: [tk('A', ['B']), tk('B', ['A'])], mode: 'autonomous', noTests: true, concurrency: 2 }, stdRespond)
     check(S, 'PAR7 no error / no hang', !error, error && error.message)
     check(S, 'PAR7 cycle failed by the schedule guard', result && result.results.length === 2 && result.results.every((r) => r.status === 'failed' && r.stage === 'schedule'))
   }
 
   // PAR8: concurrency caps in-flight lanes (5 independent tickets, concurrency 2 -> maxActive <= 2*stages-ish; assert never all 5 at once)
   {
-    const { result, error, maxActive } = await drive({ tickets: ['A', 'B', 'C', 'D', 'E'].map((id) => tk(id)), mode: 'autonomous', concurrency: 2 }, stdRespond)
+    const { result, error, maxActive } = await drive({ tickets: ['A', 'B', 'C', 'D', 'E'].map((id) => tk(id)), mode: 'autonomous', noTests: true, concurrency: 2 }, stdRespond)
     check(S, 'PAR8 no error', !error, error && error.message)
     eq(S, 'PAR8 all five delivered', result && result.results.filter((r) => r.status === 'delivered').length, 5)
     check(S, 'PAR8 concurrency=2 caps in-flight lanes (maxActive well below 5 lanes)', maxActive <= 2, 'maxActive=' + maxActive)

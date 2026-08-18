@@ -67,7 +67,19 @@ function makeRepo({ withOrigin = true, withPlan = true, pushOptionMr = false } =
 }
 
 function deliver(repo, args, env = {}) {
-  const r = spawnSync(process.execPath, [SCRIPT, ...args], {
+  // The Definition of Done certifies "tests green", and since catalog issue #205 an
+  // UNEVALUATED test item no longer passes by default. Cases that are not about the test
+  // policy therefore have to say which they mean; they get the explicit waiver, so the
+  // thing under test stays the thing under test. Cases that ARE about it pass their own
+  // --test-cmd / --no-tests and this adds nothing.
+  // A case that is ABOUT the default (C6) opts out with this sentinel, which is stripped
+  // rather than forwarded — otherwise the harness's own convenience would hide the very
+  // behaviour under test.
+  const optsOut = args.includes('--e2e-omit-test-policy')
+  const cleaned = args.filter((a) => a !== '--e2e-omit-test-policy')
+  const declaresTestPolicy = cleaned.includes('--test-cmd') || cleaned.includes('--no-tests')
+  const full = optsOut || declaresTestPolicy ? cleaned : [...cleaned, '--no-tests']
+  const r = spawnSync(process.execPath, [SCRIPT, ...full], {
     cwd: repo,
     encoding: 'utf8',
     env: { ...process.env, GH_BIN: `node ${FAKE_GH}`, GLAB_BIN: `node ${FAKE_GLAB}`, ...env },
@@ -434,7 +446,11 @@ const assertAiMarker = (label, body) => {
     } finally { cleanup(root) }
   }
 
-  // P12b: the repo's own MR/PR template is the skeleton when no --body-file; Closes #N ensured
+  // P12b: a repo template + NO --body-file is a REFUSAL, not a fallback (issues #193, #205).
+  // This case previously asserted the opposite — that the unfilled template was submitted
+  // verbatim — which is the defect: any repo carrying a PR-contract check then fails it by
+  // construction (the reporting adopter saw `no requirement ID found` on all 32 PRs), and a
+  // human opening the PR is shown a form instead of a report.
   {
     const { root, repo } = makeRepo()
     try {
@@ -443,12 +459,51 @@ const assertAiMarker = (label, body) => {
       git(repo, ['add', '.github/pull_request_template.md'])
       git(repo, ['commit', '-q', '-m', 'chore: PR template'])
       const closed = join(root, 'closed.txt'); const log = join(root, 'ghbody.txt')
-      const { r } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'], { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_BODY_LOG: log })
-      eq(S, 'P12b exit 0', r.status, 0)
+      const { r, sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'], { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_BODY_LOG: log })
+      eq(S, 'P12b exit 0 (a refusal is still a definitive report)', r.status, 0)
+      check(S, 'P12b no PR was opened with an unfilled template', !existsSync(log) || !/SENTINEL_TEMPLATE/.test(readFileSync(log, 'utf8')))
+      eq(S, 'P12b it did not deliver', sum && sum.dodPassed, false)
+      check(S, 'P12b and the refusal names the template it refused to submit',
+        sum && /pull_request_template.md/.test(sum.notes), sum && sum.notes)
+      check(S, 'P12b and says what to do instead', sum && /pass --body-file/.test(sum.notes))
+    } finally { cleanup(root) }
+  }
+
+  // P12b2: a COMPOSED body is used verbatim, and Closes #N is still ensured.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      mkdirSync(join(repo, '.github'), { recursive: true })
+      writeFileSync(join(repo, '.github', 'pull_request_template.md'), '## Summary\n\n## Related\n')
+      git(repo, ['add', '.github/pull_request_template.md'])
+      git(repo, ['commit', '-q', '-m', 'chore: PR template'])
+      const bodyPath = join(root, 'body.md')
+      writeFileSync(bodyPath, '## Summary\nSENTINEL_COMPOSED did the thing.\n\n## Related\n')
+      const closed = join(root, 'closed.txt'); const log = join(root, 'ghbody.txt')
+      const { r } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--body-file', bodyPath], { FAKE_GH_CLOSED_STATE: closed, FAKE_GH_BODY_LOG: log })
+      eq(S, 'P12b2 exit 0', r.status, 0)
       const body = existsSync(log) ? readFileSync(log, 'utf8') : ''
-      check(S, 'P12b PR body uses the repo template', /SENTINEL_TEMPLATE/.test(body), body.slice(0, 200))
-      check(S, 'P12b Closes #7 ensured (under Related)', /Closes #7/.test(body))
-      assertAiMarker('P12b', body)
+      check(S, 'P12b2 the composed body is used', /SENTINEL_COMPOSED/.test(body), body.slice(0, 200))
+      check(S, 'P12b2 Closes #7 ensured on a supplied body too', /Closes #7/.test(body))
+      assertAiMarker('P12b2', body)
+    } finally { cleanup(root) }
+  }
+
+  // P12b3: a body byte-identical to the unfilled template is the same refusal — an agent
+  // that "composed" by copying the template has filled nothing in.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const tpl = '## Summary\n\n## Related\n'
+      mkdirSync(join(repo, '.github'), { recursive: true })
+      writeFileSync(join(repo, '.github', 'pull_request_template.md'), tpl)
+      git(repo, ['add', '.github/pull_request_template.md'])
+      git(repo, ['commit', '-q', '-m', 'chore: PR template'])
+      const bodyPath = join(root, 'body.md')
+      writeFileSync(bodyPath, tpl)
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--body-file', bodyPath], { FAKE_GH_CLOSED_STATE: join(root, 'c.txt') })
+      eq(S, 'P12b3 an unfilled copy of the template is refused', sum && sum.dodPassed, false)
+      check(S, 'P12b3 and the reason says nothing was filled in', sum && /nothing was filled in/.test(sum.notes), sum && sum.notes)
     } finally { cleanup(root) }
   }
 
@@ -464,6 +519,108 @@ const assertAiMarker = (label, body) => {
     } finally { cleanup(root) }
   }
 
+  // ---- CI gate on GitHub (catalog issue #205) -----------------------------------------
+  // The reported defect: with no branch protection, `gh pr merge` succeeds over red CI and
+  // there is no error to notice. 32 PRs merged that way, CI red on every one, every ticket
+  // reporting a passing Definition of Done. GitLab got this gate in #135; GitHub never did,
+  // and it failed SILENTLY rather than loudly, which is why it survived so long.
+
+  // C1: red checks -> refuse to merge, say which check, and do NOT pass the DoD
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { r, sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--test-cmd', 'node -e "0"'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'red' })
+      eq(S, 'C1 exit 0 (a refusal is a definitive report)', r.status, 0)
+      eq(S, 'C1 the merge did NOT happen', sum && sum.merged, false)
+      eq(S, 'C1 the DoD does not pass', sum && sum.dodPassed, false)
+      eq(S, 'C1 the CI status is recorded, not merely absent', sum && sum.checks.ciStatus, 'failing')
+      check(S, 'C1 the failing check is NAMED', sum && /tests=FAILURE/.test(sum.notes), sum && sum.notes)
+      check(S, 'C1 and it says a CLEAR verdict does not override CI',
+        sum && /does not override CI/.test(sum.notes))
+    } finally { cleanup(root) }
+  }
+
+  // C2: green checks -> merge proceeds, and the status is recorded as checked
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--test-cmd', 'node -e "0"'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'C2 merged', sum && sum.merged, true)
+      eq(S, 'C2 the DoD passes', sum && sum.dodPassed, true)
+      eq(S, 'C2 CI recorded as passing', sum && sum.checks.ciStatus, 'passing')
+      eq(S, 'C2 and as actually checked', sum && sum.checks.ciChecked, true)
+    } finally { cleanup(root) }
+  }
+
+  // C3: pending checks -> bounded wait, then leave the PR open rather than merging blind
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--test-cmd', 'node -e "0"'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'pending', DELIVER_MERGE_WAIT_MS: '1', DELIVER_MERGE_POLL_MS: '1' })
+      eq(S, 'C3 did not merge on pending checks', sum && sum.merged, false)
+      eq(S, 'C3 the DoD does not pass', sum && sum.dodPassed, false)
+      check(S, 'C3 the timeout says what it waited on', sum && /still pending after/.test(sum.notes), sum && sum.notes)
+    } finally { cleanup(root) }
+  }
+
+  // C4: a repo with NO checks still delivers — but says so. Refusing here would break every
+  // repository without CI; staying silent is what made the defect invisible.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--test-cmd', 'node -e "0"'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'none' })
+      eq(S, 'C4 an un-CI-d repo still delivers', sum && sum.merged, true)
+      eq(S, 'C4 the absence of checks is RECORDED', sum && sum.checks.ciStatus, 'no-checks')
+      check(S, 'C4 and stated plainly as an inoperative gate',
+        sum && /merge gate is inoperative/.test(sum.notes), sum && sum.notes)
+      eq(S, 'C4 ciChecked is false — nothing was verified', sum && sum.checks.ciChecked, false)
+    } finally { cleanup(root) }
+  }
+
+  // C5: an unreadable rollup is not 'green'
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--test-cmd', 'node -e "0"'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'unreadable' })
+      eq(S, 'C5 unreadable status is recorded as such', sum && sum.checks.ciStatus, 'unreadable')
+      check(S, 'C5 and flagged as unverified by CI', sum && /unverified by CI/.test(sum.notes), sum && sum.notes)
+    } finally { cleanup(root) }
+  }
+
+  // ---- the DoD test term (catalog issue #205) ------------------------------------------
+  // An optional check that defaults to PASS is not a check. Before this, a run with no
+  // --test-cmd satisfied 'tests green' without evaluating it, on all 32 delivered tickets.
+
+  // C6: no --test-cmd and no waiver -> the DoD FAILS, and says why
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--e2e-omit-test-policy'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'C6 testsPassed stays null — not run is not passed', sum && sum.checks.testsPassed, null)
+      eq(S, 'C6 the DoD does NOT pass', sum && sum.dodPassed, false)
+      check(S, 'C6 and the reason is stated, not left to be inferred from a false',
+        sum && /was NOT evaluated/.test(sum.notes), sum && sum.notes)
+    } finally { cleanup(root) }
+  }
+
+  // C7: --no-tests is an explicit waiver, recorded as a waiver and never as a pass
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--no-tests'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'C7 the DoD passes on an explicit waiver', sum && sum.dodPassed, true)
+      eq(S, 'C7 testsPassed is still null — the waiver did not fake a pass', sum && sum.checks.testsPassed, null)
+      eq(S, 'C7 the waiver is recorded', sum && sum.checks.testsWaived, true)
+      check(S, 'C7 and stated as a waiver, not a pass', sum && /not as a pass/.test(sum.notes), sum && sum.notes)
+    } finally { cleanup(root) }
+  }
   // P13: an untracked docs/plans/*.md (the Architect's ephemeral plan) must not trip the
   // clean-tree guard and block delivery (issue #58; the user had to move it by hand)
   {

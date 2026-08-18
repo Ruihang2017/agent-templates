@@ -2,6 +2,49 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
+## 0.15.0 — 2026-08-18
+
+**Scaffold change, and it will stop runs that used to pass.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .` over your existing install. Read the migration note at the end before your next run.
+
+### Fixed — delivery merged over red CI, and could not tell you it had (#205)
+
+A GitHub adopter merged **32 pull requests over eight days with CI failing on every one**. Every ticket carried a Builder green test run, a Reviewer CLEAR, and a passing Definition of Done. Nothing anywhere said otherwise.
+
+Four defects combined:
+
+**The GitHub merge path never read check status.** `deliver-ticket.mjs` opened the PR and called `gh pr merge` seconds later. GitLab got this gate in 0.12.0 (#135); GitHub never did — and it fails *differently*, which is why it survived. GitLab returns 405 and strands the MR loudly. GitHub, on a default branch with no protection, simply **succeeds**. There is no error to notice.
+
+Delivery now reads the forge's own checks on both platforms and refuses to merge a red or still-pending one, bounded, with what it waited for in the notes. A CLEAR verdict does not override CI. A red check is **never** rerouted to the integration branch — that would land unverified work by a different door.
+
+The summary now carries `checks.ciStatus`, naming which of **passing / failing / pending / no-checks / unreadable** actually happened. That field is the real fix: the defect was not only that a red merge landed, it was that a red merge and a green merge produced identical reports.
+
+**"Tests green" passed without being evaluated.** The term was `TEST_CMD ? testsPassed === true : true` — with no `--test-cmd`, the item was skipped and counted as satisfied. On the reporting project it was never evaluated on any of the 32 tickets. An optional check that defaults to pass is not a check.
+
+Now `testsPassed: null` means *not run*, and not-run is not passed. **Both schedulers refuse to start** without either a test command or an explicit `noTests: true` waiver — the answer is knowable at Gate 1 and nowhere cheaper. The waiver is recorded as a waiver and never as a pass.
+
+**The unfilled PR template was submitted as the body.** With no composed `--body-file`, your `.github/PULL_REQUEST_TEMPLATE.md` went up verbatim — so any repo with a PR-contract check failed it *by construction* (`no requirement ID found`, all 32 PRs), and a human opening the PR saw a form rather than a report. Delivery now refuses, per the conclusion #193 already reached for the Codex pattern. A body byte-identical to the template counts as absent: copying the template is not composing. Repos with **no** template keep the generated fallback body.
+
+**`adopt` never checked branch protection.** The pattern's guarantee is "merge through the forge so protection is respected"; on an unprotected branch that is vacuous, and nothing said so. `adopt` now detects and reports it on GitHub. It **detects rather than configures** — setting protection needs admin rights an adopter often lacks, and a silently failed attempt would be worse than saying nothing.
+
+### The root cause, stated plainly
+
+The pattern defined "tests green" as *the local test command*. On the reporting project that was a strict subset of CI — it excluded pytest, cargo, every supply-chain scan and the generated-bindings check, and ran on the one platform where one of the CI failures cannot occur at all.
+
+Local green and CI green had no causal relationship, and nothing in the pattern ever required that they do. **Every adopter whose CI is broader than its local test command has this hole.** It only becomes visible when CI actually goes red.
+
+### Migration — this will stop runs
+
+| If your project | What happens now |
+|---|---|
+| declares a **Test command** in CLAUDE.md | nothing changes; it is forwarded as before |
+| declares none | `/start-milestone` and `/start-all` **refuse to start**, naming both ways to satisfy it |
+| genuinely has no test suite | pass `noTests: true` — recorded as a waiver in every ticket summary |
+| has a PR/MR template | the pipeline already composes a body; a hand-run `deliver-ticket.mjs` now needs `--body-file` |
+| has red or pending CI | delivery stops instead of merging, and names the failing check |
+| has no CI at all | delivers as before, and says the merge gate is inoperative |
+
+Suite: 1735 checks. Mutation-verified: removing the CI gate turns 28 red, restoring the old DoD test term 1, accepting the unfilled template 3, and dropping the launch guard 2.
+
 ## 0.14.0 — 2026-08-18
 
 **Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .` over your existing install.

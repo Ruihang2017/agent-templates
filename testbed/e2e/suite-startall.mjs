@@ -109,7 +109,7 @@ export async function run() {
   {
     const tickets = [tk('A-1', [], '01-a'), tk('A-2', ['A-1'], '01-a'), tk('B-1', [], '02-b'), tk('B-2', [], '02-b')]
     const st = { tickets, calls: 0 }
-    const { result, error, overlaps, workflowCalls } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 3, rescanEvery: 0 }, makeRespond(st))
+    const { result, error, overlaps, workflowCalls } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 3, rescanEvery: 0 }, makeRespond(st))
     check(S, 'SA1 no error', !error, error && error.message)
     eq(S, 'SA1 every ticket delivered', result && result.results.every((r) => r.status === 'delivered'), true)
     eq(S, 'SA1 reports the global scheduler', result && result.scheduler, 'global-dag')
@@ -125,7 +125,7 @@ export async function run() {
     const st = { tickets, calls: 0 }
     const order = []
     const respond = makeRespond(st)
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 4, rescanEvery: 0 },
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 4, rescanEvery: 0 },
       async (c) => { if (kind(c.label) === 'plan') order.push(c.id); return respond(c) })
     check(S, 'SA2 no error', !error, error && error.message)
     eq(S, 'SA2 cross-module blocker ran first', order, ['A-1', 'B-1'])
@@ -137,7 +137,7 @@ export async function run() {
     const tickets = [tk('A-1', [], '01-a'), tk('A-2', ['A-1'], '01-a'), tk('B-1', [], '02-b')]
     const st = { tickets, calls: 0 }
     const respond = makeRespond(st)
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 3, rescanEvery: 0 },
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 3, rescanEvery: 0 },
       async (c) => (c.id === 'A-1' && kind(c.label) === 'build'
         ? { branch: 'ticket/A-1', testsPassed: false, testOutput: 'RED' }
         : respond(c)))
@@ -152,7 +152,7 @@ export async function run() {
     const tickets = [tk('A-1', [], '01-a'), tk('B-1', [], '02-b')]
     const st = { tickets, calls: 0 }
     const respond = makeRespond(st)
-    const { result, error, maxActive } = await drive(SRC, { tickets, mode: 'supervised', concurrency: 4, rescanEvery: 0 },
+    const { result, error, maxActive } = await drive(SRC, { tickets, mode: 'supervised', noTests: true, concurrency: 4, rescanEvery: 0 },
       async (c) => (kind(c.label) === 'deliver' ? { merged: false, issueClosed: false, dodPassed: false, awaitingMerge: true, prUrl: 'http://x/1' } : respond(c)))
     check(S, 'SA4 no error', !error, error && error.message)
     eq(S, 'SA4 supervised forced concurrency to 1', result && result.concurrency, 1)
@@ -167,7 +167,7 @@ export async function run() {
     const st = { tickets: tickets.slice(), calls: 0 }
     // after the first delivery, the outside world adds a ticket
     st.onDeliver = (id) => { if (id === 'A-1') st.tickets.push(tk('NEW-1', [], '03-new')) }
-    const { result, error, events } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    const { result, error, events } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 1 }, makeRespond(st))
     check(S, 'SA5 no error', !error, error && error.message)
     eq(S, 'SA5 the mid-run ticket was executed', statusOf(result, 'NEW-1'), 'delivered')
     eq(S, 'SA5 ticket count grew', result && result.ticketCount, 4)
@@ -202,7 +202,7 @@ export async function run() {
         st.tickets.push({ ...tk('NEW-1', [], '03-new'), state: 'open' })
       }
     }
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 1 }, makeRespond(st))
     check(S, 'SA5b no error', !error, error && error.message)
     check(S, 'SA5b the delivered ticket was NOT re-dispatched', !dispatched.includes('OLD-1'), dispatched.join(','))
     check(S, 'SA5b it never entered the schedule at all', !result.results.some((r) => r.id === 'OLD-1'))
@@ -231,7 +231,7 @@ export async function run() {
       }
       return makeRespond(st)(a)
     }
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 0 }, respond)
     check(S, 'SA5c no error', !error, error && error.message)
     check(S, 'SA5c a cleanup step runs after the tickets', !!cleanupPrompt)
     check(S, 'SA5c it names only the DELIVERED ticket ids', /--delivered A-1,A-2\b/.test(cleanupPrompt), cleanupPrompt.slice(0, 240))
@@ -269,7 +269,7 @@ export async function run() {
       if (a.label === 'cleanup') return { ok: true, worktreesPruned: false, branchesDeleted: [], branchesKept: ['ticket/A-1'] }
       return makeRespond(st)(a)
     }
-    const { result } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    const { result } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 0 }, respond)
     check(S, 'SA5d an uncleaned branch escalates',
       result.escalations.some((e) => /cleanup could not remove/.test(e) && /ticket\/A-1/.test(e)),
       JSON.stringify(result.escalations))
@@ -282,7 +282,7 @@ export async function run() {
     const tickets = [tk('A-1', [], 'x')]
     const st = { tickets: tickets.slice(), calls: 0 }
     const respond = async (a) => (a.label === 'cleanup' ? null : makeRespond(st)(a))
-    const { result } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    const { result } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 0 }, respond)
     check(S, 'SA5e a failed cleanup escalates rather than passing quietly',
       result.escalations.some((e) => /post-run cleanup did not complete/.test(e)),
       JSON.stringify(result.escalations))
@@ -303,7 +303,7 @@ export async function run() {
       return makeRespond(st)(a)
     }
     const { result, error } = await drive(SRC,
-      { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1, platform: 'none' }, respond)
+      { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 1, platform: 'none' }, respond)
     check(S, 'SA5f no error', !error, error && error.message)
     check(S, 'SA5f delivery runs in local mode', /--delivery local/.test(deliverPrompt), deliverPrompt.slice(0, 300))
     // the two flags that would drag a forge back onto the critical path
@@ -344,7 +344,7 @@ export async function run() {
       if (a.label === 'cleanup') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
       return makeRespond(st)(a)
     }
-    const { result } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0, platform: 'gh' }, respond)
+    const { result } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 0, platform: 'gh' }, respond)
     check(S, 'SA5g a gh run still passes --platform', /--platform gh/.test(deliverPrompt))
     check(S, 'SA5g a gh run does NOT use local delivery', !/--delivery local/.test(deliverPrompt))
     check(S, 'SA5g a gh run reports no local handoff', result.localHandoff === null)
@@ -355,7 +355,7 @@ export async function run() {
   {
     const tickets = [tk('A-1', [], 'x')]
     const st = { tickets: tickets.slice(), calls: 0 }
-    const { error } = await drive(SRC, { tickets, mode: 'autonomous', platform: 'gitea' }, makeRespond(st))
+    const { error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, platform: 'gitea' }, makeRespond(st))
     check(S, 'SA5h an unknown platform is rejected', !!error && /platform must be/.test(error.message), error && error.message)
   }
 
@@ -385,7 +385,7 @@ export async function run() {
       if (a.label === 'cleanup') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
       return makeRespond(st)(a)
     }
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 0 }, respond)
     check(S, 'SA5i no error', !error, error && error.message)
     check(S, 'SA5i the ticket did NOT deliver', !delivered)
     eq(S, 'SA5i it is escalated, not delivered', statusOf(result, 'A-1'), 'escalated')
@@ -409,7 +409,7 @@ export async function run() {
       if (a.label === 'cleanup') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
       return makeRespond(st)(a)
     }
-    const { result } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    const { result } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 0 }, respond)
     eq(S, 'SA5j all rows met still delivers', statusOf(result, 'A-1'), 'delivered')
   }
 
@@ -423,7 +423,7 @@ export async function run() {
       if (a.label === 'cleanup') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
       return makeRespond(st)(a)
     }
-    const { result } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, respond)
+    const { result } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 0 }, respond)
     eq(S, 'SA5k a verdict with no machineChecks still delivers', statusOf(result, 'A-1'), 'delivered')
   }
 
@@ -431,12 +431,12 @@ export async function run() {
   {
     const mk = () => [tk('A-1', [], 'x'), tk('A-2', [], 'x'), tk('A-3', [], 'x'), tk('A-4', [], 'x'), tk('A-5', [], 'x'), tk('A-6', [], 'x')]
     const stA = { tickets: mk(), calls: 0 }
-    const a = await drive(SRC, { tickets: mk(), mode: 'autonomous', concurrency: 1, rescanEvery: 3 }, makeRespond(stA))
+    const a = await drive(SRC, { tickets: mk(), mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 3 }, makeRespond(stA))
     // 6 settles => 2 cadence reloads, plus one forced final check
     eq(S, 'SA6 rescanEvery=3 over 6 tickets => 2 cadence + 1 final reload', a.result && a.result.rescans, 3)
 
     const stB = { tickets: mk(), calls: 0 }
-    const b = await drive(SRC, { tickets: mk(), mode: 'autonomous', concurrency: 1, rescanEvery: 0 }, makeRespond(stB))
+    const b = await drive(SRC, { tickets: mk(), mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 0 }, makeRespond(stB))
     eq(S, 'SA6 rescanEvery=0 disables reloading entirely', b.result && b.result.rescans, 0)
     eq(S, 'SA6 static mode still delivers everything', b.result && b.result.delivered, 6)
   }
@@ -447,7 +447,7 @@ export async function run() {
     const st = { tickets: tickets.slice(), calls: 0 }
     // added only once the original work is done — a cadence reload would never see it
     st.onScan = (n) => { if (n === 1) st.tickets.push(tk('LATE-1', [], 'x')) }
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 5 }, makeRespond(st))
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 5 }, makeRespond(st))
     check(S, 'SA7 no error', !error, error && error.message)
     eq(S, 'SA7 a ticket added after the last settle still runs', statusOf(result, 'LATE-1'), 'delivered')
   }
@@ -461,7 +461,7 @@ export async function run() {
       // retroactively claim A-1 was blocked by A-2 — it already ran
       st.tickets = st.tickets.map((t) => (t.id === 'A-1' ? { ...t, blockedBy: ['A-2'] } : t))
     }
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 1 }, makeRespond(st))
     check(S, 'SA8 no error', !error, error && error.message)
     eq(S, 'SA8 the already-delivered ticket stays delivered', statusOf(result, 'A-1'), 'delivered')
     check(S, 'SA8 the unenforceable edge is escalated, not silently applied',
@@ -476,7 +476,7 @@ export async function run() {
       if (id !== 'A-1') return
       st.tickets = st.tickets.map((t) => (t.id === 'C-1' ? { ...t, blockedBy: ['C-2'] } : t)) // C-1 <-> C-2
     }
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 1 }, makeRespond(st))
     check(S, 'SA9 no error (the run reports, it does not throw)', !error, error && error.message)
     eq(S, 'SA9 cycle member failed', statusOf(result, 'C-1'), 'failed')
     eq(S, 'SA9 other cycle member failed', statusOf(result, 'C-2'), 'failed')
@@ -488,7 +488,7 @@ export async function run() {
   {
     const tickets = [tk('A-1', [], 'x'), tk('A-2', [], 'x')]
     const st = { tickets: tickets.slice(), calls: 0, fail: true }
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 1 }, makeRespond(st))
     check(S, 'SA10 no error', !error, error && error.message)
     eq(S, 'SA10 in-flight work still completes on a broken scan', result && result.delivered, 2)
     check(S, 'SA10 the scan failure is escalated with its reason',
@@ -500,7 +500,7 @@ export async function run() {
     const tickets = [tk('A-1', [], 'x'), tk('DOOMED', [], 'x')]
     const st = { tickets: tickets.slice(), calls: 0 }
     st.onDeliver = (id) => { if (id === 'A-1') st.tickets = st.tickets.filter((t) => t.id !== 'DOOMED') }
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1 }, makeRespond(st))
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 1 }, makeRespond(st))
     check(S, 'SA11 no error', !error, error && error.message)
     eq(S, 'SA11 the deleted pending ticket is gone from the results', result && result.results.some((r) => r.id === 'DOOMED'), false)
     eq(S, 'SA11 the surviving ticket delivered', statusOf(result, 'A-1'), 'delivered')
@@ -512,7 +512,7 @@ export async function run() {
     const st = { tickets: tickets.slice(), calls: 0 }
     let n = 0
     st.onScan = () => { n += 1; st.tickets.push(tk('GROW-' + n, [], 'x')) } // grows forever
-    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', concurrency: 1, rescanEvery: 1, maxTickets: 4 }, makeRespond(st))
+    const { result, error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 1, maxTickets: 4 }, makeRespond(st))
     check(S, 'SA12 no error', !error, error && error.message)
     check(S, 'SA12 growth stops at maxTickets', result && result.ticketCount <= 4)
     check(S, 'SA12 the refusal is escalated', result && result.escalations.some((e) => /maxTickets/.test(e)))
@@ -524,12 +524,12 @@ export async function run() {
       const { error } = await drive(SRC, args, makeRespond({ tickets: [], calls: 0 }))
       check(S, 'SA13 rejects ' + why, !!error, 'expected a throw')
     }
-    await bad({ tickets: [], mode: 'autonomous' }, 'an empty ticket list')
+    await bad({ tickets: [], mode: 'autonomous', noTests: true }, 'an empty ticket list')
     await bad({ tickets: [tk('A-1')], mode: 'nope' }, 'an unknown mode')
-    await bad({ tickets: [tk('A-1')], mode: 'autonomous', concurrency: 0 }, 'concurrency < 1')
-    await bad({ tickets: [tk('A-1')], mode: 'autonomous', rescanEvery: -1 }, 'a negative rescanEvery')
-    await bad({ tickets: [{ id: 'A-1' }], mode: 'autonomous' }, 'a ticket without a path')
-    await bad({ tickets: [{ id: 'A-1', path: 'p', blockedBy: 'A-2' }], mode: 'autonomous' }, 'a non-array blockedBy')
+    await bad({ tickets: [tk('A-1')], mode: 'autonomous', noTests: true, concurrency: 0 }, 'concurrency < 1')
+    await bad({ tickets: [tk('A-1')], mode: 'autonomous', noTests: true, rescanEvery: -1 }, 'a negative rescanEvery')
+    await bad({ tickets: [{ id: 'A-1' }], mode: 'autonomous', noTests: true }, 'a ticket without a path')
+    await bad({ tickets: [{ id: 'A-1', path: 'p', blockedBy: 'A-2' }], mode: 'autonomous', noTests: true }, 'a non-array blockedBy')
   }
 
   // ---- SA14: PARITY with run-milestone on identical static input ----------------------
@@ -549,8 +549,8 @@ export async function run() {
           ? { branch: 'ticket/' + c.id, testsPassed: false, testOutput: 'RED' }
           : base(c))
       }
-      const g = await drive(SRC, { tickets: sc.tickets, mode: 'autonomous', concurrency: 2, rescanEvery: 0 }, mkRespond())
-      const m = await drive(RUNMILESTONE, { tickets: sc.tickets, mode: 'autonomous', concurrency: 2 }, mkRespond())
+      const g = await drive(SRC, { tickets: sc.tickets, mode: 'autonomous', noTests: true, concurrency: 2, rescanEvery: 0 }, mkRespond())
+      const m = await drive(RUNMILESTONE, { tickets: sc.tickets, mode: 'autonomous', noTests: true, concurrency: 2 }, mkRespond())
       check(S, `SA14 [${sc.name}] neither scheduler errored`, !g.error && !m.error, (g.error || m.error || {}).message)
       const norm = (res) => (res.results || []).slice().sort((a, b) => a.id.localeCompare(b.id)).map((r) => r.id + '=' + r.status).join(',')
       eq(S, `SA14 [${sc.name}] start-all and run-milestone agree per ticket`, norm(g.result || {}), norm(m.result || {}))
@@ -589,7 +589,7 @@ export async function run() {
 
     for (const c of [1, 2, 4, 6]) {
       const st = { tickets: P.slice(), calls: 0 }
-      const r = await drive(SRC, { tickets: P, mode: 'autonomous', concurrency: c, rescanEvery: 0 }, makeRespond(st))
+      const r = await drive(SRC, { tickets: P, mode: 'autonomous', noTests: true, concurrency: c, rescanEvery: 0 }, makeRespond(st))
 
       check(S, `SA15 c=${c} no error`, !r.error, r.error && r.error.message)
       const delivered = (r.result && r.result.results || []).filter((x) => x.status === 'delivered').length
@@ -617,7 +617,7 @@ export async function run() {
     const outcomes = []
     for (const c of [1, 2, 4, 6]) {
       const st = { tickets: P.slice(), calls: 0 }
-      const r = await drive(SRC, { tickets: P, mode: 'autonomous', concurrency: c, rescanEvery: 0 }, makeRespond(st))
+      const r = await drive(SRC, { tickets: P, mode: 'autonomous', noTests: true, concurrency: c, rescanEvery: 0 }, makeRespond(st))
       outcomes.push((r.result.results || []).slice().sort((a, b) => a.id.localeCompare(b.id)).map((x) => x.id + '=' + x.status).join(','))
     }
     eq(S, 'SA15 concurrency 1/2/4/6 all produce identical outcomes', new Set(outcomes).size, 1)
