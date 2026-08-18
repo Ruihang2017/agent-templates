@@ -312,7 +312,11 @@ function deliver(repo, args, { base, env = {} } = {}) {
   })
 }
 
-const DELIVER_ARGS = ['--id', 'FND-1', '--branch', 'ticket/FND-1', '--issue', '7', '--delivery', 'direct']
+// --no-tests: this suite is about the ASANA MIRROR, not the test policy. Since catalog
+// issue #205 a delivery with neither --test-cmd nor --no-tests fails the Definition of Done
+// by design, so the waiver keeps the subject under test the subject under test. (CI caught
+// the omission here that a local environment failure in this suite had been masking.)
+const DELIVER_ARGS = ['--id', 'FND-1', '--branch', 'ticket/FND-1', '--issue', '7', '--delivery', 'direct', '--no-tests']
 
 export async function run() {
   // ---- exit-code contract: the ONLY exit 1 is bad invocation -------------
