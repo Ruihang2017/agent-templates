@@ -112,6 +112,35 @@ export async function run() {
     }
   }
 
+  // The scaffold must not contradict itself about whether delivery is a pipeline stage
+  // (catalog issue #210). PR #207 removed the stage and rewrote the docs to argue it should
+  // not exist; PR #209 reverted the code but missed one file's rationale, and the pair
+  // shipped together in 0.14.0 — a reader was told the opposite of what README §2 says, in
+  // the same release. Derived from the code rather than a string blacklist, so it stays true
+  // whichever way a future change goes.
+  {
+    const runner = readFileSync(p('.claude/workflows/run-milestone.js'), 'utf8')
+    const stageExists = /label: 'deliver:'/.test(runner)
+    const denials = [
+      /delivery is not a subagent's job/i,
+      /used to be a fourth agent/i,
+      /delivery is the orchestrator's job now/i,
+    ]
+    for (const rel of ['.claude/commands/deliver-ticket.md', '.claude/agents/reviewer.md', '.claude/commands/start-all.md', '.claude/commands/start-milestone.md']) {
+      const path = p(rel)
+      if (!existsSync(path)) continue
+      const text = readFileSync(path, 'utf8')
+      const denies = denials.some((re) => re.test(text))
+      check(S, `${rel} does not deny a delivery stage the workflow actually has`, !(stageExists && denies))
+    }
+    // and the manual command must say WHY it is hand-run, not assert a policy that is untrue
+    const dt = readFileSync(p('.claude/commands/deliver-ticket.md'), 'utf8')
+    check(S, 'deliver-ticket explains the mechanical reason the pipeline has a stage',
+      /workflow script has no filesystem and no exec/.test(dt))
+    check(S, 'deliver-ticket still forbids re-typing a verdict',
+      /never writes or summarises a verdict/i.test(dt))
+  }
+
   for (const cmd of ['plan-ticket', 'build-ticket', 'review-ticket', 'verify-delivery', 'publish-tickets', 'start-milestone', 'start-all', 'deliver-ticket', 'nightly-issues', 'breakdown-prd']) {
     const path = p(`.claude/commands/${cmd}.md`)
     if (!existsSync(path)) continue

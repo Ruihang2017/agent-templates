@@ -1,11 +1,13 @@
 ---
-description: Deliver one reviewed-CLEAR ticket — you run this yourself; delivery is not a subagent's job
+description: Deliver one reviewed-CLEAR ticket by hand, after a /review-ticket CLEAR — the manual path the stage commands stop short of
 argument-hint: <ticket-id> [supervised]
 ---
 
 Arguments: `$ARGUMENTS` — the ticket id, and optionally the bare word `supervised` (open the PR/MR and stop for a human merge instead of merging).
 
-**You do this in THIS session. Do not spawn a subagent for it.** Delivery makes no judgement: it verifies a file, composes a report, and runs one command. It used to be a fourth agent, and being a separate context was its only distinguishing property — which is exactly what forced the Reviewer's approval to be handed across a boundary and re-typed by a third party (catalog issues #201, #206). You already hold every artifact that agent had to be given.
+**You do this in THIS session. Do not spawn a subagent for it.** You are already holding everything delivery needs — the ticket, the branch, the Reviewer's record — and handing those to a fresh context would buy nothing and cost the artifacts. (Inside a pipeline run it *is* a stage, because a workflow script has no filesystem and no exec, so an agent is the only actor there that can invoke a command. That is a mechanical constraint, not a role; see the pattern README §2.)
+
+Delivery makes no judgement in either place. In particular it **never writes or summarises a verdict**: the Reviewer authors its own record, and re-typing one is what a safety classifier read as one agent authoring another agent's approval, blocking delivery three times on already-CLEAR tickets (catalog issues #201, #208).
 
 Preconditions — stop if any is unmet, and say which:
 
