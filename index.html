@@ -357,7 +357,7 @@
             <div class="cmds-label">Commands</div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/breakdown-prd</code> <code class="cmd-hint">[prd-path] [focus notes, e.g. module-count hint or what to defer]</code></div><div class="cmd-desc">Decompose a PRD into sub-PRDs + template-compliant tickets (three-agent pattern, pre-Gate-1 planning); appends a new phase to an existing PRD tree without touching delivered work</div></div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/build-ticket</code> <code class="cmd-hint">&lt;ticket-id&gt;</code></div><div class="cmd-desc">Run the Builder stage on a planned ticket (three-agent pattern)</div></div>
-            <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/deliver-ticket</code> <code class="cmd-hint">&lt;ticket-id&gt; [supervised]</code></div><div class="cmd-desc">Deliver one reviewed-CLEAR ticket — you run this yourself; delivery is not a subagent's job</div></div>
+            <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/deliver-ticket</code> <code class="cmd-hint">&lt;ticket-id&gt; [supervised]</code></div><div class="cmd-desc">Deliver one reviewed-CLEAR ticket by hand, after a /review-ticket CLEAR — the manual path the stage commands stop short of</div></div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/nightly-issues</code> <code class="cmd-hint">[max-issues]</code></div><div class="cmd-desc">Nightly issue sweep — triage open issues, auto-fix the fixable ones through the three-agent pipeline, post the morning report (designed for headless `claude -p &quot;/nightly-issues&quot;`)</div></div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/plan-ticket</code> <code class="cmd-hint">&lt;ticket-id or path to ticket file&gt;</code></div><div class="cmd-desc">Run the Architect stage on a ticket (three-agent pattern)</div></div>
             <div class="cmd"><div class="cmd-sig"><code class="cmd-name">/publish-tickets</code> <code class="cmd-hint">&lt;module dir, e.g. docs/prd/01-foo&gt; [--all]</code></div><div class="cmd-desc">Publish a module's tickets as tracker issues (and Asana subtasks if connected), then STOP — no pipeline run</div></div>
@@ -925,7 +925,7 @@
 
   <footer>
     Generated from the pattern catalog by <a href="https://github.com/Ruihang2017/agent-templates/blob/main/scripts/build-site.mjs"><code>scripts/build-site.mjs</code></a>
-    · 2026-08-17 · <a href="https://github.com/Ruihang2017/agent-templates/blob/main/LICENSE">MIT</a>
+    · 2026-08-18 · <a href="https://github.com/Ruihang2017/agent-templates/blob/main/LICENSE">MIT</a>
     · <a href="https://github.com/Ruihang2017/agent-templates/issues/new/choose">Feedback → issues</a>
   </footer>
 </div>
