@@ -35,9 +35,11 @@ In this mode you must **not** publish tickets (step 3 is skipped entirely), and 
      mode, concurrency, defaultBranch, platform,
      rescanEvery: 3,            // reload the DAG every N settled tickets; 0 disables
      prdRoot: 'docs/prd',
-     testCmd                    // optional, if CLAUDE.md declares one
+     testCmd                    // REQUIRED — see below; or noTests: true instead
    }
    ```
+
+   **`testCmd` is required, and the run refuses to start without it** (issue #205). The Definition of Done certifies "tests green", and an item that cannot be evaluated used to pass by default — on one adopter, across all 32 delivered tickets. Read it from the CLAUDE.md **Test command** line. If this repository genuinely has no test suite, pass `noTests: true` instead: that is recorded as a **waiver** in every ticket summary and never as a pass. Do not invent a command to satisfy the guard — a wrong test command reads as verified, which is worse than an absent one.
 
    Build `tickets` by joining step 2 (`id`, `module`, `path`, `blockedBy`) with step 3 (`issue`) on `id`. **Keep `blockedBy` complete — including cross-module edges.** They gate scheduling directly now; dropping them would let a ticket start before its blocker. This command's instruction is your authorization to use the Workflow tool.
 

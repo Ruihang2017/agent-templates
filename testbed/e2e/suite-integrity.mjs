@@ -133,6 +133,31 @@ export async function run() {
       const denies = denials.some((re) => re.test(text))
       check(S, `${rel} does not deny a delivery stage the workflow actually has`, !(stageExists && denies))
     }
+    // A command must not describe as OPTIONAL an argument the workflow throws without
+    // (catalog issue #214). Derived from the workflow source — every `if (!cfg.X && ...)
+    // throw` guard names an argument that is required — so this keeps working for the next
+    // guard somebody adds, rather than being a list of today's known strings.
+    {
+      for (const [wf, cmds] of [
+        ['run-milestone.js', ['start-milestone.md']],
+        ['start-all.js', ['start-all.md']],
+      ]) {
+        const src = readFileSync(p('.claude/workflows/' + wf), 'utf8')
+        const required = [...src.matchAll(/if \(!cfg\.([A-Za-z]+)[\s\S]{0,120}?throw new Error/g)].map((m) => m[1])
+        check(S, `${wf} was scanned for required args`, required.length > 0, required.join(', '))
+        for (const cmd of cmds) {
+          const text = readFileSync(p('.claude/commands/' + cmd), 'utf8')
+          for (const arg of required) {
+            // "optional" within ~80 characters of the argument name, in either order
+            const near = new RegExp(`(${arg}[^\n]{0,80}optional|optional[^\n]{0,80}${arg})`, 'i')
+            check(S, `${cmd} does not call the required arg ${arg} optional`, !near.test(text),
+              (text.match(near) || [''])[0].slice(0, 120))
+            check(S, `${cmd} names ${arg} as required`, new RegExp(arg, 'i').test(text))
+          }
+        }
+      }
+    }
+
     // and the manual command must say WHY it is hand-run, not assert a policy that is untrue
     const dt = readFileSync(p('.claude/commands/deliver-ticket.md'), 'utf8')
     check(S, 'deliver-ticket explains the mechanical reason the pipeline has a stage',
