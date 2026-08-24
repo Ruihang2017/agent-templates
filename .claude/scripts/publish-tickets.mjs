@@ -113,13 +113,64 @@ if (PLATFORM !== 'gh' && PLATFORM !== 'glab') {
 }
 console.log(`platform: ${PLATFORM}${detectedFrom ? ` (autodetected from ${detectedFrom}; override with --platform)` : ''}`)
 
-let cliOk = false
-try {
-  cli(PLATFORM, ['auth', 'status'], { stdio: ['ignore', 'ignore', 'ignore'] })
-  cliOk = true
-} catch {}
+
+// ---------------------------------------------------------------------------
+// Forge auth probe, scoped to THIS repository's host (catalog issue #220).
+//
+// `glab auth status` checks EVERY host in the glab config and exits non-zero if any of
+// them fails. One adopter had a second host left over from a move between forges, with an
+// expired token; all 23 modules then failed to publish with "glab not found or not
+// authenticated — install it and run `glab auth login`". Every word of that was false:
+// glab was installed, authenticated and working against the host that mattered.
+//
+// Two properties follow, and the second matters as much as the first:
+//   1. probe `--hostname <host>` derived from the origin remote (gh takes the same flag);
+//   2. never replace the CLI's own stderr with a guess. The real output named the failing
+//      host in its first line, and the invented message pointed at the wrong remedy.
+//
+// A stale host is not merely confusing to remove, either: `glab auth logout --hostname h`
+// deletes the TOKEN but leaves the host stanza in config.yml, so an unscoped probe keeps
+// failing. That is why this scopes rather than telling anyone to log in again.
+const forgeHost = () => {
+  try {
+    const origin = run('git', ['remote', 'get-url', 'origin'], { stdio: ['ignore', 'pipe', 'ignore'] }).trim()
+    return (origin.match(/(?:@|:\/\/)([^/:]+)[/:]/) || [])[1] || ''
+  } catch { return '' }
+}
+
+/**
+ * Returns { ok, state, host, detail } where state is one of:
+ *   authenticated | not-installed | not-authenticated | unknown
+ *
+ * The three states need three different actions, so they are never collapsed into one
+ * message. `detail` carries the CLI's own words.
+ */
+const probeAuth = () => {
+  const host = forgeHost()
+  const args = host ? ['auth', 'status', '--hostname', host] : ['auth', 'status']
+  try {
+    cli(PLATFORM, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    return { ok: true, state: 'authenticated', host, detail: '' }
+  } catch (e) {
+    const out = String((e && (e.stderr || e.stdout || e.message)) || e)
+    if (/ENOENT|not recognized|command not found/i.test(out)) {
+      return { ok: false, state: 'not-installed', host, detail: out.split('\n')[0] }
+    }
+    return { ok: false, state: 'not-authenticated', host, detail: out.split('\n').filter(Boolean).slice(0, 3).join(' | ') }
+  }
+}
+
+const authAdvice = (p, PLAT) =>
+  p.state === 'not-installed'
+    ? `${PLAT} is not installed or not on PATH. Install it, then run \`${PLAT} auth login\`.`
+    : `${PLAT} is installed but not authenticated to ${p.host || 'this forge'}. Run \`${PLAT} auth login --hostname ${p.host || '<host>'}\`. ` +
+      `The CLI said: ${p.detail || '(no output)'}`
+// ---------------------------------------------------------------------------
+
+const authProbe = probeAuth()
+const cliOk = authProbe.ok
 if (CREATE && !cliOk) {
-  console.error(`x ${PLATFORM} not found or not authenticated — install it and run \`${PLATFORM} auth login\`.`)
+  console.error(`x ${authAdvice(authProbe, PLATFORM)}`)
   process.exit(1)
 }
 if (!cliOk) {
