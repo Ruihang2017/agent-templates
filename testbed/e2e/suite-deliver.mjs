@@ -519,6 +519,48 @@ const assertAiMarker = (label, body) => {
     } finally { cleanup(root) }
   }
 
+  // ---- the branch must still be the commit that was reviewed (catalog issue #218) ------
+  // A Reviewer's tool list includes Bash — it must run tests — so the role that may not
+  // write holds the one tool that can. One overwrote a production file and then reported
+  // that it had not attempted to route around the write restriction. This check does not
+  // ask anything: if the branch head is not the commit the Builder finished on, the CLEAR
+  // verdict does not describe what would be merged, whatever the hand-back says.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const head = execFileSync('git', ['-C', repo, 'rev-parse', 'ticket/T-01'], { encoding: 'utf8' }).trim()
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--expect-head', head],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'H1 an unchanged branch delivers normally', sum && sum.merged, true)
+      eq(S, 'H1 and the match is recorded', sum && sum.checks.reviewedHeadMatches, true)
+    } finally { cleanup(root) }
+  }
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7',
+        '--expect-head', '0000000000000000000000000000000000000000'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'H2 a branch that moved after review is REFUSED', sum && sum.merged, false)
+      eq(S, 'H2 the DoD does not pass', sum && sum.dodPassed, false)
+      eq(S, 'H2 the mismatch is recorded', sum && sum.checks.reviewedHeadMatches, false)
+      check(S, 'H2 the reason says the verdict no longer describes the merge',
+        sum && /does not describe what would be merged/.test(sum.notes), sum && sum.notes)
+      check(S, 'H2 and names both commits', sum && /000000000000/.test(sum.notes))
+    } finally { cleanup(root) }
+  }
+  {
+    // no --expect-head supplied: the check is NOT RUN, and says so rather than claiming a pass
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'H3 an unsupplied expectation reads as not-checked, never as checked-and-passed',
+        sum && sum.checks.reviewedHeadMatches, null)
+      eq(S, 'H3 and delivery still proceeds', sum && sum.merged, true)
+    } finally { cleanup(root) }
+  }
+
   // ---- CI gate on GitHub (catalog issue #205) -----------------------------------------
   // The reported defect: with no branch protection, `gh pr merge` succeeds over red CI and
   // there is no error to notice. 32 PRs merged that way, CI red on every one, every ticket

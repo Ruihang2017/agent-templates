@@ -105,7 +105,7 @@ const PLAN = {
 }
 const BUILD = {
   type: 'object',
-  properties: { branch: { type: 'string' }, testsPassed: { type: 'boolean' }, testOutput: { type: 'string' }, deviations: { type: 'string' }, summary: { type: 'string' } },
+  properties: { branch: { type: 'string' }, testsPassed: { type: 'boolean' }, testOutput: { type: 'string' }, deviations: { type: 'string' }, summary: { type: 'string' }, headSha: { type: 'string' } },
   required: ['branch', 'testsPassed', 'testOutput'],
 }
 const VERDICT = {
@@ -178,6 +178,26 @@ const SCAN = {
 
 const normalizePath = function (p) { return String(p || '').replace(/\\/g, '/').replace(/^\.\//, '').trim() }
 
+// Turn a REJECTED agent call into a null result (catalog issue #217).
+//
+// The harness returns null when a subagent dies on a terminal API error, but a transport
+// fault mid-response can surface as a REJECTION instead, and an uncaught rejection unwinds
+// the whole workflow rather than failing one stage. In one observed run the reviewer died
+// with "Connection lost mid-response", the workflow came apart, and the orchestrating
+// session — left holding a half-finished ticket — COMPOSED A CLEAR VERDICT ITSELF and
+// handed it to delivery. Only an external safety classifier stopped the merge.
+//
+// The pattern's whole claim is "no agent judges its own work", and it was removing that
+// property by itself on a network blip. Both failure shapes must therefore reach the same
+// deterministic retry-then-escalate path, where `delivered: 0` is a fine outcome and a
+// fabricated CLEAR is not.
+const safely = function (p) {
+  return Promise.resolve(p).then(
+    function (v) { return v },
+    function (e) { log('stage call failed (' + (e && e.message ? e.message : String(e)) + ') -- treated as no result'); return null }
+  )
+}
+
 const makeLock = function () {
   let tail = Promise.resolve()
   return function (fn) { const run = tail.then(fn); tail = run.then(function () {}, function () {}); return run }
@@ -192,13 +212,13 @@ async function runTicket(t, opts) {
   const planPath = 'docs/plans/' + t.id + '.md'
 
   log('[' + t.id + '] architect: planning')
-  const plan = await agent(
+  const plan = await safely(agent(
     'You are running as the Architect stage of the three-agent pattern. Ticket file: ' + t.path +
     '. Produce the implementation plan per your role definition and write it to EXACTLY ' + planPath +
     '. Return planPath (must be ' + planPath + ') and a one-paragraph summary.' +
     (isolate ? ' ALSO return the full plan text in the `content` field -- the Builder runs in an isolated worktree and cannot read the plan file.' : ''),
     { agentType: 'architect', label: 'plan:' + t.id, phase: P, schema: PLAN }
-  )
+  ))
   if (!plan || normalizePath(plan.planPath) !== planPath) {
     return { id: t.id, status: 'failed', stage: 'architect', detail: plan ? 'plan written to unexpected path: ' + plan.planPath : 'architect agent returned nothing' }
   }
@@ -210,19 +230,20 @@ async function runTicket(t, opts) {
     : 'Plan: ' + planPath + '. '
 
   log('[' + t.id + '] builder: implementing on ' + branch)
-  let build = await agent(
+  let build = await safely(agent(
     'Builder stage. Ticket: ' + t.path + '. ' + planForBuilder + 'Create branch ' + branch +
     ' from ' + cfg.defaultBranch + ', implement it there, commit, run the tests. Do NOT merge and do NOT touch the tracker. ' +
     'Return branch (must be ' + branch + '), testsPassed, testOutput (paste real output), deviations, ' +
+    'headSha = the full SHA of your final commit on that branch (`git rev-parse HEAD`), ' +
     'and summary = one paragraph on WHAT you changed and why, written for a human reviewer and describing only what you actually did -- it is quoted into the pull request body.',
     Object.assign({ agentType: 'builder', label: 'build:' + t.id, phase: P, schema: BUILD }, buildIsolation)
-  )
+  ))
   if (buildBad(build)) {
     return { id: t.id, status: 'failed', stage: 'builder', detail: !build ? 'builder agent returned nothing' : (String(build.branch).trim() !== branch ? 'worked on wrong branch: ' + build.branch : build.testOutput) }
   }
 
   const reviewOnce = function (tag) {
-    return agent(
+    return safely(agent(
       'Reviewer stage. Inputs (artifact refs only): ticket ' + t.path + ', plan ' + planPath +
       ', diff = branch ' + branch + ' vs ' + cfg.defaultBranch + '. ' +
       (isolate ? 'You are in a fresh isolated worktree: `git fetch` if needed, then `git checkout --detach ' + branch + '` (detached, so a busy branch elsewhere is fine) to get the code, and run the tests there. ' : '') +
@@ -233,7 +254,7 @@ async function runTicket(t, opts) {
       'Nobody else writes this file and nobody re-types it -- it is posted on the pull request as YOUR words, and a verdict with no record is refused at delivery. Write it on BOUNCE as well as CLEAR, and return recordPath. ' +
     'Return verdict CLEAR or BOUNCE with findings (a BOUNCE with zero findings is invalid).',
       Object.assign({ agentType: 'reviewer', label: 'review:' + t.id + '#' + tag, phase: P, schema: VERDICT }, isolate ? { isolation: 'worktree' } : {})
-    )
+    ))
   }
   const reviewValid = function (v) {
     if (!v) return false
@@ -250,12 +271,12 @@ async function runTicket(t, opts) {
   while (!reviewerBroken && verdict.verdict === 'BOUNCE' && bounces < cfg.maxBounces) {
     bounces += 1
     log('[' + t.id + '] bounce ' + bounces + '/' + cfg.maxBounces + ': back to builder with ' + verdict.findings.length + ' finding(s)')
-    build = await agent(
+    build = await safely(agent(
       'Builder stage, bounce fix. Ticket: ' + t.path + '. ' + planForBuilder + 'Stay on branch ' + branch +
       ' -- do NOT merge and do NOT touch the tracker. Reviewer findings -- address ALL of them and add regression tests: ' +
-      JSON.stringify(verdict.findings) + '. Run the tests. Return branch (must be ' + branch + '), testsPassed, testOutput, deviations.',
+      JSON.stringify(verdict.findings) + '. Run the tests. Return branch (must be ' + branch + '), testsPassed, testOutput, deviations, summary, and headSha (the full SHA of your final commit, `git rev-parse HEAD`).',
       Object.assign({ agentType: 'builder', label: 'fix:' + t.id + '#' + bounces, phase: P, schema: BUILD }, buildIsolation)
-    )
+    ))
     if (buildBad(build)) { fixBroken = true; break }
     verdict = await reviewOnce(String(bounces))
     if (!reviewValid(verdict)) { log('[' + t.id + '] reviewer returned no usable verdict -- retrying once'); verdict = await reviewOnce(bounces + '-retry') }
@@ -294,7 +315,7 @@ async function runTicket(t, opts) {
   const recordPath = '.claude/tmp/' + t.id + '-verdict.md'
   const bodyFile = '.claude/tmp/' + t.id + '-mrbody.md'
   const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
-    ' --default-branch ' + cfg.defaultBranch + (LOCAL_ONLY ? ' --delivery local' : ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '')) +
+    ' --default-branch ' + cfg.defaultBranch + ((build && build.headSha) ? ' --expect-head ' + String(build.headSha).trim() : '') + (LOCAL_ONLY ? ' --delivery local' : ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '')) +
     (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : ' --no-tests') + ' --verdict-file ' + recordPath + ' --body-file ' + bodyFile +
     (cfg.mode === 'supervised' ? ' --no-merge' : '')
   // The Reviewer wrote its own record. This stage VERIFIES it and points the script at

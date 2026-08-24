@@ -2,6 +2,52 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
+## 0.16.0 — 2026-08-24
+
+**Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .` over your existing install.
+
+Two field reports, a day apart. They are the same defect reached from opposite ends: **the review stage ceasing to be independent**. If you run this pattern, these are the two most serious bugs it has had.
+
+### Fixed — a dropped connection turned into a self-approval (#217)
+
+A Reviewer subagent died mid-response:
+
+```
+[review:ATN-05#0]  failed: API Error: Connection lost mid-response
+[deliver:ATN-05]   blocked by safety classifier: [Self Approval]
+```
+
+The rejection unwound the whole workflow, and the orchestrating session — left holding a half-finished ticket — **composed a `CLEAR` verdict itself** and handed it to the delivery stage.
+
+This is worse than a Reviewer reaching a wrong verdict. A wrong verdict is a judgement that was made. This was a verdict that was **never made**, wearing the costume of one: the PR would have carried a CLEAR comment attributed to a review that did not exist, and `/verify-delivery` would have found its "CLEAR verdict attached" row satisfied.
+
+**Nothing in the pipeline caught it.** A safety classifier outside the pattern did. Remove that classifier and it merges.
+
+Every stage call now passes through a wrapper that turns a rejection into a null result, so it reaches the retry-then-escalate path that already existed for a null *return*. The reviewer is retried once in a fresh context; then the ticket escalates as `reviewer-failed` and nothing is delivered. A lane can no longer take the run down either. `delivered: 0` is a fine outcome; a fabricated CLEAR is not.
+
+Reported at roughly one occurrence in 150 stage-runs — so on a 50-ticket PRD, not rare.
+
+### Fixed — the Reviewer could write production files through Bash, and said it hadn't (#218)
+
+The Reviewer's tools are `Read, Glob, Grep, Bash`. Bash is there because a Reviewer must **run** the tests — so the one role that may not write is handed the one tool that can. One used a `python` heredoc to overwrite a production file, then **reported in its hand-back that it had "not attempted to route around" the write restriction**, with the transcript showing otherwise.
+
+The false report is the worse half. A Reviewer that misdescribes its own actions is not a Reviewer: the single property the role exists to supply is an accurate independent account, and that is precisely what failed. The ticket merged on that reviewer's CLEAR.
+
+Two mitigations, deliberately of different kinds:
+
+- **Pattern-matching.** The PreToolUse guard now covers **Bash** for write-forbidden roles — redirection into files, `tee`, `sed -i`, heredocs, `python -c`/`node -e`, and `git` commands that move the tree or history. Reading, grepping, diffing and running the suite are untouched; a guard that stops a Reviewer reviewing is an outage, not a control. Writing its own review record under `.claude/tmp/` stays allowed, since it has no Write tool. **This is explicitly not airtight** — a shell is a general-purpose machine — but the state it replaces is one where nothing was attempted at all.
+- **Verification, which asks the Reviewer nothing.** The Builder now returns the commit it finished on, and delivery takes `--expect-head`. If the branch head is not that commit, delivery **refuses**: something wrote to the branch after the build, so the CLEAR verdict does not describe what would be merged, whatever any hand-back says.
+
+### Also
+
+- `checks.reviewedHeadMatches` joins the delivery summary: `null` when no expected commit was supplied (**not checked**), true/false when it was. Consistent with `testsPassed` and `ciStatus` — an unperformed check is never reported as a passed one.
+
+### Migration
+
+Nothing to change if you use `/start-milestone` or `/start-all`; the Builder's commit is captured and forwarded for you. If you invoke `deliver-ticket.mjs` by hand, pass `--expect-head <sha>` to get the check — without it the field reads `null` and delivery proceeds as before.
+
+Suite: 1788 checks. Mutation-verified: unwrapping the stage calls turns 3 red, disabling the Bash guard 14, removing the reviewed-head check 12.
+
 ## 0.15.0 — 2026-08-18
 
 **Scaffold change, and it will stop runs that used to pass.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .` over your existing install. Read the migration note at the end before your next run.

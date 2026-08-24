@@ -143,6 +143,72 @@ export async function run() {
     check(S, 'S2 reviewer isolation (no test output/deviations leak)', reviewsCalls.every((c) => !c.prompt.includes('SENTINEL_TEST_OUTPUT') && !c.prompt.includes('SENTINEL_DEVIATIONS')))
   }
 
+  // S2b: a stage that THROWS is a stage that failed (catalog issue #217).
+  //
+  // A reviewer died with 'Connection lost mid-response'. The rejection propagated out of
+  // runTicket and out of the whole workflow, and the orchestrating session — left holding
+  // a half-finished ticket — composed a CLEAR verdict itself and handed it to delivery.
+  // Only an external safety classifier stopped the merge. Remove that classifier and it
+  // merges: the pipeline removed 'no agent judges its own work' by itself, on a blip.
+  {
+    let reviews = 0
+    const { result, calls, error } = await runWorkflow({ ...baseArgs, tickets: [tickets2[0]] }, ({ label }) => {
+      if (kind(label) === 'plan') return plan(tid(label))
+      if (kind(label) === 'build') return goodBuild(tid(label))
+      if (kind(label) === 'review') { reviews++; throw new Error('API Error: Connection lost mid-response') }
+      if (kind(label) === 'deliver') return goodDelivery
+      return null
+    })
+    check(S, 'S2b the run does NOT come apart', !error, error && error.message)
+    const r0 = result && result.results[0]
+    check(S, 'S2b the ticket escalates as reviewer-failed', r0 && r0.status === 'escalated' && r0.stage === 'reviewer-failed', JSON.stringify(r0))
+    eq(S, 'S2b the review was retried once, then given up on', reviews, 2)
+    eq(S, 'S2b NOTHING was delivered', calls.filter((c) => kind(c.label) === 'deliver').length, 0)
+    check(S, 'S2b delivered: 0 is a fine outcome; a fabricated CLEAR is not',
+      !calls.some((c) => kind(c.label) === 'deliver'))
+  }
+
+  // S2c: the same for a throwing BUILDER — the escape hatch was never review-specific.
+  {
+    const { result, error } = await runWorkflow({ ...baseArgs, tickets: [tickets2[0]] }, ({ label }) => {
+      if (kind(label) === 'plan') return plan(tid(label))
+      if (kind(label) === 'build') throw new Error('API Error: Connection lost mid-response')
+      return null
+    })
+    check(S, 'S2c a throwing builder does not unwind the run', !error, error && error.message)
+    const r0 = result && result.results[0]
+    check(S, 'S2c it fails at the builder stage', r0 && r0.status === 'failed' && r0.stage === 'builder', JSON.stringify(r0))
+  }
+
+  // S2d: no code path composes a verdict. The workflow may carry a PATH the Reviewer
+  // wrote; it may never carry, or invent, the verdict text itself.
+  {
+    const src = readFileSync(SRC_URL, 'utf8')
+    // A regex over the source cannot tell "the word CLEAR appears in the reviewer's own
+    // prompt" from "a verdict was composed for delivery" — the first IS the pattern working.
+    // So the substantive check is on the runtime artifact: what delivery is actually handed.
+    const code = src.replace(/^\s*\/\/.*$/gm, '')
+    check(S, 'S2d no <<<VERDICT block is built', !/<<<VERDICT/.test(code))
+    check(S, 'S2d no fallback invents a verdict when the reviewer returned none',
+      !/returned no note text/.test(code))
+    {
+      const { calls } = await runWorkflow({ ...baseArgs, tickets: [tickets2[0]] }, ({ label }) => {
+        if (kind(label) === 'plan') return plan(tid(label))
+        if (kind(label) === 'build') return goodBuild(tid(label))
+        if (kind(label) === 'review') return { verdict: 'CLEAR', checkedNote: 'SENTINEL_VERDICT_TEXT', recordPath: '.claude/tmp/T-01-verdict.md' }
+        if (kind(label) === 'deliver') return goodDelivery
+        return null
+      })
+      const d = calls.find((c) => kind(c.label) === 'deliver')
+      check(S, 'S2d the delivery stage is handed the record PATH', !!d && d.prompt.includes('.claude/tmp/T-01-verdict.md'))
+      check(S, 'S2d and NOT the verdict text the reviewer returned', !!d && !d.prompt.includes('SENTINEL_VERDICT_TEXT'))
+      check(S, 'S2d it is told to VERIFY the record, not to write one',
+        !!d && /verify .*-verdict\.md exists and is NOT empty/i.test(d.prompt))
+    }
+    check(S, 'S2d stage calls are wrapped so a rejection cannot escape', /safely\(agent\(/.test(src))
+    check(S, 'S2d and the sequential lane cannot take the run down', /runTicket\(t, \{ isolate: false \}\)\.catch\(/.test(src))
+  }
+
   // S3: bounce cap exhausted -> escalated stage review; fail-fast stops ticket 2
   {
     const { result, calls, error } = await runWorkflow(baseArgs, ({ label }) => {
