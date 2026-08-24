@@ -193,6 +193,26 @@ if (joined.startsWith('issue view')) {
 if (joined.startsWith('issue note')) { console.log(`https://gitlab.example.com/acme/repo/-/issues/${args[2]}#note_1`); process.exit(0) }
 
 // ---- MR surface ----
+// catalog issue #202: the GitLab branch had the same first-match-wins shape, and the
+// CLI listing carries no state — so the fix reads the merge_requests API. Served here so
+// that branch is TESTED rather than merely written; the reporter left it alone for want of
+// a way to exercise it.
+if (args[0] === 'api' && /merge_requests\?/.test(joined)) {
+  const src = (joined.match(/source_branch=([^&\s]+)/) || [])[1] || ''
+  const branch = decodeURIComponent(src)
+  const m = readMap()
+  const closed = new Set(String(process.env.FAKE_GLAB_CLOSED_MRS || '').split(',').map((x) => x.trim()).filter(Boolean))
+  const rows = m.mrs
+    .filter((p) => !branch || p.branch === branch)
+    .map((p) => ({
+      iid: p.number,
+      web_url: p.url,
+      state: p.merged ? 'merged' : (closed.has(p.branch) ? 'closed' : 'opened'),
+    }))
+  console.log(JSON.stringify(rows))
+  process.exit(0)
+}
+
 if (joined.startsWith('mr list')) {
   const src = flag('--source-branch')
   const m = readMap()

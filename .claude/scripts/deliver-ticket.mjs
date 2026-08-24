@@ -863,11 +863,62 @@ const rerouteToIntegration = (pr, failureOut) => {
 }
 
 // find an existing PR/MR for the branch; returns { number, url } or null
+/**
+ * Find a USABLE existing PR/MR for this branch (catalog issue #202).
+ *
+ * `--state all` is kept deliberately: a run that paused after opening a PR must find THAT
+ * PR rather than open a duplicate, and a MERGED one must still come back so the
+ * already-merged path stays correct. What was wrong was the SELECTION — `arr[0]` of
+ * everything, with `state` not even requested in the JSON field list, so it could not have
+ * been checked.
+ *
+ * Delete a ticket branch on the remote (routine cleanup, or an interrupted run) and the
+ * forge auto-closes its PR. Recreate the branch with different history and that CLOSED PR
+ * now points at commits which no longer exist: it cannot merge, `gh pr reopen` refuses it,
+ * and every later run got `GraphQL: Pull Request is not mergeable`. The ticket was blocked
+ * permanently, escapable only by a human opening a replacement by hand — three times in one
+ * reported session.
+ *
+ * So: prefer OPEN, then MERGED, and treat a CLOSED-only result as "no PR" — reported by
+ * name, because silently opening a second PR where one appears to exist is the kind of
+ * surprise that costs more than the bug.
+ */
 const findPr = () => {
+  const pick = (rows) => {
+    const state = (p) => String(p.state || '').toUpperCase()
+    const usable = rows.find((p) => state(p) === 'OPEN' || state(p) === 'OPENED') ||
+      rows.find((p) => state(p) === 'MERGED')
+    if (usable) return { number: usable.number, url: usable.url || '' }
+    if (rows.length) {
+      note(
+        `existing ${PLATFORM === 'gh' ? 'PR' : 'MR'}(s) for ${BRANCH} are CLOSED and cannot be merged ` +
+        `(${rows.map((p) => '#' + p.number).join(', ')}) — opening a new one. A closed PR/MR pointing at ` +
+        `commits that no longer exist blocks the ticket permanently if it is reused.`
+      )
+    }
+    return null
+  }
+
   try {
     if (PLATFORM === 'gh') {
-      const arr = JSON.parse(cli(['pr', 'list', '--head', BRANCH, '--state', 'all', '--json', 'number,url']))
-      return arr && arr[0] ? { number: arr[0].number, url: arr[0].url } : null
+      // `state` must be REQUESTED or it is absent from the response and unusable.
+      const arr = JSON.parse(cli(['pr', 'list', '--head', BRANCH, '--state', 'all', '--json', 'number,url,state']))
+      return Array.isArray(arr) ? pick(arr) : null
+    }
+
+    // GitLab: the CLI's list output carries no state, so read it from the API, which
+    // returns iid/state/web_url directly. The reporter flagged this branch as having the
+    // same first-match-wins shape and left it alone for want of a way to test it.
+    try {
+      const raw = cli(['api', `projects/:fullpath/merge_requests?source_branch=${encodeURIComponent(BRANCH)}&state=all&per_page=100`])
+      const arr = JSON.parse(raw)
+      if (Array.isArray(arr)) {
+        return pick(arr.map((m) => ({ number: m.iid, url: m.web_url || '', state: m.state })))
+      }
+    } catch {
+      // A 403 MR API is a real configuration in the wild (catalog issue #56), which is why
+      // `pushmr` mode exists at all. Fall back to the CLI listing — which defaults to OPEN
+      // merge requests only, so it cannot return the closed one this fix is about.
     }
     const text = cli(['mr', 'list', '--source-branch', BRANCH])
     const m = text.match(/!(\d+)/)

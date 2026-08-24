@@ -2,6 +2,28 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
+## 0.16.1 — 2026-08-24
+
+**Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .`
+
+### Fixed — a closed PR blocked its ticket permanently (#202)
+
+Delete a ticket branch on the remote — routine cleanup, or an interrupted run — and the forge auto-closes its PR. Recreate the branch with different history and that closed PR now points at commits which no longer exist: it cannot be merged, and `gh pr reopen` refuses it.
+
+`findPr()` returned it anyway. It queried `--state all` and took `arr[0]`, and `state` was not even among the requested JSON fields — so it could not have been checked. That set `checks.prExists`, skipped `pr create`, and sent every later run into:
+
+```
+GraphQL: Pull Request is not mergeable
+```
+
+**The ticket was blocked forever.** The only escape was a human opening a replacement PR by hand — three times in one reported session.
+
+`--state all` stays, deliberately: a run that paused after opening a PR must find *that* PR rather than open a duplicate, and a merged one must still be found so the already-merged path stays correct. What changed is the **selection** — prefer OPEN, then MERGED, and treat a CLOSED-only result as "no PR". The closed ones are **named** in the notes rather than silently stepped over: opening a second PR where one appears to exist is the kind of surprise that costs more than the bug.
+
+**The GitLab path had the same shape** — first `!<n>` match, no state anywhere. The reporter flagged it and left it alone, having no way to test it. It now reads state from the `merge_requests` API, falling back to the CLI listing (which defaults to open MRs only, so it cannot return the closed one this is about) for the 403-MR-API configuration that `pushmr` mode exists for. The E2E fakes gained the closed states, so both branches are tested rather than one fixed and one hoped for.
+
+Suite: 1795 checks. Mutation-verified: restoring `arr[0]` of `--state all` turns 3 red, and dropping MERGED from the preference — the over-correction — turns 2.
+
 ## 0.16.0 — 2026-08-24
 
 **Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .` over your existing install.

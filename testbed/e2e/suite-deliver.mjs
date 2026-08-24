@@ -519,6 +519,56 @@ const assertAiMarker = (label, body) => {
     } finally { cleanup(root) }
   }
 
+  // ---- a CLOSED PR must not block the ticket forever (catalog issue #202) --------------
+  // Delete a ticket branch on the remote — routine cleanup, or an interrupted run — and
+  // the forge auto-closes its PR. Recreate the branch with different history and that
+  // closed PR points at commits that no longer exist: it cannot merge, `gh pr reopen`
+  // refuses it, and findPr() returned it anyway (arr[0] of --state all, with `state` not
+  // even requested in the JSON fields). checks.prExists was set, `pr create` skipped, and
+  // every later run died on `GraphQL: Pull Request is not mergeable`. Three times in one
+  // reported session; the only escape was a human opening a replacement by hand.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      // first run opens PR #1, and we then declare that branch's PRs closed
+      deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--no-merge'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt') })
+      const { sum, r } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CLOSED_PRS: 'ticket/T-01', FAKE_GH_CHECKS: 'green' })
+      const out = `${r.stdout}${r.stderr}`
+      check(S, 'X1 a CLOSED PR is not reused', /are CLOSED and cannot be merged/.test(sum ? sum.notes : out), sum && sum.notes)
+      check(S, 'X1 the closed PR is named, not silently stepped over',
+        /#\d/.test(sum ? sum.notes : ''), sum && sum.notes)
+      check(S, 'X1 a fresh PR is opened instead', sum && sum.checks.prCreated === true)
+      eq(S, 'X1 and the ticket delivers rather than blocking forever', sum && sum.merged, true)
+    } finally { cleanup(root) }
+  }
+  {
+    // the reason --state all is KEPT: a paused run must find its own open PR again
+    const { root, repo } = makeRepo()
+    try {
+      const first = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--no-merge'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt') })
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'X2 an OPEN PR is reused, not duplicated', sum && sum.checks.prCreated, false)
+      eq(S, 'X2 and it is the same PR', sum && sum.prUrl, first.sum && first.sum.prUrl)
+    } finally { cleanup(root) }
+  }
+  {
+    // GitLab has the same first-match-wins shape. The reporter left it alone for want of a
+    // way to test it; the fake now serves the merge_requests API the fix reads.
+    const { root, repo } = makeRepo()
+    try {
+      deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--platform', 'glab', '--no-merge'],
+        { FAKE_GLAB_CLOSED_STATE: join(root, 'c.txt') })
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7', '--platform', 'glab'],
+        { FAKE_GLAB_CLOSED_STATE: join(root, 'c.txt'), FAKE_GLAB_CLOSED_MRS: 'ticket/T-01' })
+      check(S, 'X3 GitLab: a CLOSED MR is not reused either',
+        sum && /are CLOSED and cannot be merged/.test(sum.notes), sum && sum.notes)
+    } finally { cleanup(root) }
+  }
+
   // ---- the branch must still be the commit that was reviewed (catalog issue #218) ------
   // A Reviewer's tool list includes Bash — it must run tests — so the role that may not
   // write holds the one tool that can. One overwrote a production file and then reported
