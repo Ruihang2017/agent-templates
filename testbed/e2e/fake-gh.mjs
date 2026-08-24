@@ -113,7 +113,15 @@ if (joined.startsWith('pr list')) {
   const head = flag('--head')
   const m = readMap()
   const hit = m.prs.filter((p) => !head || p.branch === head)
-  console.log(JSON.stringify(hit.map((p) => ({ number: p.number, url: p.url, state: p.merged ? 'MERGED' : 'OPEN' }))))
+  // catalog issue #202: a PR can also be CLOSED — delete a ticket branch on the remote
+  // and the forge auto-closes its PR. FAKE_GH_CLOSED_PRS seeds that state for a branch,
+  // because a double whose PRs are only ever OPEN or MERGED cannot reproduce the bug.
+  const closedBranches = new Set(String(process.env.FAKE_GH_CLOSED_PRS || '').split(',').map((x) => x.trim()).filter(Boolean))
+  console.log(JSON.stringify(hit.map((p) => ({
+    number: p.number,
+    url: p.url,
+    state: p.merged ? 'MERGED' : (closedBranches.has(p.branch) ? 'CLOSED' : 'OPEN'),
+  }))))
   process.exit(0)
 }
 
