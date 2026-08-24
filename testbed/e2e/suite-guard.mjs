@@ -61,6 +61,48 @@ export async function run() {
       /never plans, implements or reviews inline/.test(reason))
   }
 
+  // ---- Bash writes from a write-forbidden role (catalog issue #218) -----------------
+  // A Reviewer's tool list includes Bash because it must RUN the tests, so the one role
+  // that may not write holds the one tool that can. One did: a python heredoc overwrote a
+  // production file, and the hand-back then said it had not attempted to route around the
+  // write restriction. This is not airtight — a shell is general-purpose — but the state
+  // it replaces is one where nothing was even attempted.
+  {
+    const bash = (cmd, role = 'reviewer') =>
+      runHook(JSON.stringify({ tool_name: 'Bash', agent_id: 'a1', agent_type: role, tool_input: { command: cmd } }))
+    const denied = (cmd, role) => bash(cmd, role).stdout.trim() !== ''
+
+    // the observed attack, verbatim in shape
+    check(S, 'reviewer Bash: a heredoc overwriting a file is denied', denied('python - <<EOF\nopen("src/frame.ts","w")\nEOF'))
+    check(S, 'reviewer Bash: redirection into a tracked file is denied', denied('echo x > src/frame.ts'))
+    check(S, 'reviewer Bash: sed -i is denied', denied('sed -i s/a/b/ src/x.ts'))
+    check(S, 'reviewer Bash: node -e is denied', denied('node -e "require(1)"'))
+    check(S, 'reviewer Bash: git commit is denied', denied('git commit -am wip'))
+    check(S, 'reviewer Bash: git checkout is denied', denied('git checkout -- src/'))
+
+    // A guard that stops a Reviewer reviewing is an outage, not a control.
+    check(S, 'reviewer Bash: running the suite is ALLOWED', !denied('npm test'))
+    check(S, 'reviewer Bash: node --test is allowed', !denied('node --test'))
+    check(S, 'reviewer Bash: pytest is allowed', !denied('python -m pytest -q'))
+    check(S, 'reviewer Bash: grep is allowed', !denied('grep -rn foo src/'))
+    check(S, 'reviewer Bash: git diff and git log are allowed',
+      !denied('git diff main...ticket/T-1') && !denied('git log --oneline -5'))
+
+    // The one write the role MUST make: its own review record (#201). Forbidding it
+    // would make delivery — which refuses a missing record — unable to proceed at all.
+    check(S, 'reviewer Bash: writing its own review record is allowed',
+      !denied('cat > .claude/tmp/T-01-verdict.md <<EOF\nfindings\nEOF'))
+
+    // The Builder is not write-forbidden; the same command must pass for it.
+    check(S, 'builder Bash: the same write is allowed', !denied('echo x > src/frame.ts', 'builder'))
+    check(S, 'main session Bash is not touched by this rule',
+      runHook(JSON.stringify({ tool_name: 'Bash', tool_input: { command: 'echo x > src/frame.ts' } })).stdout.trim() === '')
+
+    const reason = JSON.parse(bash('echo x > src/frame.ts').stdout).hookSpecificOutput.permissionDecisionReason
+    check(S, 'the denial explains that a wrong diff is a BOUNCE, not an edit', /BOUNCE with findings, not an edit/.test(reason))
+    check(S, 'and names the scratch path as the allowed exception', /\.claude\/tmp\//.test(reason))
+  }
+
   // garbage input -> never blocks
   {
     const r = runHook('not-json-at-all')

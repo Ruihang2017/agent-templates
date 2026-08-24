@@ -103,6 +103,16 @@ const BODY_FILE = opt('body-file') // pre-composed PR/MR body (agent-filled from
 // It exists so that "no tests" is a DECISION someone made, recorded in the summary, rather
 // than the default outcome of forgetting --test-cmd.
 const NO_TESTS = process.argv.includes('--no-tests')
+// The commit the Reviewer actually reviewed (catalog issue #218). A Reviewer's tool list
+// includes Bash — it must run tests — so the role that may not write is handed the one tool
+// that can, and one did: a python heredoc overwrote a production file, and the hand-back
+// then stated it had "not attempted to route around" the write restriction. The verdict was
+// void; the pipeline still reported `delivered`.
+//
+// This asks the Reviewer nothing. If the branch head is not the commit the Builder finished
+// on, something wrote to the branch after the build, and the CLEAR verdict no longer
+// describes what would be merged — whatever any hand-back says about it.
+const EXPECT_HEAD = opt('expect-head')
 const TEST_CMD = opt('test-cmd')
 
 // Run-end handoff (issue #139): open ONE integration -> default MR/PR and stop. Never
@@ -111,7 +121,7 @@ const TEST_CMD = opt('test-cmd')
 const OPEN_INTEGRATION_MR = has('open-integration-mr')
 
 if (!OPEN_INTEGRATION_MR && (!ID || !BRANCH)) {
-  console.error('usage: node deliver-ticket.mjs --id <ticket-id> --branch <branch> [--default-branch main] [--integration-branch ai-staging] [--issue <n>] [--platform gh|glab] [--delivery pr|direct|auto] [--no-merge] [--verdict-file <path>] [--body-file <path>] [--test-cmd "<command>"] [--no-tests]\n   or: node deliver-ticket.mjs --open-integration-mr --integration-branch <name> [--default-branch main] [--platform gh|glab]')
+  console.error('usage: node deliver-ticket.mjs --id <ticket-id> --branch <branch> [--default-branch main] [--integration-branch ai-staging] [--issue <n>] [--platform gh|glab] [--delivery pr|direct|auto] [--no-merge] [--verdict-file <path>] [--body-file <path>] [--test-cmd "<command>"] [--no-tests] [--expect-head <sha>]\n   or: node deliver-ticket.mjs --open-integration-mr --integration-branch <name> [--default-branch main] [--platform gh|glab]')
   process.exit(1)
 }
 if (OPEN_INTEGRATION_MR && !INTEGRATION_BRANCH) {
@@ -261,6 +271,8 @@ const checks = {
   // that a merge over red CI was indistinguishable from a good one: 32 PRs merged, CI red
   // on every one, every ticket reporting a passing Definition of Done.
   ciChecked: false, ciStatus: null,
+  // null = no expected commit supplied, so NOT CHECKED — never reported as checked-and-passed
+  reviewedHeadMatches: null,
   // A forge merge call that reported failure. The work may still have landed — that is
   // precisely the ambiguous state that must not read as a clean delivery.
   mergeAttemptFailed: false,
@@ -1090,6 +1102,21 @@ try {
             + `If this ticket genuinely removes that much, rebase the branch onto ${DEFAULT_BRANCH} and re-run.`)
           finish(0)
         }
+      }
+    }
+
+    // Refuse a branch that moved after the review (catalog issue #218). Before the PR is
+    // opened, so nothing is ever published against a commit nobody reviewed.
+    if (EXPECT_HEAD) {
+      const actual = (tryGit(['rev-parse', BRANCH]).out || '').trim()
+      checks.reviewedHeadMatches = actual === EXPECT_HEAD.trim()
+      if (!checks.reviewedHeadMatches) {
+        note(
+          `refusing to deliver: ${BRANCH} is at ${actual.slice(0, 12) || '(unknown)'} but the reviewed commit was ` +
+          `${EXPECT_HEAD.trim().slice(0, 12)}. Something wrote to the branch after the build, so the CLEAR ` +
+          `verdict does not describe what would be merged. Re-run the review against the current commit.`
+        )
+        finish(0)
       }
     }
 

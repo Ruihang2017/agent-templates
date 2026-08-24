@@ -665,7 +665,7 @@ const cleanupReport = { branchesDeleted: [], branchesKept: [], worktreesPruned: 
     const clean = await agent(
       'Post-run cleanup. You are NOT implementing anything and must NOT touch any ticket, plan, or source file. ' +
       'Run EXACTLY this command from the repo root and nothing else:\n' +
-      'node .claude/scripts/cleanup-run.mjs --delivered ' + (deliveredIds.join(',') || '') + ' --default-branch ' + cfg.defaultBranch +
+      'node .claude/scripts/cleanup-run.mjs --delivered ' + (deliveredIds.join(',') || '') + ' --default-branch ' + cfg.defaultBranch + ((build && build.headSha) ? ' --expect-head ' + String(build.headSha).trim() : '') +
       (concurrency > 1 ? '' : ' --keep-worktrees') + '\n' +
       'Parse its CLEANUP-JSON line and return ok=true with branchesDeleted, branchesKept and worktreesPruned taken EXACTLY from it, ' +
       'plus detail = its escalations joined. Do NOT delete anything yourself, do NOT touch remote branches, and if the command ' +
