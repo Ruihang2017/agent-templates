@@ -152,6 +152,21 @@ const tryGit = (args) => {
   try { return { ok: true, out: git(args, { stdio: ['ignore', 'pipe', 'pipe'] }) } } catch (e) { return { ok: false, out: errText(e) } }
 }
 
+// The host THIS repository actually uses (catalog issue #220). `glab auth status`
+// checks every host in the config and exits non-zero if ANY of them fails — one adopter
+// had a dead host left over from a forge migration, and the unscoped probe reported the
+// CLI as "not authenticated" while it was working perfectly against the host that
+// mattered. `gh` takes the same --hostname flag.
+const forgeHost = () => {
+  const r = tryGit(['remote', 'get-url', 'origin'])
+  if (!r.ok) return ''
+  return (String(r.out).match(/(?:@|:\/\/)([^/:]+)[/:]/) || [])[1] || ''
+}
+const authArgs = () => {
+  const h = forgeHost()
+  return h ? ['auth', 'status', '--hostname', h] : ['auth', 'status']
+}
+
 // GH_BIN / GLAB_BIN env overrides (same mechanism as publish-tickets.mjs) for
 // non-PATH binaries and test doubles, e.g. GH_BIN="node tools/fake-gh.mjs".
 const cli = (args, opts = {}) => {
@@ -172,7 +187,12 @@ if (OPEN_INTEGRATION_MR) {
     console.log('INTEGRATION-MR-JSON: ' + JSON.stringify({ integrationBranch: INTEGRATION_BRANCH, defaultBranch: DEFAULT_BRANCH, opened: false, error: msg }))
     process.exit(0) // a missing handoff must not fail the run that produced the work
   }
-  try { cli(['auth', 'status'], { stdio: ['ignore', 'ignore', 'ignore'] }) } catch { fail(`${PLATFORM} not authenticated`) }
+  try { cli(authArgs(), { stdio: ['ignore', 'ignore', 'pipe'] }) } catch (e) {
+    // The CLI's own words, not a guess (catalog issue #220): the invented message named
+    // the wrong remedy and pointed away from the actual cause.
+    const said = String((e && (e.stderr || e.message)) || e).split('\n').filter(Boolean)[0] || ''
+    fail(`${PLATFORM} not authenticated to ${forgeHost() || 'this forge'}${said ? ` — ${said}` : ''}`)
+  }
   if (!tryGit(['fetch', 'origin', INTEGRATION_BRANCH]).ok) fail(`${INTEGRATION_BRANCH} does not exist on origin — nothing was delivered to it`)
   tryGit(['fetch', 'origin', DEFAULT_BRANCH])
   // Nothing to hand off if the integration branch adds no commits.
@@ -913,7 +933,7 @@ try {
   }
 
   checks.pushRequired = tryGit(['remote', 'get-url', 'origin']).ok
-  const cliAuthed = tryCli(['auth', 'status'], { stdio: ['ignore', 'ignore', 'ignore'] }).ok
+  const cliAuthed = tryCli(authArgs(), { stdio: ['ignore', 'ignore', 'ignore'] }).ok
   // Cheap MR/PR-API probe: a token can have a working Issues API but a 403 MR API
   // (org policy — catalog issue #56). On glab that routes delivery to push-option MR.
   const mrApiOk = () => (PLATFORM === 'gh'

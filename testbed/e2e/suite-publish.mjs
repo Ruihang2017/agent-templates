@@ -3,7 +3,7 @@
 // Covers idempotency, ambiguity, create/failure paths, degraded-CLI, and the
 // machine-readable summary contract.
 
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -43,6 +43,17 @@ function runPub(root, args, env) {
   return { ...r, summary }
 }
 const entry = (summary, id, path) => (summary || []).find((e) => (id ? e.id === id : true) && (!path || e.path.includes(path)))
+
+// catalog issue #220: a repository whose origin is on the host that works, while an
+// unrelated stale host sits in the CLI config. `auth status` unscoped fails; scoped to
+// this repo's host it succeeds. The old probe was unscoped, so 23 modules failed to
+// publish with "glab not found or not authenticated" while glab was working perfectly.
+function repoOn(host) {
+  const root = makeFixture()
+  execFileSync("git", ["init", "-q", root])
+  execFileSync("git", ["-C", root, "remote", "add", "origin", `git@${host}:acme/app.git`])
+  return root
+}
 
 export async function run() {
   const root = makeFixture()
@@ -430,6 +441,45 @@ export async function run() {
       } finally { rmSync(droot, { recursive: true, force: true }) }
     }
   } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+  // ---- #220: the auth probe is scoped to this repository's host --------------------
+  {
+    const root = repoOn("gitlab.com")
+    const env = { GLAB_BIN: FAKE_GLAB, FAKE_GLAB_STALE_HOST: "git.coates.io" }
+    const r = runPub(root, ["docs/prd/00-x", "--create", "--platform", "glab"], env)
+    // The defect was the MESSAGE, not the exit code: a run that stops later for an
+    // unrelated reason is fine, a run that stops HERE claiming the CLI is unauthenticated
+    // is the bug. So this asserts the auth probe's verdict, not the run's outcome.
+    const out1 = `${r.stdout}${r.stderr}`
+    check(S, "AU1 a stale UNRELATED host does not fail the auth probe",
+      !/not found or not authenticated/.test(out1) && !/not authenticated to gitlab.com/.test(out1), out1.slice(0, 240))
+    check(S, "AU1 and the run gets past the probe", /platform: glab/.test(out1))
+    rmSync(root, { recursive: true, force: true })
+  }
+  {
+    // the host that matters is genuinely dead: this MUST still fail, and say so usefully
+    const root = repoOn("git.coates.io")
+    const env = { GLAB_BIN: FAKE_GLAB, FAKE_GLAB_STALE_HOST: "git.coates.io" }
+    const r = runPub(root, ["docs/prd/00-x", "--create", "--platform", "glab"], env)
+    eq(S, "AU2 a dead host for THIS repo still fails", r.status, 1)
+    const out = `${r.stdout}${r.stderr}`
+    check(S, "AU2 the message distinguishes not-authenticated from not-installed",
+      /installed but not authenticated/.test(out), out.slice(0, 240))
+    check(S, "AU2 it names the host", /git\.coates\.io/.test(out))
+    check(S, "AU2 and quotes the CLI's own words instead of guessing",
+      /invalid_token|401/.test(out), out.slice(0, 240))
+    rmSync(root, { recursive: true, force: true })
+  }
+  {
+    // not installed at all is a THIRD state needing a third action
+    const root = repoOn("gitlab.com")
+    // the real "not installed" shape is ENOENT on the BINARY, not a missing script
+    const env = { GLAB_BIN: "glab-definitely-not-a-real-binary-xyz" }
+    const r = runPub(root, ["docs/prd/00-x", "--create", "--platform", "glab"], env)
+    eq(S, "AU3 a missing CLI fails", r.status, 1)
+    check(S, "AU3 and is reported as NOT INSTALLED, not as logged out",
+      /not installed or not on PATH/.test(`${r.stdout}${r.stderr}`), `${r.stdout}${r.stderr}`.slice(0, 240))
     rmSync(root, { recursive: true, force: true })
   }
 }

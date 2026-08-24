@@ -39,7 +39,26 @@ const logBody = (label, body) => {
   if (f) writeFileSync(f, (existsSync(f) ? readFileSync(f, 'utf8') : '') + `=== ${label} ===\n` + body + '\n')
 }
 
-if (joined.startsWith('auth status')) process.exit(0)
+if (joined.startsWith('auth status')) {
+  // catalog issue #220. FAKE_GH_STALE_HOST names a host that is configured but dead.
+  // Unscoped `auth status` checks EVERY configured host and fails if any does; scoping it
+  // to --hostname <the repo's host> succeeds. Exit 0 unless we are asked to reproduce that.
+  const stale = process.env.FAKE_GH_STALE_HOST || ''
+  const i = args.indexOf('--hostname')
+  const scoped = i !== -1 ? args[i + 1] : ''
+  if (!stale) process.exit(0)
+  if (scoped && scoped !== stale) {
+    console.log(`${scoped}\n  - Logged in to ${scoped} as e2e`)
+    process.exit(0)
+  }
+  if (scoped === stale) {
+    console.error(`${stale}\n  x API call failed: 401 {error: invalid_token}`)
+    process.exit(1)
+  }
+  // unscoped: every host, so the stale one fails the whole probe
+  console.error(`${stale}\n  x API call failed: 401 {error: invalid_token}\n  X could not authenticate to one or more of the configured instances.`)
+  process.exit(1)
+}
 
 // Real `gh issue list` returns NEWEST FIRST. The fake used to echo the fixture verbatim,
 // so a suite could only ever see the order it wrote — which is why the "resolves to the
