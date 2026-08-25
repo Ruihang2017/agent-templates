@@ -6,6 +6,34 @@ What changed for someone **using** this catalog. The full decision record — wh
 
 **Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .`
 
+### Fixed — the pipeline's own configuration rolled back under it (#200)
+
+This pattern version-controls itself under `.claude/` — the agent definitions, the schedulers, the delivery script, the write guard, `settings.json`. The Builder checks out the ticket branch. At `concurrency = 1`, which is the **default** and the recommended on-ramp, that checkout happens in the **main working tree**.
+
+So a ticket branch whose base predates a `.claude` change **reverts that change on disk, mid-run**.
+
+Observed: a bounce-fix round reverted `agents/builder.md` to a previously archived variant. The run used a different Builder definition than the one it was configured with, and answered a different question than the one asked. Nothing reported it. Measured across that repo the same day — **every** live ticket branch had drifted by 2–3 files, and one had rolled back **seven**, including the delivery script and both schedulers.
+
+New `check-pipeline-config.mjs` compares `.claude/**` against the default branch and runs in two places:
+
+- as a **preflight** in `/start-all` and `/start-milestone`, before any ticket is dispatched;
+- as the Builder's **last action** on the initial build *and on every bounce round* — which is exactly where this was observed — returning `configIntact`, a field the BUILD schema marks **required**, so omitting it fails the stage rather than passing quietly. A false value escalates the ticket as `config-drift` and delivers nothing.
+
+It **only looks**. Repairing automatically would mutate a ticket branch or change the diff the Reviewer is about to judge, trading a reported problem for an unreported one.
+
+#### The remedy that is easy to get half-right
+
+Restoring the files is **not** always enough, and the report is explicit about which case you are in:
+
+| Drifted | Effect | Remedy |
+|---|---|---|
+| `scripts/`, `hooks/`, `workflows/`, `settings.json` | exec'd from disk on **every** invocation, so they roll back **live**, mid-run | restore the files |
+| `agents/**` | read **once per CLI process** — the run already in flight is unaffected, but the **next** session over that tree is poisoned for its whole lifetime | restore the files **and restart the session** |
+
+That second row is measured, not assumed: a marker appended to an agent file was absent from that agent's system prompt when spawned and still absent 2.5 minutes later.
+
+Mutation-verified: dropping the escalation turns 10 red, collapsing the two drift classes into one list turns 3, and letting the check auto-repair turns 1.
+
 ### Fixed — a rebuilt ticket overwrote work a Reviewer had already judged (#198, #216)
 
 Kill a `/start-all` run mid-flight and it leaves ticket branches **pushed to origin but unmerged**. Run again later, and a ticket gets rebuilt on the same branch name from a fresh base — and pushed. **Nothing checked whether the remote head was an ancestor of the local one.**
@@ -40,7 +68,7 @@ GraphQL: Pull Request is not mergeable
 
 **The GitLab path had the same shape** — first `!<n>` match, no state anywhere. The reporter flagged it and left it alone, having no way to test it. It now reads state from the `merge_requests` API, falling back to the CLI listing (which defaults to open MRs only, so it cannot return the closed one this is about) for the 403-MR-API configuration that `pushmr` mode exists for. The E2E fakes gained the closed states, so both branches are tested rather than one fixed and one hoped for.
 
-Suite: 1808 checks. Mutation-verified in both directions each time, because the over-correction here would be as damaging as the bug: restoring `arr[0]` of `--state all` turns 3 red and dropping MERGED from the preference turns 2; removing the divergence guard turns 4 red and refusing every existing remote branch — which would stall each resumed run — turns 4.
+Suite: 1844 checks. Mutation-verified in both directions each time, because the over-correction here would be as damaging as the bug: restoring `arr[0]` of `--state all` turns 3 red and dropping MERGED from the preference turns 2; removing the divergence guard turns 4 red and refusing every existing remote branch — which would stall each resumed run — turns 4.
 
 ## 0.16.0 — 2026-08-24
 

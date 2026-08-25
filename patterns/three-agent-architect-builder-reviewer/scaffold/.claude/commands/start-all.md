@@ -15,6 +15,24 @@ In this mode you must **not** publish tickets (step 3 is skipped entirely), and 
 
 1. **Verify the PRD is ready.** `docs/PRD.md` and at least one `docs/prd/<module>/tickets/*.md` must exist. If not, STOP and tell the human to run `/breakdown-prd` first.
 
+**Preflight: is the pipeline running its own configuration?** (catalog issue #200)
+
+```
+node .claude/scripts/check-pipeline-config.mjs --default-branch <default>
+```
+
+A **non-zero exit means STOP** — do not launch, and report which files drifted. This pattern version-controls itself under `.claude/`, and checking out a ticket branch in the main working tree (which is what `concurrency = 1` does — the default, and the recommended on-ramp) reverts any `.claude` change whose commit postdates that branch's base. One observed run reverted `agents/builder.md` to an archived variant mid-flight, so the pipeline used a different Builder definition than the one it was configured with, and nothing said so.
+
+Two remedies, because there are two windows and **the intuitive one is incomplete**:
+
+- `.claude/scripts/`, `.claude/hooks/`, `.claude/workflows/`, `.claude/settings.json` are exec'd from disk on every invocation, so restoring the files is enough.
+- `.claude/agents/**` are read **once per CLI process**. Restoring them does *not* fix the current session — **it must be restarted.**
+
+The check only looks; it never checks out, resets or writes. Repairing a ticket branch automatically would alter the diff a Reviewer judged.
+
+The Builder re-runs this as its last action on every build and every bounce round, and returns `configIntact`; a false value escalates the ticket as `config-drift` and delivers nothing. This preflight is the earlier of the two — it stops the run before any ticket is dispatched.
+
+
 2. **Compute the graph.** Run `node .claude/scripts/dag-scan.mjs docs/prd` and parse its final `SCAN-JSON` line: `{tickets: [{id, module, path, blockedBy}]}`. This is the whole PRD in one flat list, cross-module edges intact. A non-zero exit means the decomposition is broken (dangling `blocked_by`, or a cycle) — report it and STOP; never start a run on a broken DAG.
 
 3. **Publish every module's tickets.** For each module dir under `docs/prd/`, run `node .claude/scripts/publish-tickets.mjs docs/prd/<module> --create --platform <gh|glab>` — read `platform` from the CLAUDE.md **`Tracker:`** line (adopt.mjs set it), never guess it. Collect each ticket's issue number from the `PUBLISH-SUMMARY-JSON` lines.

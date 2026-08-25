@@ -41,7 +41,7 @@ async function runWorkflow(args, respond) {
 
 // Canned stage responses
 const plan = (id) => ({ planPath: `docs/plans/${id}.md`, summary: 'ok' })
-const goodBuild = (id) => ({ branch: `ticket/${id}`, testsPassed: true, testOutput: 'SENTINEL_TEST_OUTPUT green', deviations: 'SENTINEL_DEVIATIONS none' })
+const goodBuild = (id) => ({ branch: `ticket/${id}`, testsPassed: true, testOutput: 'SENTINEL_TEST_OUTPUT green', deviations: 'SENTINEL_DEVIATIONS none', configIntact: true })
 const CLEAR = { verdict: 'CLEAR', checkedNote: 'checked edge cases' }
 const BOUNCE = { verdict: 'BOUNCE', findings: [{ file: 'src/x.mjs', scenario: 'SENTINEL_FINDING edge missed', severity: 'major' }] }
 const goodDelivery = { merged: true, issueClosed: true, dodPassed: true, notes: '' }
@@ -207,6 +207,50 @@ export async function run() {
     }
     check(S, 'S2d stage calls are wrapped so a rejection cannot escape', /safely\(agent\(/.test(src))
     check(S, 'S2d and the sequential lane cannot take the run down', /runTicket\(t, \{ isolate: false \}\)\.catch\(/.test(src))
+  }
+
+  // S2e: a build produced against a DRIFTED pipeline config escalates (catalog issue #200).
+  //
+  // At concurrency=1 — the default and the recommended on-ramp — the Builder checks the
+  // ticket branch out in the MAIN working tree, so a branch whose base predates a .claude
+  // change reverts it on disk mid-run. One observed bounce round reverted agents/builder.md
+  // to an archived variant: the run used a different Builder definition than the one it was
+  // configured with, and nothing reported it.
+  {
+    const { result, calls, error } = await runWorkflow({ ...baseArgs, tickets: [tickets2[0]] }, ({ label }) => {
+      if (kind(label) === 'plan') return plan(tid(label))
+      if (kind(label) === 'build') return { ...goodBuild(tid(label)), configIntact: false }
+      if (kind(label) === 'review') return CLEAR
+      if (kind(label) === 'deliver') return goodDelivery
+      return null
+    })
+    check(S, 'S2e no error', !error, error && error.message)
+    const r0 = result && result.results[0]
+    check(S, 'S2e the ticket escalates as config-drift', r0 && r0.status === 'escalated' && r0.stage === 'config-drift', JSON.stringify(r0))
+    eq(S, 'S2e it is NOT reviewed', calls.filter((c) => kind(c.label) === 'review').length, 0)
+    eq(S, 'S2e and NOT delivered', calls.filter((c) => kind(c.label) === 'deliver').length, 0)
+    // The remedy that is easy to get half-right: restoring the files does not fix agents.
+    check(S, 'S2e the escalation says the session must be RESTARTED', r0 && /RESTARTED/.test(r0.detail), r0 && r0.detail)
+    check(S, 'S2e and names the script that shows which files', r0 && /check-pipeline-config.mjs/.test(r0.detail))
+  }
+
+  // S2f: the check is REQUIRED by the schema, and asked for on bounce rounds too — which is
+  // exactly where the drift was observed.
+  {
+    const src = readFileSync(SRC_URL, 'utf8')
+    check(S, 'S2f configIntact is a required BUILD field', /required: ['branch', 'testsPassed', 'testOutput', 'configIntact']/.test(src))
+    const { calls } = await runWorkflow({ ...baseArgs, tickets: [tickets2[0]] }, ({ label }) => {
+      if (kind(label) === 'plan') return plan(tid(label))
+      if (kind(label) === 'build' || kind(label) === 'fix') return goodBuild(tid(label))
+      if (kind(label) === 'review') return BOUNCE
+      return null
+    })
+    const build = calls.find((c) => kind(c.label) === 'build')
+    const fix = calls.find((c) => kind(c.label) === 'fix')
+    check(S, 'S2f the initial build is asked to run the check', build && /check-pipeline-config.mjs/.test(build.prompt))
+    check(S, 'S2f and so is every bounce-fix round', fix && /check-pipeline-config.mjs/.test(fix.prompt))
+    check(S, 'S2f the builder is told to report drift rather than hide it',
+      build && /even if it says the tree drifted/.test(build.prompt))
   }
 
   // S3: bounce cap exhausted -> escalated stage review; fail-fast stops ticket 2
