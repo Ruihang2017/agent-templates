@@ -70,7 +70,10 @@ export async function run() {
     check(S, 'S1 no error', !error, error && error.message)
     eq(S, 'S1 statuses', result && result.results.map((r) => r.status), ['delivered', 'delivered'])
     eq(S, 'S1 notStarted', result && result.notStarted, 0)
-    eq(S, 'S1 per-ticket call sequence', calls.slice(0, 4).map((c) => kind(c.label)), ['plan', 'build', 'review', 'deliver'])
+    // The pre-run orphan reap (#199) is not a ticket stage, so it is excluded rather than
+    // folded in — this assertion is about the ORDER the three judgements happen in.
+    const stageSeq = calls.map((c) => kind(c.label)).filter((k) => k !== 'reap-orphans' && k !== 'cleanup')
+    eq(S, 'S1 per-ticket call sequence', stageSeq.slice(0, 4), ['plan', 'build', 'review', 'deliver'])
     // issue #26: delivery is a deterministic script; the agent only executes it
     const dcall = calls.find((c) => kind(c.label) === 'deliver')
     check(S, 'S1 deliver prompt invokes deliver-ticket.mjs with exact args', !!dcall && dcall.prompt.includes('node .claude/scripts/deliver-ticket.mjs --id T-01 --branch ticket/T-01 --default-branch main --platform gh --issue 1'))
@@ -251,6 +254,49 @@ export async function run() {
     check(S, 'S2f and so is every bounce-fix round', fix && /check-pipeline-config.mjs/.test(fix.prompt))
     check(S, 'S2f the builder is told to report drift rather than hide it',
       build && /even if it says the tree drifted/.test(build.prompt))
+  }
+
+  // S2g: run-milestone cleans up after itself (catalog issue #199, gap 2).
+  //
+  // start-all has had a post-run cleanup since #151; run-milestone never did — grep for
+  // `cleanup` in it returned ZERO hits — so /start-milestone at concurrency > 1 leaked a
+  // full checkout per lane, ~125 MB each, with nothing ever removing them.
+  {
+    const { result, calls, error } = await runWorkflow({ ...baseArgs, tickets: [tickets2[0]] }, ({ label }) => {
+      if (kind(label) === 'plan') return plan(tid(label))
+      if (kind(label) === 'build') return goodBuild(tid(label))
+      if (kind(label) === 'review') return CLEAR
+      if (kind(label) === 'deliver') return goodDelivery
+      if (kind(label) === 'cleanup' || kind(label) === 'reap-orphans') return { ok: true, branchesDeleted: ['ticket/T-01'], branchesKept: [], worktreesPruned: true }
+      return null
+    })
+    check(S, 'S2g no error', !error, error && error.message)
+    const cleanupCall = calls.find((c) => kind(c.label) === 'cleanup')
+    check(S, 'S2g a post-run cleanup stage exists at all', !!cleanupCall)
+    check(S, 'S2g it delegates to the deterministic script', !!cleanupCall && /cleanup-run.mjs/.test(cleanupCall.prompt))
+    check(S, 'S2g and names only the DELIVERED ticket', !!cleanupCall && /--delivered T-01/.test(cleanupCall.prompt))
+    check(S, 'S2g the stage decides nothing itself', !!cleanupCall && /Do NOT delete anything yourself/.test(cleanupCall.prompt))
+    check(S, 'S2g the result reaches the report', result && result.cleanup && result.cleanup.branchesDeleted.length === 1)
+    check(S, 'S2g and run-milestone now has an escalations channel at all', result && Array.isArray(result.escalations))
+  }
+
+  // S2h: a killed run cannot clean up after itself, so the NEXT run reaps what it left.
+  // The measured accumulation — 29 orphaned lane directories, 1.2 GB — came entirely from
+  // TERMINATED runs, which is precisely the case an end-of-run sweep cannot cover.
+  {
+    const { calls } = await runWorkflow({ ...baseArgs, tickets: [tickets2[0]] }, ({ label }) => {
+      if (kind(label) === 'plan') return plan(tid(label))
+      if (kind(label) === 'build') return goodBuild(tid(label))
+      if (kind(label) === 'review') return CLEAR
+      if (kind(label) === 'deliver') return goodDelivery
+      if (kind(label) === 'cleanup' || kind(label) === 'reap-orphans') return { ok: true, branchesDeleted: [], branchesKept: [], worktreesPruned: true }
+      return null
+    })
+    const reap = calls.find((c) => kind(c.label) === 'reap-orphans')
+    check(S, 'S2h the run reaps leftovers BEFORE it starts', !!reap)
+    check(S, 'S2h it deletes no branches: the previous run reaped, this run decides its own',
+      !!reap && /--delivered ""/.test(reap.prompt))
+    eq(S, 'S2h and it runs before any ticket stage', calls.findIndex((c) => kind(c.label) === 'reap-orphans') < calls.findIndex((c) => kind(c.label) === 'plan'), true)
   }
 
   // S3: bounce cap exhausted -> escalated stage review; fail-fast stops ticket 2

@@ -139,6 +139,21 @@ const VERDICT = {
   },
   required: ['verdict'],
 }
+// Post-run cleanup report (catalog issues #151, #199). `branchesKept` is not an afterthought:
+// what could NOT be cleaned is the part that matters, because a leftover ticket branch is
+// what later opens a merge request that reverts the default branch.
+const CLEANUP = {
+  type: 'object',
+  properties: {
+    ok: { type: 'boolean' },
+    detail: { type: 'string' },
+    worktreesPruned: { type: 'boolean' },
+    branchesDeleted: { type: 'array', items: { type: 'string' } },
+    branchesKept: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['ok'],
+}
+
 const DELIVERY = {
   type: 'object',
   properties: { merged: { type: 'boolean' }, issueClosed: { type: 'boolean' }, dodPassed: { type: 'boolean' }, awaitingMerge: { type: 'boolean' }, prUrl: { type: 'string' }, notes: { type: 'string' } },
@@ -353,7 +368,39 @@ async function runTicket(t, opts) {
   return { id: t.id, status: 'delivered', bounces: bounces, prUrl: delivery.prUrl || '' }
 }
 
+// Things the runner could not enforce and a human must judge. run-milestone never had one;
+// its cleanup failures had nowhere to go (catalog issue #199).
+const escalations = []
+
 const results = []
+
+// Reap what a PREVIOUS run left behind, before adding lanes of our own (catalog issue #199).
+//
+// The end-of-run cleanup covers the happy path, and the accumulation that was measured came
+// from runs that were TERMINATED — 29 orphaned lane directories from a single run id, 1.2 GB,
+// none of them still tracked by git. A killed process cannot clean up after itself, so the
+// only place that leak can be closed from inside the pattern is the start of the next run.
+//
+// Delivered-branch deletion is deliberately NOT done here: which tickets delivered is this
+// run's business, not the last one's, and a branch is evidence until something says otherwise.
+{
+  const reap = await safely(agent(
+    'Pre-run cleanup. You are NOT implementing anything and must NOT touch any ticket, plan, or source file.\n' +
+    'Run EXACTLY this command from the repo root and nothing else:\n' +
+    'node .claude/scripts/cleanup-run.mjs --delivered "" --default-branch ' + cfg.defaultBranch + '\n' +
+    'It reaps lane directories a previous, possibly terminated, run left behind. It deletes NO branches when ' +
+    '--delivered is empty. Parse its CLEANUP-JSON line and return ok=true with worktreesPruned and detail ' +
+    '(its escalations joined). If the command cannot run, return ok=false with the output tail in detail.',
+    { label: 'reap-orphans', phase: 'Deliver', effort: 'low', schema: CLEANUP }
+  ))
+  if (reap && reap.ok) {
+    if (reap.detail) log('pre-run cleanup: ' + reap.detail)
+  } else {
+    // Never silent: a leak that nobody mentions is how 1.2 GB accumulated unnoticed.
+    escalations.push('pre-run lane cleanup did not complete' + (reap && reap.detail ? ': ' + reap.detail : '') +
+      ' -- lane directories from earlier runs may still be present under .claude/worktrees/')
+  }
+}
 
 if (concurrency === 1) {
   // ---- sequential path (default; behavior unchanged) ----
@@ -430,12 +477,57 @@ if (concurrency === 1) {
   for (const t of cfg.tickets) if (resultById.has(t.id)) results.push(resultById.get(t.id))
 }
 
+// ---- post-run cleanup (catalog issues #151, #199) --------------------------------------
+// start-all has had this since #151; run-milestone never did, so /start-milestone at
+// concurrency > 1 leaked a full checkout per lane with nothing ever removing them. Grep for
+// `cleanup` in this file before this change returned zero hits.
+//
+// Only DELIVERED tickets are cleaned. A failed or skipped ticket's branch is evidence and
+// stays. What could not be cleaned is REPORTED — the whole failure mode is silence.
+const cleanupReport = { branchesDeleted: [], branchesKept: [], worktreesPruned: false }
+{
+  const deliveredIds = results
+    .filter(function (r) { return r.status === 'delivered' })
+    .map(function (r) { return r.id })
+  if (deliveredIds.length || concurrency > 1) {
+    const clean = await safely(agent(
+      'Post-run cleanup. You are NOT implementing anything and must NOT touch any ticket, plan, or source file.\n' +
+      'Run EXACTLY this command from the repo root and nothing else:\n' +
+      'node .claude/scripts/cleanup-run.mjs --delivered ' + (deliveredIds.join(',') || '') + ' --default-branch ' + cfg.defaultBranch +
+      (concurrency > 1 ? '' : ' --keep-worktrees') + '\n' +
+      'Parse its CLEANUP-JSON line and return ok=true with branchesDeleted, branchesKept and worktreesPruned taken EXACTLY from it, ' +
+      'plus detail = its escalations joined. Do NOT delete anything yourself, do NOT touch remote branches, and if the command ' +
+      'cannot run return ok=false with the output tail in detail.',
+      { label: 'cleanup', phase: 'Deliver', effort: 'low', schema: CLEANUP }
+    ))
+    if (clean && clean.ok) {
+      cleanupReport.branchesDeleted = clean.branchesDeleted || []
+      cleanupReport.branchesKept = clean.branchesKept || []
+      cleanupReport.worktreesPruned = clean.worktreesPruned === true
+      log('cleanup: deleted ' + cleanupReport.branchesDeleted.length + ' delivered ticket branch(es)')
+      if (cleanupReport.branchesKept.length) {
+        escalations.push('cleanup could not remove: ' + cleanupReport.branchesKept.join(', ') +
+          ' -- delete them by hand; a stale ticket branch can later open a merge request that reverts ' + cfg.defaultBranch)
+      }
+      if (clean.detail) escalations.push('cleanup: ' + clean.detail)
+    } else {
+      escalations.push('post-run cleanup did not complete' + (clean && clean.detail ? ': ' + clean.detail : '') +
+        ' -- ticket branches and any run worktrees are still present')
+      log('cleanup: did NOT complete -- leftover branches/worktrees remain (see escalations)')
+    }
+  }
+}
+
 const throughPipeline = results.filter(function (r) { return r.status === 'delivered' || r.status === 'awaiting-human-merge' }).length
 log('milestone run finished: ' + throughPipeline + '/' + cfg.tickets.length + ' tickets through the pipeline (concurrency=' + concurrency + ')')
+
+for (const e of escalations) log('escalation: ' + e)
 
 return {
   mode: cfg.mode,
   concurrency: concurrency,
   results: results,
   notStarted: cfg.tickets.length - results.length,
+  cleanup: cleanupReport,
+  escalations: escalations,
 }

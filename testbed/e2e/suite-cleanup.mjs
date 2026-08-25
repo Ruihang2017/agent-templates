@@ -9,7 +9,7 @@
 //
 // Zero tokens, zero network.
 
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -100,6 +100,100 @@ export async function run() {
     const r = clean(dir, ['--delivered', 'T-01', '--keep-worktrees'])
     eq(S, 'C4b --keep-worktrees leaves them alone', r.json.worktreesRemoved.length, 0)
     eq(S, 'C4b while the branch is still cleaned', r.json.branchesDeleted, ['ticket/T-01'])
+    rmSync(dir, { recursive: true, force: true })
+  }
+
+  // ---- C4c: ORPHANED lane directories (catalog issue #199) -----------------------------
+  // `git worktree prune` drops administrative entries for directories that are ALREADY
+  // GONE; it deletes nothing. So a run killed mid-flight leaves lane directories that
+  // neither prune nor `git worktree list` can see. One adopter measured 29 of them from a
+  // single run id holding 1.2 GB, while git reported four worktrees — none of those 29.
+  {
+    const dir = repo({ branches: ['ticket/T-01'], worktrees: ['lane1'] })
+    // two directories git never knew about, as a killed run would leave
+    mkdirSync(join(dir, '.claude', 'worktrees', 'wf_orphan1', 'node_modules'), { recursive: true })
+    mkdirSync(join(dir, '.claude', 'worktrees', 'wf_orphan2'), { recursive: true })
+    writeFileSync(join(dir, '.claude', 'worktrees', 'wf_orphan1', 'node_modules', 'blob'), 'x'.repeat(1024))
+    const r = clean(dir, ['--delivered', 'T-01', '--default-branch', 'main'])
+    eq(S, 'C4c both orphans are reaped', r.json.worktreesOrphaned.length, 2)
+    check(S, 'C4c the directories are actually gone',
+      !existsSync(join(dir, '.claude', 'worktrees', 'wf_orphan1')) &&
+      !existsSync(join(dir, '.claude', 'worktrees', 'wf_orphan2')))
+    check(S, 'C4c the registered worktree went through the normal path, not the orphan sweep',
+      r.json.worktreesRemoved.length === 1 && !r.json.worktreesOrphaned.some((p) => /lane1/.test(p)))
+    check(S, 'C4c and the reaping is reported', /reaped 2 orphaned lane/.test(r.out), r.out.slice(0, 200))
+    rmSync(dir, { recursive: true, force: true })
+  }
+  {
+    // a dry run reaps nothing
+    const dir = repo()
+    mkdirSync(join(dir, '.claude', 'worktrees', 'wf_orphan1'), { recursive: true })
+    const r = clean(dir, ['--delivered', '', '--dry-run'])
+    eq(S, 'C4d a dry run lists the orphan', r.json.worktreesOrphaned.length, 1)
+    check(S, 'C4d but does not remove it', existsSync(join(dir, '.claude', 'worktrees', 'wf_orphan1')))
+    rmSync(dir, { recursive: true, force: true })
+  }
+
+  // ---- C4f: the orphan sweep must not reach past a registered worktree (#199) -----------
+  // The `registered.has(...)` guard in the orphan sweep looks like dead code, because the
+  // removal loop above normally deletes those directories before the sweep ever sees them.
+  // It is not dead in the case that matters: when `git worktree remove --force` FAILS and
+  // the follow-up prune does not help, the directory is still on disk AND still registered.
+  //
+  // Removing it directly there would leave git's administrative entry behind — which is the
+  // state issue #199 describes, where `git branch -D ticket/<id>` fails because the branch is
+  // "checked out somewhere else" and the next run's `worktree add` collides with a ghost.
+  // Worse, the run would REPORT it as reaped: a broken tree described as a cleaned one.
+  //
+  // A locked worktree reproduces it exactly: remove --force refuses, prune skips it.
+  {
+    const dir = repo({ worktrees: ['lane1'] })
+    const lane = join(dir, '.claude', 'worktrees', 'lane1')
+    const g = (...a) => spawnSync('git', ['-C', dir, ...a], { encoding: 'utf8' })
+    const locked = g('worktree', 'lock', lane)
+    if (locked.status !== 0) {
+      check(S, 'C4f (skipped: this git cannot lock a worktree)', true)
+    } else {
+      const r = clean(dir, ['--delivered', ''])
+      check(S, 'C4f a registered lane that could not be removed is KEPT, not reaped',
+        r.json.worktreesKept.length === 1 && r.json.worktreesOrphaned.length === 0,
+        'kept=' + JSON.stringify(r.json.worktreesKept) + ' orphaned=' + JSON.stringify(r.json.worktreesOrphaned))
+      check(S, 'C4f its directory is left alone rather than deleted behind the back of git',
+        existsSync(lane))
+      check(S, 'C4f git still agrees the worktree exists, so no ghost entry is left',
+        /lane1/.test(g('worktree', 'list', '--porcelain').stdout || ''))
+      check(S, 'C4f and it is escalated rather than reported as cleaned',
+        /could not remove run worktree/.test(r.out), r.out.slice(0, 240))
+      g('worktree', 'unlock', lane)
+    }
+    rmSync(dir, { recursive: true, force: true })
+  }
+
+  // ---- C4e: a lane that poisoned the main checkout (#199 part 2b) ------------------------
+  // Lanes live INSIDE the repo, so a package manager run in one hoists across the boundary
+  // and writes a link in the MAIN checkout pointing into the lane's store. Remove the lane
+  // and the link dangles: the app fails with a package-resolution error on a clean default
+  // branch, which reads convincingly as a regression in freshly merged work and is not.
+  // `pnpm install --force` reports 'Already up to date' and leaves it.
+  {
+    const dir = repo()
+    const laneStore = join(dir, '.claude', 'worktrees', 'wf_x', 'node_modules', 'fastify')
+    mkdirSync(laneStore, { recursive: true })
+    mkdirSync(join(dir, 'apps', 'api', 'node_modules'), { recursive: true })
+    const link = join(dir, 'apps', 'api', 'node_modules', 'fastify')
+    let linked = true
+    try { symlinkSync(laneStore, link, 'junction') } catch { linked = false }
+    if (!linked) {
+      check(S, 'C4e (skipped: this platform/account cannot create links)', true)
+    } else {
+      const r = clean(dir, ['--delivered', ''])
+      check(S, 'C4e the link into the lane is found', r.json.poisonedLinks.length >= 1, JSON.stringify(r.json.poisonedLinks))
+      check(S, 'C4e it is reported, not silently repaired', existsSync(link) || r.json.poisonedLinks.length >= 1)
+      check(S, 'C4e and names the repair, including that --force does NOT work',
+        /does NOT repair it/.test(r.out) && /reinstall/.test(r.out), r.out.slice(0, 300))
+      check(S, 'C4e the symptom is described, since nobody guesses the cause',
+        /package-resolution error/.test(r.out))
+    }
     rmSync(dir, { recursive: true, force: true })
   }
 

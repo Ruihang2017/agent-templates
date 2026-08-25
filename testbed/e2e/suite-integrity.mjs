@@ -3,7 +3,8 @@
 // wiring files parse. This is the mechanical gate that keeps docs and scaffold in
 // lockstep — run it before merging any scaffold change.
 
-import { readFileSync, existsSync } from 'node:fs'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { check } from './lib.mjs'
 
@@ -113,6 +114,50 @@ export async function run() {
     }
   }
 
+  // No shipped source file may contain a control character.
+  //
+  // Twice in one working session an editing tool wrote one into source that then looked
+  // correct in every diff: a NUL inside a template literal made a delivery command
+  // unrunnable, and a literal backspace where a regex meant a word boundary made an
+  // assertion that could never match. Both are invisible to review AND to `node --check`,
+  // which is why this is a mechanical gate rather than a habit.
+  //
+  // The scan asserts its own non-vacuity. The first version of this check walked
+  // ROOT + "patterns" — but ROOT is the SCAFFOLD directory, so every path missed, every
+  // readdir threw into a catch, and it reported zero offenders forever. A gate that cannot
+  // fail is the thing this whole suite exists to prevent.
+  //
+  // Tab, LF and CR are legal; the rest of the C0 range is not.
+  {
+    const CTL = new RegExp("[" + String.fromCharCode(0) + "-" + String.fromCharCode(8) +
+      String.fromCharCode(11) + String.fromCharCode(12) +
+      String.fromCharCode(14) + "-" + String.fromCharCode(31) + "]")
+    const REPO = fileURLToPath(new URL("../../", import.meta.url))
+    const offenders = []
+    let scanned = 0
+    const walk = (dir) => {
+      let entries = []
+      try { entries = readdirSync(dir, { withFileTypes: true }) } catch { return }
+      for (const e of entries) {
+        const full = join(dir, e.name)
+        if (e.isDirectory()) { if (e.name !== "node_modules" && e.name !== ".git") walk(full); continue }
+        if (!/\.(mjs|js|json|md|txt|toml)$/.test(e.name)) continue
+        let text = ""
+        try { text = readFileSync(full, "utf8") } catch { continue }
+        scanned++
+        const m = CTL.exec(text)
+        if (m) {
+          const at = text.slice(0, m.index).split(String.fromCharCode(10)).length
+          offenders.push(full.replace(REPO, "").replace(/\\/g, "/") + ":" + at + " (charCode " + m[0].charCodeAt(0) + ")")
+        }
+      }
+    }
+    for (const r of ["patterns", "templates", "integrations", "scripts", "testbed/e2e", ".claude"]) {
+      walk(join(REPO, r))
+    }
+    check(S, "the control-character scan actually read files", scanned > 100, "scanned " + scanned)
+    check(S, "no shipped source file contains a control character", offenders.length === 0, offenders.slice(0, 5).join("; "))
+  }
   // The scaffold must not contradict itself about whether delivery is a pipeline stage
   // (catalog issue #210). PR #207 removed the stage and rewrote the docs to argue it should
   // not exist; PR #209 reverted the code but missed one file's rationale, and the pair
