@@ -519,6 +519,88 @@ const assertAiMarker = (label, body) => {
     } finally { cleanup(root) }
   }
 
+  // ---- a divergent remote branch must stop the push (catalog issues #198, #216) --------
+  // A terminated /start-all run leaves ticket branches PUSHED but unmerged. A later run
+  // rebuilds one on the same branch name from a fresh base and pushes — producing two
+  // independent implementations sharing a name, which cannot be merged, cannot be rebased
+  // onto each other, and cannot be honestly reviewed: the verdict on record describes code
+  // that no longer exists at that ref. Nothing distinguished it in the report — 
+  // `branchPushed: true` either way.
+  //
+  // The remote here is a REAL bare repo with a REAL divergent history. A fixture whose
+  // remote branch never diverges cannot exercise this at all.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const origin = join(root, 'origin.git')
+      // another run's implementation, already on origin
+      const other = join(root, 'other')
+      execFileSync('git', ['clone', '-q', origin, other], { encoding: 'utf8' })
+      git(other, ['config', 'user.email', 'e2e@example.com'])
+      git(other, ['config', 'user.name', 'E2E'])
+      git(other, ['checkout', '-q', '-b', 'ticket/T-01'])
+      writeFileSync(join(other, 'IMPL.md'), 'the OTHER runs implementation\n')
+      git(other, ['add', '-A'])
+      git(other, ['commit', '-q', '-m', 'other implementation'])
+      git(other, ['push', '-q', '-u', 'origin', 'ticket/T-01'])
+      const remoteSha = git(other, ['rev-parse', 'HEAD']).trim()
+      const localSha = git(repo, ['rev-parse', 'ticket/T-01']).trim()
+
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'V1 the divergence is detected', sum && sum.checks.branchDiverged, true)
+      eq(S, 'V1 NOTHING was pushed', sum && sum.checks.branchPushed, false)
+      eq(S, 'V1 the ticket is NOT delivered', sum && sum.dodPassed, false)
+      check(S, 'V1 BOTH commits are named, so a human can choose',
+        sum && sum.notes.includes(remoteSha.slice(0, 12)) && sum.notes.includes(localSha.slice(0, 12)),
+        sum && sum.notes)
+      check(S, 'V1 and it says it will not force, rebase or delete',
+        sum && /will not force, rebase or delete/.test(sum.notes))
+      // the remote must be untouched — the whole point is that nothing was overwritten
+      const stillThere = execFileSync('git', ['--git-dir', origin, 'rev-parse', 'refs/heads/ticket/T-01'], { encoding: 'utf8' }).trim()
+      eq(S, 'V1 the other run\'s work is still on origin, untouched', stillThere, remoteSha)
+    } finally { cleanup(root) }
+  }
+
+  // V2: a FAST-FORWARDABLE remote is normal — the guard must not refuse a resumed run.
+  // Refusing too much here would be as damaging as the bug: every resume would stall.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      // push the branch as-is, then add a commit locally: remote is now an ancestor
+      git(repo, ['push', '-q', '-u', 'origin', 'ticket/T-01'])
+      writeFileSync(join(repo, 'MORE.md'), 'more work\n')
+      git(repo, ['add', '-A'])
+      git(repo, ['commit', '-q', '-m', 'more'])
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'V2 a fast-forwardable remote is not a divergence', sum && sum.checks.branchDiverged, false)
+      eq(S, 'V2 and the push happens', sum && sum.checks.branchPushed, true)
+    } finally { cleanup(root) }
+  }
+
+  // V3: no remote branch at all is the ORDINARY first delivery, not an error.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'V3 a missing remote branch is the first-delivery case', sum && sum.checks.branchDiverged, false)
+      eq(S, 'V3 and it delivers', sum && sum.merged, true)
+    } finally { cleanup(root) }
+  }
+
+  // V4: the Builder is told to check the remote BEFORE building — the first of two lines.
+  {
+    const b = readFileSync(
+      new URL('../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/agents/builder.md', import.meta.url),
+      'utf8'
+    )
+    check(S, 'V4 the builder preflights origin/ticket/<id>', /git ls-remote --heads origin ticket/.test(b))
+    check(S, 'V4 and is told to STOP rather than build over it', /STOP and report it/.test(b))
+    check(S, 'V4 and not to delete or force', /do not delete it, do not force anything/.test(b))
+  }
+
   // ---- a CLOSED PR must not block the ticket forever (catalog issue #202) --------------
   // Delete a ticket branch on the remote — routine cleanup, or an interrupted run — and
   // the forge auto-closes its PR. Recreate the branch with different history and that
