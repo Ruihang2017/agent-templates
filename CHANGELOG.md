@@ -2,7 +2,7 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
-## 0.16.1 — 2026-08-24
+## 0.16.1 — 2026-08-25
 
 **Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .`
 
@@ -69,6 +69,46 @@ GraphQL: Pull Request is not mergeable
 **The GitLab path had the same shape** — first `!<n>` match, no state anywhere. The reporter flagged it and left it alone, having no way to test it. It now reads state from the `merge_requests` API, falling back to the CLI listing (which defaults to open MRs only, so it cannot return the closed one this is about) for the 403-MR-API configuration that `pushmr` mode exists for. The E2E fakes gained the closed states, so both branches are tested rather than one fixed and one hoped for.
 
 Suite: 1844 checks. Mutation-verified in both directions each time, because the over-correction here would be as damaging as the bug: restoring `arr[0]` of `--state all` turns 3 red and dropping MERGED from the preference turns 2; removing the divergence guard turns 4 red and refusing every existing remote branch — which would stall each resumed run — turns 4.
+
+### Fixed — lane cleanup covered the happy path; the leak came from the failure path (#199)
+
+At `concurrency > 1` the harness creates one git worktree per lane, **inside** the repo, at `.claude/worktrees/wf_<runId>-<n>/`. Each is a full checkout with its own `node_modules`.
+
+0.13.2 added a post-run sweep (#151). It was real, and three gaps sat on top of it. Measured in an adopting repo on 2026-08-15:
+
+| | |
+|---|---|
+| Orphaned lane directories | **29**, all from a **single** run id |
+| On disk | **1.2 GB** (~125 MB per lane) |
+| What `git worktree list` reported | **4** worktrees — **none** of them those 29 |
+
+**1. It only ran after a run that finished.** A terminated process cannot clean up after itself, and termination is exactly when lanes are most numerous. Cleanup now also runs **before** each run, so a killed predecessor's lanes are reaped by its successor. The pre-run pass takes `--delivered ""`: it removes lane directories and deletes **no** branches — which tickets delivered is this run's business, not the last one's, and a branch is evidence until something says otherwise.
+
+**2. It only removed worktrees git still had registered.** `git worktree prune` drops administrative entries for directories that are *already gone*; it deletes nothing. So both the removal loop and prune stepped straight past all 29. `cleanup-run.mjs` now reaps **unregistered** directories under `.claude/worktrees/` too.
+
+**3. `run-milestone.js` had no cleanup at all.** Grepping that file for `cleanup` before this change returned **zero** hits — so `/start-milestone` at `concurrency > 1` leaked a full checkout per lane with nothing ever removing them, while `/start-all` did not. It gained the end-of-run cleanup, plus the `CLEANUP` schema and the `escalations` array it also never had, so what cleanup *cannot* remove now has somewhere to go. A leftover ticket branch is what later opens a merge request that reverts the default branch.
+
+#### A lane's install can poison the main checkout
+
+Because lanes live inside the repository, package managers hoist across the boundary. A `pnpm install` inside a lane wrote a `node_modules` symlink in the **main** checkout pointing into the lane's store. When the lane was removed the link dangled, and the app failed with `Cannot find package 'fastify'` on a `main` whose diff explains nothing — it reads, convincingly, as a regression in freshly merged work. A team lost time bisecting merged tickets before recognising it. `pnpm install --force` reports "Already up to date" and leaves the link in place.
+
+Cleanup now **reports** these links. It does not repair them: the fix is to delete the affected package's `node_modules` and reinstall, and deleting a `node_modules` tree on your behalf is not a cleanup script's call. The value is the diagnostic — `readlink` pointing under `.claude/worktrees/` is not something anyone guesses.
+
+This is a pnpm behaviour, not a Windows one.
+
+#### Two more, found by writing the tests rather than by the field report
+
+**Cleanup reported worktrees as removed that it had not removed.** When `git worktree remove --force` failed, the script force-deleted the directory, ran `git worktree prune`, and took prune's exit code as proof. `git worktree prune` exits 0 whether it pruned anything or nothing at all. Removal is now **verified** — after the prune, the script asks git whether it still lists the path, and only then claims success. Otherwise the worktree is reported as kept, with the reason.
+
+The ghost admin entry this leaves behind is what later makes `git branch -D ticket/<id>` fail with "checked out somewhere else", under a cleanup report saying everything was fine. A **locked** worktree now also keeps its directory: a lock is a human saying do not touch this. Both cases leave through the same verified exit, rather than a special case that skips the check and can never be exercised.
+
+**An 8.3 short name defeated the "is this registered?" guard.** git reports a worktree's long real path; a path built from the process cwd can carry `C:/Users/HORACE~1/...`, a different drive-letter case, or a symlinked prefix, and `path.resolve` normalizes none of that away. The guard therefore reported a **live, registered** worktree as an orphan — and the orphan sweep deletes orphans. Both sides now share one `canon()` (`realpathSync.native` + lowercase), and one `registeredPaths()` helper serves both the removal loop and the sweep so they cannot drift apart on how a path is spelled.
+
+`/start-all`'s pre-run reap had **no** test coverage at all until this release (`suite-startall` SA5l); `run-milestone`'s is covered by `suite-runner` S2h.
+
+### Added — a control-character gate over shipped source
+
+Three times while building this release an editing tool wrote a control character into source that then looked correct in every diff **and** passed `node --check`: a NUL inside a template literal made a delivery command unrunnable, a literal backspace where a regex meant a word boundary made an assertion that could never match, and a CR/LF pair where a regex meant `\r?\n` broke a line the reviewer's eye reads as fine. `suite-integrity` now scans every shipped `.mjs` / `.js` / `.json` / `.md` / `.txt` / `.toml` for C0 control characters other than tab, LF and CR — and asserts its own non-vacuity, because the first version of the scan walked the wrong root, matched nothing, and would have reported clean forever. Its first live catch was in this release's own README prose.
 
 ## 0.16.0 — 2026-08-24
 

@@ -598,6 +598,34 @@ const settle = function (id, r) {
   if (cfg.mode === 'supervised' && r.status !== 'delivered') stopRun = true
 }
 
+// Reap what a PREVIOUS run left behind, before adding lanes of our own (catalog issue #199).
+//
+// The end-of-run cleanup covers the happy path, and the accumulation that was measured came
+// from runs that were TERMINATED — 29 orphaned lane directories from a single run id, 1.2 GB,
+// none of them still tracked by git. A killed process cannot clean up after itself, so the
+// only place that leak can be closed from inside the pattern is the start of the next run.
+//
+// Delivered-branch deletion is deliberately NOT done here: which tickets delivered is this
+// run's business, not the last one's, and a branch is evidence until something says otherwise.
+{
+  const reap = await safely(agent(
+    'Pre-run cleanup. You are NOT implementing anything and must NOT touch any ticket, plan, or source file.\n' +
+    'Run EXACTLY this command from the repo root and nothing else:\n' +
+    'node .claude/scripts/cleanup-run.mjs --delivered "" --default-branch ' + cfg.defaultBranch + '\n' +
+    'It reaps lane directories a previous, possibly terminated, run left behind. It deletes NO branches when ' +
+    '--delivered is empty. Parse its CLEANUP-JSON line and return ok=true with worktreesPruned and detail ' +
+    '(its escalations joined). If the command cannot run, return ok=false with the output tail in detail.',
+    { label: 'reap-orphans', phase: 'Deliver', effort: 'low', schema: CLEANUP }
+  ))
+  if (reap && reap.ok) {
+    if (reap.detail) log('pre-run cleanup: ' + reap.detail)
+  } else {
+    // Never silent: a leak that nobody mentions is how 1.2 GB accumulated unnoticed.
+    escalations.push('pre-run lane cleanup did not complete' + (reap && reap.detail ? ': ' + reap.detail : '') +
+      ' -- lane directories from earlier runs may still be present under .claude/worktrees/')
+  }
+}
+
 log('start-all: scheduling ' + tickets.size + ' ticket(s) from the flat DAG (concurrency=' + concurrency +
   ', rescanEvery=' + (cfg.rescanEvery || 'off') + ')')
 

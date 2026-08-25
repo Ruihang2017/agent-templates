@@ -216,6 +216,46 @@ export async function run() {
       !result.rescanDroppedClosed.includes('A-1') && !result.rescanDroppedClosed.includes('A-2'))
   }
 
+  // ---- SA5l (issue #199): the PRE-run reap.
+  // The post-run sweep above only fires when a run reaches its end. The 29 orphaned lane
+  // directories (1.2 GB) measured in an adopting repo came from runs that were TERMINATED,
+  // which is exactly the case an end-of-run sweep cannot cover. A killed process cannot clean
+  // up after itself, so the only place that leak can be closed is the START of the next run.
+  //
+  // It must delete NO branches. A branch left by a killed run may be the only record of work
+  // that was in flight, and which tickets delivered is THIS run's business, not the last one's.
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    let reapPrompt = null
+    const order = []
+    const respond = async (a) => {
+      order.push(a.label)
+      if (a.label === 'reap-orphans') {
+        reapPrompt = a.prompt
+        return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
+      }
+      if (a.label === 'cleanup') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
+      return makeRespond(st)(a)
+    }
+    const { error } = await drive(SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 2, rescanEvery: 0 }, respond)
+    check(S, 'SA5l no error', !error, error && error.message)
+    check(S, 'SA5l a pre-run reap stage exists at all', !!reapPrompt)
+    check(S, 'SA5l it runs BEFORE any ticket stage',
+      order.indexOf('reap-orphans') === 0, JSON.stringify(order.slice(0, 4)))
+    // Spelled with an explicit char code, not a literal, because the empty argument is the
+    // whole point: `/--delivered /` matches every possible value of the flag and would pass
+    // no matter what the workflow asked for. An assertion that cannot fail is worse than
+    // none, since it also reports that the case is covered.
+    const EMPTY_DELIVERED = '--delivered ' + String.fromCharCode(34, 34)
+    check(S, 'SA5l it deletes NO branches',
+      !!reapPrompt && reapPrompt.includes(EMPTY_DELIVERED), (reapPrompt || '').slice(0, 240))
+    check(S, 'SA5l it only RUNS the deterministic script, it decides nothing',
+      !!reapPrompt && /Run EXACTLY this command/.test(reapPrompt))
+    check(S, 'SA5l and it targets cleanup-run.mjs',
+      !!reapPrompt && /cleanup-run\.mjs/.test(reapPrompt))
+  }
+
   // ---- SA5c (issue #151): post-run cleanup of ticket branches and run worktrees.
   // A leftover ticket branch is what later opens a merge request that REVERTS the default
   // branch — four such MRs, one of them -12,095 lines, all conflict-free, sat open in a
