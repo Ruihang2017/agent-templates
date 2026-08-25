@@ -273,6 +273,9 @@ const checks = {
   ciChecked: false, ciStatus: null,
   // null = no expected commit supplied, so NOT CHECKED — never reported as checked-and-passed
   reviewedHeadMatches: null,
+  // null = not reached; false = checked and the remote fast-forwards; true = DIVERGED
+  // (catalog issues #198, #216)
+  branchDiverged: null,
   // A forge merge call that reported failure. The work may still have landed — that is
   // precisely the ambiguous state that must not read as a clean delivery.
   mergeAttemptFailed: false,
@@ -883,6 +886,57 @@ const rerouteToIntegration = (pr, failureOut) => {
  * name, because silently opening a second PR where one appears to exist is the kind of
  * surprise that costs more than the bug.
  */
+/**
+ * Refuse to push a ticket branch whose remote head is not an ancestor of the local one
+ * (catalog issues #198, #216).
+ *
+ * A terminated `/start-all` run leaves ticket branches PUSHED but unmerged. A later run
+ * rebuilds one of those tickets on the same branch name from a fresh base and pushes — and
+ * nothing checked. The result is two independent implementations sharing a branch name:
+ * they cannot be merged, cannot be rebased onto each other, and cannot be honestly
+ * reviewed, because the verdict on record describes code that no longer exists at that ref.
+ * Which one survives becomes a human judgement made after the fact, from a report that said
+ * nothing was wrong — `branchPushed: true` reads identically either way.
+ *
+ * The existing guards do not cover it. The revert-ratio heuristic (#151) runs AFTER the
+ * push and keys on a deletion profile two rebuilds of the same ticket will not have; the CI
+ * gate (#205) is downstream of the push as well. By the time either looks, the overwrite
+ * has happened.
+ *
+ * This never forces, rebases or deletes. Which implementation survives is a human decision
+ * and the tool's job is to stop and say so, naming both commits and how to inspect them.
+ */
+const assertBranchNotDiverged = () => {
+  // A missing remote branch is the ORDINARY first-delivery case, not an error.
+  const ls = tryGit(['ls-remote', '--heads', 'origin', BRANCH])
+  if (!ls.ok || !String(ls.out).trim()) { checks.branchDiverged = false; return true }
+
+  if (!tryGit(['fetch', 'origin', BRANCH]).ok) {
+    // Cannot see the remote head: refuse rather than push blind. Failing open here would
+    // be exactly the overwrite this exists to prevent.
+    checks.branchDiverged = true
+    note(`refusing to push ${BRANCH}: could not fetch it from origin, so the remote head is unknown. Delivery stops rather than pushing over work it cannot see.`)
+    return false
+  }
+
+  const localSha = (tryGit(['rev-parse', BRANCH]).out || '').trim()
+  const remoteSha = (tryGit(['rev-parse', `origin/${BRANCH}`]).out || '').trim()
+  if (remoteSha && localSha && tryGit(['merge-base', '--is-ancestor', `origin/${BRANCH}`, BRANCH]).ok) {
+    checks.branchDiverged = false
+    return true
+  }
+
+  checks.branchDiverged = true
+  note(
+    `refusing to push ${BRANCH}: the remote head ${remoteSha.slice(0, 12)} is NOT an ancestor of the local head ` +
+    `${localSha.slice(0, 12)} — this branch already carries an implementation that a different run produced, and ` +
+    `pushing would overwrite work a Reviewer may have judged. Nothing was pushed and the ticket is NOT delivered. ` +
+    `Inspect both before deciding which survives: \`git log --oneline ${remoteSha.slice(0, 12)}\` and ` +
+    `\`git diff ${remoteSha.slice(0, 12)} ${localSha.slice(0, 12)}\`. This tool will not force, rebase or delete.`
+  )
+  return false
+}
+
 const findPr = () => {
   const pick = (rows) => {
     const state = (p) => String(p.state || '').toUpperCase()
@@ -1082,6 +1136,8 @@ try {
       const desc = `${closes}Delivered by the three-agent pipeline (ticket ${ID}); plan docs/plans/${ID}.md; Reviewer verdict CLEAR — posted as a comment on the issue.`
       const pushArgs = ['push', '-o', 'merge_request.create', '-o', `merge_request.target=${DEFAULT_BRANCH}`,
         '-o', `merge_request.title=${prTitle()}`, '-o', `merge_request.description=${desc}`, '-u', 'origin', BRANCH]
+      // Same guard as the pr path: this push also carries the ticket branch.
+      if (!assertBranchNotDiverged()) finish(0)
       const res = spawnSync('git', pushArgs, { encoding: 'utf8' })
       const out = (res.stdout || '') + '\n' + (res.stderr || '')
       if (res.status !== 0 && !/merge_requests\//.test(out)) { note(`push-option MR failed: ${lastLine(out)}`); finish(0) }
@@ -1106,7 +1162,9 @@ try {
     }
   } else {
     // ---- pr path ----
-    // 3a. push the ticket branch so the forge has it (AC2: branch exists on remote)
+    // 3a. push the ticket branch so the forge has it (AC2: branch exists on remote).
+    // Never over a divergent remote (catalog issues #198, #216).
+    if (!assertBranchNotDiverged()) finish(0)
     const pb = tryGit(['push', '-u', 'origin', BRANCH])
     if (pb.ok) { checks.branchPushed = true; console.log(`+ pushed  ${BRANCH} -> origin`) }
     else { note(`branch push failed: ${lastLine(pb.out)} — cannot open a PR without it`); finish(0) }

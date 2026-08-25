@@ -6,6 +6,24 @@ What changed for someone **using** this catalog. The full decision record — wh
 
 **Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .`
 
+### Fixed — a rebuilt ticket overwrote work a Reviewer had already judged (#198, #216)
+
+Kill a `/start-all` run mid-flight and it leaves ticket branches **pushed to origin but unmerged**. Run again later, and a ticket gets rebuilt on the same branch name from a fresh base — and pushed. **Nothing checked whether the remote head was an ancestor of the local one.**
+
+The result is two independent implementations sharing one branch name. They cannot be merged, cannot be rebased onto each other, and cannot be honestly reviewed: the verdict on record describes code that no longer exists at that ref. Which one survives became a human judgement made after the fact — from a report that said nothing was wrong. `branchPushed: true`, either way.
+
+Neither existing guard reached it. The revert-ratio heuristic (#151) runs *after* the push and keys on a deletion profile two rebuilds of the same ticket will not have. The CI gate (#205) is downstream of the push as well. By the time either looked, the overwrite had happened.
+
+Delivery now fetches and requires a fast-forward before **every** ticket-branch push, on both the `pr` and `pushmr` paths:
+
+- a **missing** remote branch is the ordinary first delivery, not an error;
+- a **fast-forwardable** remote passes — a resumed run must not stall;
+- anything else **refuses**, naming both short shas and the exact `git log` / `git diff` to inspect them, and reports the ticket as **not delivered**.
+
+It never forces, rebases or deletes. Which implementation survives is a human decision, and the tool's job is to stop and say so rather than to pick.
+
+`agents/builder.md` gained the preflight it never had: `git ls-remote --heads origin ticket/<id>` before creating the branch, and **stop** if an unmerged one exists. That catches the collision before a full Builder and Reviewer pass is spent on it.
+
 ### Fixed — a closed PR blocked its ticket permanently (#202)
 
 Delete a ticket branch on the remote — routine cleanup, or an interrupted run — and the forge auto-closes its PR. Recreate the branch with different history and that closed PR now points at commits which no longer exist: it cannot be merged, and `gh pr reopen` refuses it.
@@ -22,7 +40,7 @@ GraphQL: Pull Request is not mergeable
 
 **The GitLab path had the same shape** — first `!<n>` match, no state anywhere. The reporter flagged it and left it alone, having no way to test it. It now reads state from the `merge_requests` API, falling back to the CLI listing (which defaults to open MRs only, so it cannot return the closed one this is about) for the 403-MR-API configuration that `pushmr` mode exists for. The E2E fakes gained the closed states, so both branches are tested rather than one fixed and one hoped for.
 
-Suite: 1795 checks. Mutation-verified: restoring `arr[0]` of `--state all` turns 3 red, and dropping MERGED from the preference — the over-correction — turns 2.
+Suite: 1808 checks. Mutation-verified in both directions each time, because the over-correction here would be as damaging as the bug: restoring `arr[0]` of `--state all` turns 3 red and dropping MERGED from the preference turns 2; removing the divergence guard turns 4 red and refusing every existing remote branch — which would stall each resumed run — turns 4.
 
 ## 0.16.0 — 2026-08-24
 

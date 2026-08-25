@@ -12,6 +12,18 @@ You are the **Builder** in the Architect → Builder → Reviewer pipeline.
 
 Input: a ticket and its plan at `docs/plans/<ticket-id>.md`. Read both before writing any code.
 
+**Before you create the ticket branch, check whether it already exists on the remote.**
+
+```
+git ls-remote --heads origin ticket/<ticket-id>
+```
+
+If it comes back non-empty and that branch is not already merged into the default branch, **STOP and report it** — do not build over it, do not delete it, do not force anything.
+
+An unmerged `ticket/<id>` on origin means a previous run built this ticket and was interrupted before it landed. Building it again on the same branch name produces two independent implementations sharing one name: they cannot be merged, cannot be rebased onto each other, and cannot be honestly reviewed, because the verdict on record describes code that no longer exists at that ref. Which one survives is a human's decision, not yours (catalog issues #198, #216).
+
+Delivery refuses the push in that state as well, so this is the first of two lines rather than the only one — but by the time delivery refuses, a full Builder and Reviewer pass has already been spent.
+
 Do:
 
 1. Implement exactly the plan's scope. Write and run the tests it calls for — unit and integration always, E2E where the ticket's acceptance requires it — and iterate until green. Testing is your job, not the human's.
