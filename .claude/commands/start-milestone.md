@@ -8,6 +8,24 @@ Arguments: `$ARGUMENTS` — the first is the module directory (MODULE below); an
 Typing this command **is** the human Gate 1 sign-off: the sub-PRD and tickets are final, and tracker issue **creation** is authorized by this sign-off. Execute in order:
 
 1. **Verify Gate 1 inputs.** `MODULE/README.md` (the sub-PRD) exists and `MODULE/tickets/*.md` is non-empty; every ticket has the required frontmatter (see `templates/ticket.template.md`). Anything missing → STOP and list exactly what is missing. Do not fix it yourself — that is Architect-stage work.
+
+**Preflight: is the pipeline running its own configuration?** (catalog issue #200)
+
+```
+node .claude/scripts/check-pipeline-config.mjs --default-branch <default>
+```
+
+A **non-zero exit means STOP** — do not launch, and report which files drifted. This pattern version-controls itself under `.claude/`, and checking out a ticket branch in the main working tree (which is what `concurrency = 1` does — the default, and the recommended on-ramp) reverts any `.claude` change whose commit postdates that branch's base. One observed run reverted `agents/builder.md` to an archived variant mid-flight, so the pipeline used a different Builder definition than the one it was configured with, and nothing said so.
+
+Two remedies, because there are two windows and **the intuitive one is incomplete**:
+
+- `.claude/scripts/`, `.claude/hooks/`, `.claude/workflows/`, `.claude/settings.json` are exec'd from disk on every invocation, so restoring the files is enough.
+- `.claude/agents/**` are read **once per CLI process**. Restoring them does *not* fix the current session — **it must be restarted.**
+
+The check only looks; it never checks out, resets or writes. Repairing a ticket branch automatically would alter the diff a Reviewer judged.
+
+The Builder re-runs this as its last action on every build and every bounce round, and returns `configIntact`; a false value escalates the ticket as `config-drift` and delivers nothing. This preflight is the earlier of the two — it stops the run before any ticket is dispatched.
+
 2. **Publish tickets as tracker issues.** Run `node .claude/scripts/publish-tickets.mjs MODULE` (dry-run) and show the mapping. If the summary contains `error` entries → STOP and report them. Otherwise re-run with `--create` (idempotent — the `[<id>]` title prefix dedupes, so re-running is safe), and again STOP on any `error` entries.
 2b. **Mirror to Asana, if this repo is connected.** Skip this step entirely when `.claude/asana.json` does not exist — most repos are not connected and must see no extra output. When it does exist, save step 2's `--create` stdout to a file and run `node .claude/scripts/asana-sync.mjs sync MODULE --create --issues <that file>` so subtask names carry the `#<issue>` numbers. Read the `ASANA-SYNC-JSON` line: report what was created, and if `errors` is non-empty **relay every entry verbatim in your final report** and carry on. **Never stop the run for an Asana failure** — Asana is a reporting mirror, not a gate, and the script exits 0 on every Asana problem by design.
 

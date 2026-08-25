@@ -40,6 +40,7 @@ const EXPECTED_FILES = [
   '.claude/commands/start-all.md',
   '.claude/commands/deliver-ticket.md',
   '.claude/scripts/cleanup-run.mjs',
+  '.claude/scripts/check-pipeline-config.mjs',
   '.claude/commands/nightly-issues.md',
   '.claude/commands/breakdown-prd.md',
 ]
@@ -394,6 +395,7 @@ export async function run() {
     '.claude/scripts/publish-tickets.mjs': SCAFFOLD + '.claude/scripts/publish-tickets.mjs',
     '.claude/scripts/deliver-ticket.mjs': SCAFFOLD + '.claude/scripts/deliver-ticket.mjs',
     '.claude/scripts/cleanup-run.mjs': SCAFFOLD + '.claude/scripts/cleanup-run.mjs',
+    '.claude/scripts/check-pipeline-config.mjs': SCAFFOLD + '.claude/scripts/check-pipeline-config.mjs',
     '.claude/commands/plan-ticket.md': SCAFFOLD + '.claude/commands/plan-ticket.md',
     '.claude/commands/build-ticket.md': SCAFFOLD + '.claude/commands/build-ticket.md',
     '.claude/commands/review-ticket.md': SCAFFOLD + '.claude/commands/review-ticket.md',

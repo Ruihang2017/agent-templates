@@ -28,7 +28,17 @@ Do:
 
 1. Implement exactly the plan's scope. Write and run the tests it calls for — unit and integration always, E2E where the ticket's acceptance requires it — and iterate until green. Testing is your job, not the human's.
 2. Where reality forces a departure from the plan, depart — and record it in a **Deviations** note (what changed, why).
-3. Finish with: a diff summary, the actual test output (never "should pass"), and the Deviations note.
+3. **As your LAST action, check that the pipeline is still running its own configuration** — on the initial build *and on every bounce-fix round*, which is exactly where this was observed:
+
+   ```
+   node .claude/scripts/check-pipeline-config.mjs --default-branch <default>
+   ```
+
+   Return its `CONFIG-CHECK-JSON` `intact` field as `configIntact`. **Report what it says even when it says the tree drifted — especially then.** The field is required by the schema, so omitting it fails the stage rather than passing quietly.
+
+   Why you, and why last: checking out this ticket's branch reverts any `.claude` change whose commit postdates the branch base, and at `concurrency = 1` that happens in the **main working tree**. Scripts and hooks are re-read from disk on every invocation, so a rollback takes effect *during* your own run. The check only looks — it never restores anything, because repairing the branch would alter the diff the Reviewer is about to judge (catalog issue #200).
+
+4. Finish with: a diff summary, the actual test output (never "should pass"), the Deviations note, and `configIntact`.
 
 Never:
 

@@ -105,8 +105,15 @@ const PLAN = {
 }
 const BUILD = {
   type: 'object',
-  properties: { branch: { type: 'string' }, testsPassed: { type: 'boolean' }, testOutput: { type: 'string' }, deviations: { type: 'string' }, summary: { type: 'string' }, headSha: { type: 'string' } },
-  required: ['branch', 'testsPassed', 'testOutput'],
+  properties: { branch: { type: 'string' }, testsPassed: { type: 'boolean' }, testOutput: { type: 'string' }, deviations: { type: 'string' }, summary: { type: 'string' }, headSha: { type: 'string' },
+    // catalog issue #200. REQUIRED: the pipeline version-controls its own configuration
+    // under .claude/, and checking out a ticket branch in the main tree — which is what
+    // concurrency=1 does, the default and the recommended on-ramp — reverts any .claude
+    // change whose commit postdates the branch base. One observed bounce-fix round reverted
+    // agents/builder.md to an archived variant, so the run used a different Builder
+    // definition than the one it was configured with, and nothing reported it.
+    configIntact: { type: 'boolean' } },
+  required: ['branch', 'testsPassed', 'testOutput', 'configIntact'],
 }
 const VERDICT = {
   type: 'object',
@@ -224,6 +231,10 @@ async function runTicket(t, opts) {
   }
 
   const buildBad = function (b) { return !b || !b.testsPassed || String(b.branch).trim() !== branch }
+  // A build produced against a DIFFERENT pipeline configuration than the one this run was
+  // started with is not a failed build — the code may be fine — but it is not a trustworthy
+  // one either, and a human has to look (catalog issue #200). Never delivered.
+  const configDrifted = function (b) { return Boolean(b) && b.configIntact === false }
   const buildIsolation = isolate ? { isolation: 'worktree' } : {}
   const planForBuilder = isolate
     ? 'You are in a fresh isolated git worktree of ' + cfg.defaultBranch + ' (it already contains every delivered dependency). Implement this plan (the plan file is NOT in your worktree):\n<<<PLAN\n' + (plan.content || plan.summary) + '\nPLAN\n'
@@ -234,12 +245,25 @@ async function runTicket(t, opts) {
     'Builder stage. Ticket: ' + t.path + '. ' + planForBuilder + 'Create branch ' + branch +
     ' from ' + cfg.defaultBranch + ', implement it there, commit, run the tests. Do NOT merge and do NOT touch the tracker. ' +
     'Return branch (must be ' + branch + '), testsPassed, testOutput (paste real output), deviations, ' +
+    'AS YOUR LAST ACTION run `node .claude/scripts/check-pipeline-config.mjs --default-branch ' + cfg.defaultBranch + '` and return configIntact = its CONFIG-CHECK-JSON `intact` field. ' +
+    'It only looks; it changes nothing. Report what it says even if it says the tree drifted -- especially then. ' +
     'headSha = the full SHA of your final commit on that branch (`git rev-parse HEAD`), ' +
     'and summary = one paragraph on WHAT you changed and why, written for a human reviewer and describing only what you actually did -- it is quoted into the pull request body.',
     Object.assign({ agentType: 'builder', label: 'build:' + t.id, phase: P, schema: BUILD }, buildIsolation)
   ))
   if (buildBad(build)) {
     return { id: t.id, status: 'failed', stage: 'builder', detail: !build ? 'builder agent returned nothing' : (String(build.branch).trim() !== branch ? 'worked on wrong branch: ' + build.branch : build.testOutput) }
+  }
+  if (configDrifted(build)) {
+    log('[' + t.id + '] pipeline config DRIFTED during the build -- escalating, nothing delivered')
+    return {
+      id: t.id, status: 'escalated', stage: 'config-drift',
+      detail: 'the working tree\'s .claude/ no longer matches the default branch, so this build ran against a ' +
+        'different pipeline configuration than the run was started with. Run ' +
+        '`node .claude/scripts/check-pipeline-config.mjs` to see which files. Restore them from the default ' +
+        'branch -- and note that restoring is NOT sufficient for .claude/agents/**: agent definitions are read ' +
+        'once per CLI process, so that session must be RESTARTED.',
+    }
   }
 
   const reviewOnce = function (tag) {
@@ -274,7 +298,8 @@ async function runTicket(t, opts) {
     build = await safely(agent(
       'Builder stage, bounce fix. Ticket: ' + t.path + '. ' + planForBuilder + 'Stay on branch ' + branch +
       ' -- do NOT merge and do NOT touch the tracker. Reviewer findings -- address ALL of them and add regression tests: ' +
-      JSON.stringify(verdict.findings) + '. Run the tests. Return branch (must be ' + branch + '), testsPassed, testOutput, deviations, summary, and headSha (the full SHA of your final commit, `git rev-parse HEAD`).',
+      JSON.stringify(verdict.findings) + '. Run the tests. Return branch (must be ' + branch + '), testsPassed, testOutput, deviations, summary, headSha (the full SHA of your final commit, `git rev-parse HEAD`), ' +
+      'and configIntact from `node .claude/scripts/check-pipeline-config.mjs --default-branch ' + cfg.defaultBranch + '` run as your LAST action -- a bounce round is exactly where this drift was observed.',
       Object.assign({ agentType: 'builder', label: 'fix:' + t.id + '#' + bounces, phase: P, schema: BUILD }, buildIsolation)
     ))
     if (buildBad(build)) { fixBroken = true; break }

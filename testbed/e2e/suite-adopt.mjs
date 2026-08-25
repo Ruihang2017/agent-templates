@@ -28,6 +28,7 @@ export async function run() {
       '.claude/agents/reviewer.md',
       '.claude/workflows/run-milestone.js',
       '.claude/scripts/cleanup-run.mjs',
+      '.claude/scripts/check-pipeline-config.mjs',
       '.claude/commands/deliver-ticket.md',
       '.claude/commands/breakdown-prd.md',
       '.claude/commands/start-milestone.md',
