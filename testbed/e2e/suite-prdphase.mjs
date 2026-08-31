@@ -9,7 +9,7 @@
 // red" (the #83 lesson, in reverse).
 
 import { spawnSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, unlinkSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -52,6 +52,52 @@ function makeRepo({ commit = true } = {}) {
 }
 
 export async function run() {
+  // ---- PP0 (catalog issue #230): a ticket whose frontmatter is preceded by an HTML
+  // comment must be READ, on this path as well as the DAG scan's.
+  //
+  // #185 fixed exactly that, in two places: dag-core's `fmOf` and a hand-copied twin here.
+  // The copy lost every backslash — `/^(?:s*<!--[sS]*?-->s*)*/` matches the letter s, strips
+  // nothing, and is a perfectly valid regex no linter objects to. It shipped that way in
+  // 0.16.0 and 0.16.1: one path honoured #185, the other silently did not.
+  //
+  // Nothing caught it because this suite's own `ticket()` helper writes frontmatter with no
+  // preamble, while the template the Architect is told to follow opens with a comment. A
+  // fixture more permissive than the real input cannot exercise the bug, so the first case
+  // below drives the REAL shipped template — the same guard suite-dag applies to the scan.
+  {
+    const root = mkdtempSync(join(tmpdir(), 'e2e-phase-tpl-'))
+    try {
+      const tdir = join(root, 'docs', 'prd', '00-foundation', 'tickets')
+      mkdirSync(tdir, { recursive: true })
+      writeFileSync(join(root, 'docs', 'prd', '00-foundation', 'README.md'), '# 00-foundation\n')
+      const template = readFileSync(fileURLToPath(new URL('../../templates/ticket.template.md', import.meta.url)), 'utf8')
+      check(S, 'PP0 the shipped ticket template still opens with a comment', /^\s*<!--/.test(template))
+      writeFileSync(join(tdir, 'MOD-NN.md'), template)
+      const r = phase(root, ['context', 'docs/prd'])
+      eq(S, 'PP0 exits 0 on a tree written from the shipped template', r.status, 0)
+      check(S, 'PP0 the template ticket is SEEN, not silently skipped',
+        !!r.context && (r.context.modules || []).some((m) => (m.tickets || []).length === 1),
+        JSON.stringify(r.context && r.context.modules))
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  }
+
+  {
+    // The same property stated directly, so a template that stops opening with a comment
+    // does not quietly retire the coverage above.
+    const root = mkdtempSync(join(tmpdir(), 'e2e-phase-cmt-'))
+    try {
+      const tdir = join(root, 'docs', 'prd', '00-foundation', 'tickets')
+      mkdirSync(tdir, { recursive: true })
+      writeFileSync(join(root, 'docs', 'prd', '00-foundation', 'README.md'), '# 00-foundation\n')
+      writeFileSync(join(tdir, 'FND-1.md'), '<!-- generated; edit the PRD instead -->\n' + ticket('FND-1'))
+      writeFileSync(join(tdir, 'FND-2.md'), ticket('FND-2'))
+      const r = phase(root, ['context', 'docs/prd'])
+      const ids = ((r.context && r.context.modules) || []).flatMap((m) => m.tickets || [])
+      check(S, 'PP0 a comment above the frontmatter does not hide the ticket',
+        ids.includes('FND-1') && ids.includes('FND-2'), JSON.stringify(ids))
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  }
+
   // ---- context ----
   {
     const root = mkdtempSync(join(tmpdir(), 'e2e-phase-empty-'))

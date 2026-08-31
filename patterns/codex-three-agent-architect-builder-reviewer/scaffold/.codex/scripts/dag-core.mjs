@@ -26,10 +26,26 @@ import { join } from 'node:path'
 //
 // Deliberately narrow: only HTML comments and whitespace may precede the opening `---`.
 // Anything else still fails, so this does not become "find frontmatter anywhere".
-const fmOf = (text) => {
-  const body = String(text).replace(/^﻿/, '').replace(/^(?:\s*<!--[\s\S]*?-->\s*)*/, '')
-  return (body.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
-}
+// Everything a ticket may legally carry BEFORE its frontmatter: a BOM (PowerShell 5.1 utf8
+// writes one) and any run of HTML comments — the shipped ticket template opens with one.
+//
+// EXPORTED because it was written three times (catalog issue #230), and two of the three
+// copies lost every backslash:
+//
+//     /^(?:s*<!--[sS]*?-->s*)*/      matches the letter s, strips nothing
+//     /^(?:\s*<!--[\s\S]*?-->\s*)*/   what was meant
+//
+// Both are valid regexes; no linter objects to either. So prd-phase.mjs and
+// publish-tickets.mjs shipped the #185 fix as a no-op through 0.16.0 and 0.16.1 while
+// this file had it — and a ticket written literally from the shipped template was still
+// skipped by the publisher, which is the exact symptom #185 was filed for.
+//
+// A rule written three times is a rule that can disagree with itself twice.
+export const stripPreamble = (text) =>
+  String(text).replace(/^﻿/, '').replace(/^(?:\s*<!--[\s\S]*?-->\s*)*/, '')
+
+export const fmOf = (text) =>
+  (stripPreamble(text).match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
 const field = (fm, name) => ((fm.match(new RegExp(`^${name}\\s*:\\s*(.+)$`, 'm')) || [])[1] || '').trim()
 const listField = (fm, name) =>
   field(fm, name)
