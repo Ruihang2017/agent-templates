@@ -56,6 +56,34 @@ function repoOn(host) {
 }
 
 export async function run() {
+  // P0 (catalog issue #230): a ticket written literally from the shipped template must
+  // PUBLISH. The template opens with an HTML comment, and #185 added a strip for exactly
+  // that — right above the comment in this script saying a template ticket "parsed as
+  // having no frontmatter and was skipped here". The strip lost every backslash, so it
+  // stripped nothing and the ticket was still skipped, in 0.16.0 and 0.16.1.
+  //
+  // The fixture above is why nobody noticed: it covers a BOM but never a leading comment,
+  // so the case the fix exists for was the one case never written down.
+  {
+    const root = mkdtempSync(join(tmpdir(), 'e2e-pub-tpl-'))
+    try {
+      const tdir = join(root, 'docs', 'prd', '00-x', 'tickets')
+      mkdirSync(tdir, { recursive: true })
+      const template = readFileSync(fileURLToPath(new URL('../../templates/ticket.template.md', import.meta.url)), 'utf8')
+      check(S, 'P0 the shipped ticket template still opens with a comment', /^\s*<!--/.test(template))
+      writeFileSync(join(tdir, 'MOD-NN.md'), template)
+      writeFileSync(join(tdir, 'CMT-01.md'), '<!-- generated; edit the PRD instead -->\n' + ticket('CMT-01', 'Comment above frontmatter'))
+      const r = runPub(root, ['docs/prd/00-x'], { GH_BIN: FAKE_GH, FAKE_GH_LIST: '[]' })
+      eq(S, 'P0 exit 0', r.status, 0)
+      const cmt = entry(r.summary, 'CMT-01')
+      check(S, 'P0 a comment above the frontmatter does not make the ticket unpublishable',
+        !!cmt && !cmt.error, JSON.stringify(r.summary))
+      check(S, 'P0 nothing was rejected as no-frontmatter',
+        !(r.summary || []).some((e) => e.error === 'no-frontmatter'),
+        JSON.stringify((r.summary || []).filter((e) => e.error)))
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  }
+
   const root = makeFixture()
   try {
     const mod = 'docs/prd/00-x'

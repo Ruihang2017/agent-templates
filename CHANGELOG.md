@@ -2,6 +2,33 @@
 
 What changed for someone **using** this catalog. The full decision record — why each change was made, what evidence backed it, and what is still unmeasured — lives in each pattern's README § 7 provenance log and § 4 pitfalls.
 
+## 0.16.2 — 2026-08-31
+
+**Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .`
+
+### Fixed — the #185 comment strip was a no-op in two of the three places it was written (#230)
+
+A ticket may open with an HTML comment — **the shipped `ticket.template.md` does**. #185 taught the scaffold to look past one before reading frontmatter. That rule was written three times, and two copies lost every backslash:
+
+```js
+/^(?:s*<!--[sS]*?-->s*)*/      // matches the letter s. Strips nothing.
+/^(?:\s*<!--[\s\S]*?-->\s*)*/  // what was meant
+```
+
+Both are valid regexes. No linter objects to either. So this shipped in **0.16.0 and 0.16.1** with `dag-core.mjs` honouring #185 while `prd-phase.mjs` and `publish-tickets.mjs` silently did not.
+
+The reported symptom was `prd-phase.mjs`. The gate written for it immediately found the third copy — **`publish-tickets.mjs`**, which is worse: a ticket written literally from the shipped template was still rejected as `no-frontmatter` and never became a tracker issue. The comment directly above that line explains that this must not happen. It has been happening.
+
+There is now **one** preamble strip, exported as `stripPreamble` from `dag-core.mjs`; `fmOf` is exported alongside it. The other two scripts import it.
+
+#### Why a character fix was not the fix
+
+The defect was duplication — the missing backslash was only where it surfaced. So the gate is on duplication: `suite-integrity` fails any script under `scripts/` that strips a ticket preamble with its own regex, **derived from the code** rather than a list, so a new script that rolls its own fails without anyone remembering to register it. It goes red on a re-added copy even when correctly spelled.
+
+The reason none of this was caught is worth naming: every fixture was more permissive than the real input. `suite-publish` covered a BOM but never a leading comment; `suite-prdphase` built frontmatter with no preamble at all. Both suites now drive the **real shipped template**, the way `suite-dag` already did — which is why `dag-core` was the one copy that stayed correct.
+
+Reverting the single shared strip now turns `suite-prdphase`, `suite-publish`, `suite-dag` and `suite-integrity` red together.
+
 ## 0.16.1 — 2026-08-25
 
 **Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .`

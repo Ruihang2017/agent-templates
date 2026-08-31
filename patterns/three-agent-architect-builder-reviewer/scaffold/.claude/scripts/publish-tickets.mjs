@@ -53,6 +53,7 @@ import { execFileSync } from 'node:child_process'
 import { readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { stripPreamble } from './dag-core.mjs'
 
 const argv = process.argv.slice(2)
 const CREATE = argv.includes('--create')
@@ -465,10 +466,16 @@ let driftedClosed = 0
 
 for (const f of readdirSync(ticketsDir).filter((n) => n.endsWith('.md')).sort()) {
   const path = join(ticketsDir, f).replaceAll('\\', '/')
-  // strip BOM (PowerShell 5.1 utf8 writes one) AND any HTML comment preceding the
+  // Strip BOM (PowerShell 5.1 utf8 writes one) AND any HTML comment preceding the
   // frontmatter (catalog issue #185): the shipped ticket template opens with one, so a
   // ticket written literally from it parsed as having no frontmatter and was skipped here.
-  const text = readFileSync(path, 'utf8').replace(/^﻿/, '').replace(/^(?:s*<!--[sS]*?-->s*)*/, '')
+  //
+  // Via the shared parser (catalog issue #230). The local copy this replaces was missing
+  // every backslash, so it stripped nothing and the #185 fix above was a no-op here in
+  // 0.16.0 and 0.16.1 — a ticket written from the template was still skipped, exactly as
+  // the comment says it must not be. The match below keeps its own trailing `\r?\n?`
+  // because `fmMatch[0].length` splits the body; only the preamble strip is shared.
+  const text = stripPreamble(readFileSync(path, 'utf8'))
   const fmMatch = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/)
   if (!fmMatch) {
     console.log(`  skip (no frontmatter): ${path}`)

@@ -37,6 +37,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fmOf } from './dag-core.mjs'
 
 // `NN-name`. Prefixes 90-99 are RESERVED — the nightly sweep writes 99-nightly — so
 // they never advance nextPrefix; otherwise one nightly run would push phase 3 to 100.
@@ -97,9 +98,11 @@ function scanModules(dir) {
     const tickets = []
     if (existsSync(tdir)) {
       for (const f of readdirSync(tdir).filter((n) => n.endsWith('.md')).sort()) {
-        // BOM + any HTML comment above the frontmatter (catalog issue #185)
-        const text = readFileSync(join(tdir, f), 'utf8').replace(/^﻿/, '').replace(/^(?:s*<!--[sS]*?-->s*)*/, '')
-        const fm = (text.match(/^---\r?\n([\s\S]*?)\r?\n---/) || [])[1] || ''
+        // BOM + any HTML comment above the frontmatter (catalog issue #185), via the ONE
+        // shared parser (#230). This used to be a local copy of dag-core's expression with
+        // every backslash missing, so it stripped nothing and the #185 fix was absent here
+        // through 0.16.0 and 0.16.1 while the other path had it.
+        const fm = fmOf(readFileSync(join(tdir, f), 'utf8'))
         const idm = fm.match(/^id\s*:\s*(.+)$/m)
         if (idm) tickets.push(stripQuotes(idm[1]))
       }

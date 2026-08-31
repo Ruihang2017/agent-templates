@@ -158,6 +158,55 @@ export async function run() {
     check(S, "the control-character scan actually read files", scanned > 100, "scanned " + scanned)
     check(S, "no shipped source file contains a control character", offenders.length === 0, offenders.slice(0, 5).join("; "))
   }
+
+  // A ticket's preamble is stripped in exactly ONE place (catalog issue #230).
+  //
+  // #185 taught the scaffold to read a ticket whose frontmatter is preceded by an HTML
+  // comment — the shipped template opens with one. The rule was written THREE times:
+  // dag-core's parser, plus hand-copies in prd-phase.mjs and publish-tickets.mjs. Two of
+  // the three lost every backslash:
+  //
+  //     /^(?:s*<!--[sS]*?-->s*)*/      matches the letter s, strips nothing
+  //     /^(?:\s*<!--[\s\S]*?-->\s*)*/   what was meant
+  //
+  // Both are valid regexes; no linter objects to either. All three shipped, and for two
+  // releases one path honoured #185 while the other two silently did not — the publisher
+  // still skipped a ticket written literally from the template, with the comment directly
+  // above it explaining that it must not.
+  //
+  // The defect was duplication; the missing character was only where it surfaced. So the
+  // gate is on duplication, and it is derived from the code rather than from a blacklist:
+  // a NEW script that rolls its own strip fails here without anyone remembering to list it.
+  {
+    const SCRIPTS = fileURLToPath(new URL("../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/", import.meta.url))
+    // a comment-stripping replace, however its character class is spelled — the point is to
+    // catch the broken spelling too, so this must not require the backslashes
+    const OWN_STRIP = /\.replace\(\s*\/\^[^/]*<!--/
+    let looked = 0
+    const rogue = []
+    let entries = []
+    try { entries = readdirSync(SCRIPTS).filter((n) => n.endsWith(".mjs")) } catch {}
+    for (const name of entries) {
+      if (name === "dag-core.mjs") continue // the one place it is allowed to live
+      let text = ""
+      try { text = readFileSync(join(SCRIPTS, name), "utf8") } catch { continue }
+      looked++
+      if (OWN_STRIP.test(text)) rogue.push(name)
+    }
+    check(S, "the preamble-duplication scan actually read the scripts", looked >= 5, "read " + looked + " script(s)")
+    check(S, "only dag-core.mjs strips a ticket preamble; everyone else imports it",
+      rogue.length === 0,
+      rogue.length ? rogue.join(", ") + " strip the HTML comment with their own regex" : "")
+
+    // And the one surviving copy must actually work. Asserting the behaviour rather than
+    // the spelling: a regex that strips nothing is the whole bug, and it reads as fine.
+    const core = await import(new URL("../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/dag-core.mjs", import.meta.url).href)
+    const withComment = "<!-- generated -->\n---\nid: X-1\n---\n"
+    check(S, "the shared preamble strip removes a leading HTML comment",
+      core.stripPreamble(withComment).startsWith("---"), JSON.stringify(core.stripPreamble(withComment).slice(0, 24)))
+    check(S, "and the shared parser reads the frontmatter behind it",
+      /id:\s*X-1/.test(core.fmOf(withComment)), JSON.stringify(core.fmOf(withComment)))
+  }
   // The scaffold must not contradict itself about whether delivery is a pipeline stage
   // (catalog issue #210). PR #207 removed the stage and rewrote the docs to argue it should
   // not exist; PR #209 reverted the code but missed one file's rationale, and the pair
