@@ -98,9 +98,32 @@ const BASH_WRITE_PATTERNS = [
 // outage. Same directory as the main-session carve-out, and gitignored for the same reason.
 const TOUCHES_SCRATCH = /\.claude[/\\]tmp[/\\]/;
 
+// The sanctioned mutation probe (catalog issue #229).
+//
+// The Reviewer is asked to judge whether the Builder's tests are load-bearing, which means
+// mutating code and checking a test goes red — and the rule above denies its entire write
+// surface by mechanism, including into a scratch tree outside the repo. Two Reviewers hit
+// that wall on two repos in one day; both disclosed the gap honestly, and neither performed
+// the verification the pattern asks for.
+//
+// The remedy is NOT to decide from a command string where a shell will write. That means
+// parsing `cd`, variables, substitution and quoting, and a guard that believes it knows and
+// is wrong is worse than one that refuses — the exact failure this file has already had once
+// (`\b-[ce]` never matches before a hyphen, so `node -e` walked straight through the first
+// version of the interpreter rule). Instead there is one entry point that does the isolation
+// itself: review-probe.mjs copies the tree into a detached worktree under the OS temp
+// directory, mutates THERE, runs the suite, and removes it. The repository under review is
+// never written, so #218's invariant is untouched.
+//
+// Recognised strictly: the whole command must be that one invocation. No `;` `&&` `||` `|`,
+// no redirection, no backticks or `$(...)`, so the allowance cannot carry a second command
+// in with it. Anything less exact and this becomes a hole rather than a door.
+const REVIEW_PROBE = /^(?:node\s+)?[^\s;&|<>`$()]*review-probe\.mjs(?:\s+[^;&|<>`$()]*)?$/;
+
 const bashWriteReason = (cmd) => {
   const text = String(cmd || "");
   if (TOUCHES_SCRATCH.test(text)) return ""; // writing the review record
+  if (REVIEW_PROBE.test(text.trim())) return ""; // the sanctioned mutation probe
   for (const p of BASH_WRITE_PATTERNS) if (p.re.test(text)) return p.why;
   return "";
 };
@@ -117,9 +140,11 @@ if (isSubagent && input.tool_name === "Bash" && WRITE_FORBIDDEN_ROLES.has(String
             `The ${input.agent_type} role must not write files, and this command contains ${why}. ` +
             `Bash is available to you so you can RUN things — tests, greps, diffs — not to change them. ` +
             `If the code is wrong, that is a BOUNCE with findings, not an edit: fixing it yourself would ` +
-            `make you the author of the work you are judging. If you need to experiment, copy the tree ` +
-            `somewhere outside the repository first and say in your record that you did. Writing your ` +
-            `own review record under .claude/tmp/ is allowed and needs no workaround.`,
+            `make you the author of the work you are judging. To MUTATION-PROBE a test, run ` +
+            `\`node .claude/scripts/review-probe.mjs --file <path> --test "<cmd>" --line <n> --replace "<text>"\` ` +
+            `— it copies the tree outside the repository, mutates there, runs the suite and reports whether ` +
+            `it went red, then removes the copy. Writing your own review record under .claude/tmp/ is also ` +
+            `allowed. Both need no workaround; nothing else may write.`,
         },
       })
     );

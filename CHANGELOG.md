@@ -6,6 +6,38 @@ What changed for someone **using** this catalog. The full decision record — wh
 
 **Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .`
 
+### Added — the Reviewer can mutation-probe again (#229)
+
+The Reviewer is asked to judge whether the Builder's tests are load-bearing. In practice that means mutating the code and checking a test goes red — and the write guard added in 0.16.0 for #218 denies that role's **entire** write surface by mechanism. It is path-blind: a scratch tree outside the repository is refused for the same reason a production file is.
+
+Worse, the guard's own denial text and `reviewer.md` both told the Reviewer to "copy the tree somewhere outside the repository" — and then denied exactly that. Two Reviewers hit the wall on two repos in one day:
+
+| Repo | What it tried | What it did instead |
+|---|---|---|
+| `fx-content-studio-conditions-db` | a scratch worktree at `C:\rvw06`, outside the repo | traced all eight of the Builder's mutations by hand |
+| `fx-eye-tracking` | `cp`, `mkdir + cp -r`, `git worktree add` | reasoned from `git show main:<file>` |
+
+Both **disclosed the gap** rather than rounding it up to "verified by running", which is the guard working in the dimension that matters most. But the verification the pattern asks for did not happen, and a less careful pair hits the same wall silently.
+
+New `review-probe.mjs`:
+
+```bash
+node .claude/scripts/review-probe.mjs --file src/parser.ts --test "npm test" --line 42 --replace "return true"
+node .claude/scripts/review-probe.mjs --file src/parser.ts --test "npm test" --find "> 0" --replace ">= 0"
+```
+
+It copies the tree into a detached worktree **under the OS temp directory**, mutates there, runs the suite, and removes it. The repository under review is never written, so #218's invariant is untouched. Verdicts come back on a `PROBE-JSON` line: `test-is-load-bearing`, `test-did-not-notice` (a finding), `baseline-already-red`, or `could-not-run`.
+
+**The baseline is not optional.** The probe runs the suite unmutated first, because "it went red" is evidence only if it was green before. Without that, a repo whose suite is already broken reports `test-is-load-bearing` for *every* mutation — manufactured evidence, carried into a CLEAR.
+
+#### Why the guard was not simply widened
+
+The issue's own acceptance criterion was to deny by **path** instead of by mechanism. That was rejected: deciding from a command string where a shell will write means parsing `cd`, variables, substitution and quoting, and this same guard has already shipped a rule that looked present and behaved absent (`\b-[ce]` never matches before a hyphen, so `node -e` walked straight through the first version).
+
+So the guard gained exactly one allowance, matched strictly — the whole command must be that one invocation, with no chaining, redirection, backticks or `$(...)`, so it cannot carry a second command in with it. `cp -r . /tmp/scratch` is still denied; the difference is that the denial now names a remedy that works.
+
+A killed probe leaves its worktree registered (`git worktree prune` will not drop an entry whose directory still exists), so each probe reaps what an earlier one left before adding its own — #199's finding applied to this script.
+
 ### Fixed — the #185 comment strip was a no-op in two of the three places it was written (#230)
 
 A ticket may open with an HTML comment — **the shipped `ticket.template.md` does**. #185 taught the scaffold to look past one before reading frontmatter. That rule was written three times, and two copies lost every backslash:
