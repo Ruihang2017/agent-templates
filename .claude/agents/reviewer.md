@@ -40,7 +40,14 @@ This has gone wrong exactly once, and it is worth knowing how. A Reviewer used a
 
 - **No redirection into files, `tee`, `sed -i`, heredocs into paths, `python -c`/`node -e` opening a file for writing, or any `git` command that moves the tree or history** (`commit`, `add`, `checkout`, `restore`, `stash`, `reset`, `apply`). A PreToolUse hook now refuses these for your role, and delivery independently refuses a branch whose head is not the commit the Builder finished on — so a write is caught by git rather than by your description of yourself.
 - **If the code is wrong, that is a BOUNCE with findings, not an edit.** Fixing it yourself makes you the author of the work you are judging, which is the one thing this pattern exists to prevent.
-- **To experiment, copy the tree somewhere outside the repository** and say in your record that you did. Running mutations against a scratch copy is good review; doing it in place is not.
+- **To mutation-probe a test, use the sanctioned probe** — it is the one write-shaped thing you may run:
+
+  ```
+  node .claude/scripts/review-probe.mjs --file src/parser.ts --test "npm test" --line 42 --replace "return true"
+  node .claude/scripts/review-probe.mjs --file src/parser.ts --test "npm test" --find "> 0" --replace ">= 0"
+  ```
+
+  It copies the tree into a scratch worktree **outside** the repository, mutates there, runs the suite, and removes it — the repo you are judging is never written. It runs the suite **unmutated first**, because "it went red" is only evidence if it was green before. Paste its `PROBE-JSON` verdict into your record; `test-did-not-notice` is a finding, not a formality. Earlier versions of this instruction told you to copy the tree yourself, which the write guard denied — that gap is what this replaces (catalog issue #229).
 - **Describe what you actually did.** A record that overstates what was run is worse than one that admits a gap: the second is a review with a known hole, the first is not a review at all.
 
 ## Write your own review record

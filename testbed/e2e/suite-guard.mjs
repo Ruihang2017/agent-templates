@@ -93,6 +93,38 @@ export async function run() {
     check(S, 'reviewer Bash: writing its own review record is allowed',
       !denied('cat > .claude/tmp/T-01-verdict.md <<EOF\nfindings\nEOF'))
 
+    // The sanctioned mutation probe (catalog issue #229). The role is ASKED to judge
+    // whether the Builder's tests are load-bearing, and every mechanism for doing so was
+    // denied — including into a scratch tree outside the repo, because the guard reads
+    // mechanisms and not paths. Two Reviewers hit that wall on two repos in one day.
+    //
+    // review-probe.mjs does the isolation itself, so the allowance can be exact rather
+    // than a judgement about where a shell will write.
+    const PROBE = 'node .claude/scripts/review-probe.mjs --file src/x.ts --test "npm test" --line 4 --replace "return true"'
+    check(S, 'reviewer Bash: the sanctioned mutation probe is ALLOWED', !denied(PROBE))
+    check(S, 'reviewer Bash: the probe is allowed without the node prefix too',
+      !denied('.claude/scripts/review-probe.mjs --file src/x.ts --test "npm test" --delete --line 4'))
+
+    // ...and the allowance must not become a door for a second command. Each of these is
+    // the probe plus something the role may not do; the whole command is refused.
+    check(S, 'reviewer Bash: probe && rm is denied', denied(PROBE + ' && rm -rf src'))
+    check(S, 'reviewer Bash: probe ; write is denied', denied(PROBE + '; echo x > src/app.ts'))
+    check(S, 'reviewer Bash: probe with a redirect is denied', denied(PROBE + ' > src/app.ts'))
+    check(S, 'reviewer Bash: probe piped into tee is denied', denied(PROBE + ' | tee src/app.ts'))
+    check(S, 'reviewer Bash: probe with command substitution is denied',
+      denied('node .claude/scripts/review-probe.mjs --file $(rm -rf src)'))
+    check(S, 'reviewer Bash: probe with a backtick is denied',
+      denied('node .claude/scripts/review-probe.mjs --file `rm -rf src`'))
+    check(S, 'reviewer Bash: a name-alike script does not inherit the allowance',
+      denied('node tools/evil-review-probe.mjsx --file a; rm -rf src'))
+
+    // The old advice is now false and must not come back: the guard used to tell the
+    // Reviewer to copy the tree itself, and then denied exactly that.
+    check(S, 'reviewer Bash: copying the tree by hand is still denied', denied('cp -r . /tmp/rvw06'))
+    const probeDenial = bash('cp -r . /tmp/rvw06').stdout
+    check(S, 'reviewer Bash: and the denial points at the probe instead of a remedy it refuses',
+      /review-probe\.mjs/.test(probeDenial) && !/copy the tree/.test(probeDenial), probeDenial.slice(0, 300))
+
     // The Builder is not write-forbidden; the same command must pass for it.
     check(S, 'builder Bash: the same write is allowed', !denied('echo x > src/frame.ts', 'builder'))
     check(S, 'main session Bash is not touched by this rule',
