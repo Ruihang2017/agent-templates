@@ -6,6 +6,26 @@ What changed for someone **using** this catalog. The full decision record — wh
 
 **Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .`
 
+### Fixed — six stage calls were never wrapped, and the test that should have caught it asked the wrong question (#223)
+
+0.16.0 wrapped every stage call in `safely()` so a dropped connection could not unwind a run (#217). The test that enforced it was:
+
+```js
+check(S, 'stage calls are wrapped so a rejection cannot escape', /safely\(agent\(/.test(src))
+```
+
+That is an **existence** test. One wrapped call anywhere in the file satisfies it. Six calls were left unwrapped behind it — both delivery calls in each scheduler, plus `/start-all`'s DAG rescan and its post-run cleanup.
+
+| Call | If it rejected |
+|---|---|
+| delivery (both schedulers) | the lane caught it, but as `failed / lane` — losing that the ticket had **reached delivery**, so a branch, a PR and a half-updated tracker may exist |
+| `/start-all` DAG rescan | **the whole run unwound.** The rescan repeats throughout a run, and taking it down loses every already-delivered ticket from the report |
+| `/start-all` post-run cleanup | **the entire return value was discarded — after every ticket had succeeded.** Work merged; run reported as a crash |
+
+`start-all.js` contains no `try` at all, and the last two calls sit outside any lane, so nothing above them caught anything. Both consumers were already null-safe (`!scanned || …`, `clean && clean.ok`), so the wrapping does not add a new path — it makes paths that already existed reachable.
+
+The assertion is now **derived from the source**: every non-comment line calling `agent(` must be wrapped, so a new unguarded call fails on its own and names its line number. Paired with runtime tests that actually throw at each site (`suite-runner` S2i, `suite-startall` SA5m), because a static check and a behavioural one are different claims — which is the whole lesson here.
+
 ### Added — the Reviewer can mutation-probe again (#229)
 
 The Reviewer is asked to judge whether the Builder's tests are load-bearing. In practice that means mutating the code and checking a test goes red — and the write guard added in 0.16.0 for #218 denies that role's **entire** write surface by mechanism. It is path-blind: a scratch tree outside the repository is refused for the same reason a production file is.

@@ -117,6 +117,19 @@ export async function run() {
       [...overlaps].some((p) => p.includes('A-') && p.includes('B-')))
     eq(S, 'SA1 start-all no longer composes run-milestone', workflowCalls.length, 0)
     check(S, 'SA1 source contains no workflow() call', !/\bworkflow\s*\(/.test(SRC))
+
+    // Every stage call is wrapped (catalog issue #223). The twin assertion in suite-runner
+    // used to be an existence test — `/safely\(agent\(/` — which one wrapped call anywhere
+    // satisfied. This file had FOUR unwrapped, including the rescan and the post-run cleanup,
+    // neither of which sits inside a lane, so neither had a catch anywhere above it.
+    //
+    // Derived from the source, so a new unwrapped call fails here on its own.
+    const bare = SRC
+      .split(/\r?\n/)
+      .map((l, i) => [l, i + 1])
+      .filter(([l]) => /\bagent\(/.test(l) && !/^\s*\/\//.test(l) && !/safely\(/.test(l))
+    check(S, 'SA1 EVERY stage call is wrapped, scheduler-level ones included',
+      bare.length === 0, bare.map(([l, n]) => n + ': ' + l.trim().slice(0, 70)).join(' | '))
   }
 
   // ---- SA2: cross-module blocked_by gates directly ------------------------------------
@@ -214,6 +227,59 @@ export async function run() {
     // a rescan drop must be distinguishable from a launch-time drop
     check(S, 'SA5b launch-time drops are not conflated with rescan drops',
       !result.rescanDroppedClosed.includes('A-1') && !result.rescanDroppedClosed.includes('A-2'))
+  }
+
+  // ---- SA5m (issue #223): the two scheduler-level stages that NO lane catch covers.
+  //
+  // #217 wrapped the per-ticket stages, and both lanes catch, so a throw inside a ticket has
+  // been survivable since 0.16.0. The rescan and the post-run cleanup are not inside a ticket.
+  // They ran unwrapped in this file, with no try/catch anywhere in it, so a dropped connection
+  // in either one unwound the WHOLE run — and the two failures read very differently:
+  //
+  //   rescan  — reloads the DAG repeatedly mid-run, so the exposure window is the whole run;
+  //             taking the run down loses every ticket already delivered from the report.
+  //   cleanup — runs after every ticket has succeeded. A throw there discards the entire
+  //             return value: the work is merged and the report says the workflow crashed.
+  //
+  // The consumers were already null-safe (`!scanned || ...`, `clean && clean.ok`), so the
+  // wrapping is what routes a rejection into paths that already existed and were unreachable.
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    let rescans = 0
+    const respond = async (a) => {
+      if (a.label.startsWith('rescan')) { rescans++; throw new Error('API Error: Connection lost mid-response') }
+      return makeRespond(st)(a)
+    }
+    const { result, error } = await drive(
+      SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 1 }, respond)
+    check(S, 'SA5m a throwing rescan does not unwind the run', !error, error && error.message)
+    check(S, 'SA5m it was actually reached', rescans > 0, 'rescans=' + rescans)
+    check(S, 'SA5m the ticket already in the graph still ran',
+      !!result && (result.results || []).some((r) => r.id === 'A-1' && r.status === 'delivered'),
+      JSON.stringify(result && result.results))
+    check(S, 'SA5m and the failed reload is escalated, not swallowed',
+      !!result && (result.escalations || []).some((e) => /DAG reload/.test(e)),
+      JSON.stringify(result && result.escalations))
+  }
+
+  {
+    const tickets = [tk('A-1', [], 'x')]
+    const st = { tickets: tickets.slice(), calls: 0 }
+    const respond = async (a) => {
+      if (a.label === 'cleanup') throw new Error('API Error: Connection lost mid-response')
+      if (a.label === 'reap-orphans') return { ok: true, worktreesPruned: true, branchesDeleted: [], branchesKept: [] }
+      return makeRespond(st)(a)
+    }
+    const { result, error } = await drive(
+      SRC, { tickets, mode: 'autonomous', noTests: true, concurrency: 1, rescanEvery: 0 }, respond)
+    check(S, 'SA5m a throwing cleanup does not discard a completed run', !error, error && error.message)
+    check(S, 'SA5m the delivered ticket is still reported as delivered',
+      !!result && (result.results || []).some((r) => r.id === 'A-1' && r.status === 'delivered'),
+      JSON.stringify(result && result.results))
+    check(S, 'SA5m and the cleanup failure is escalated',
+      !!result && (result.escalations || []).some((e) => /cleanup/i.test(e)),
+      JSON.stringify(result && result.escalations))
   }
 
   // ---- SA5l (issue #199): the PRE-run reap.
