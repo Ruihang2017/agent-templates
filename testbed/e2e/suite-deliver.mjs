@@ -693,6 +693,61 @@ const assertAiMarker = (label, body) => {
     } finally { cleanup(root) }
   }
 
+  // H4-H6 (catalog issue #233): --expect-tree, the check H1-H3 cannot make.
+  //
+  // --expect-head compares a COMMIT. A Reviewer that writes to a tracked file and never
+  // commits leaves the branch head exactly where the Builder left it, so H1's check passes
+  // while the verdict was formed against code the Reviewer itself changed. A field report
+  // found the write guard permitting `patch` while refusing `cp`, which is how that happens
+  // in practice — so this compares CONTENT and does not care which tool did the writing.
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const FP = fileURLToPath(new URL('../../patterns/three-agent-architect-builder-reviewer/scaffold/.claude/scripts/tree-fingerprint.mjs', import.meta.url))
+      const readFp = () => {
+        const r = spawnSync(process.execPath, [FP], { cwd: repo, encoding: 'utf8' })
+        const line = (r.stdout || '').split(/\r?\n/).find((l) => l.startsWith('TREE-FINGERPRINT-JSON: '))
+        return JSON.parse(line.slice('TREE-FINGERPRINT-JSON: '.length)).sha
+      }
+      const tree = readFp()
+      const head = execFileSync('git', ['-C', repo, 'rev-parse', 'ticket/T-01'], { encoding: 'utf8' }).trim()
+
+      const ok = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7',
+        '--expect-head', head, '--expect-tree', tree],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'H4 an untouched tree delivers normally', ok.sum && ok.sum.merged, true)
+      eq(S, 'H4 and the match is recorded', ok.sum && ok.sum.checks.treeUnchanged, true)
+    } finally { cleanup(root) }
+  }
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const head = execFileSync('git', ['-C', repo, 'rev-parse', 'ticket/T-01'], { encoding: 'utf8' }).trim()
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7',
+        '--expect-head', head,
+        '--expect-tree', '0'.repeat(64)],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'H5 a tree that changed after the build is REFUSED', sum && sum.merged, false)
+      eq(S, 'H5 the DoD does not pass', sum && sum.dodPassed, false)
+      eq(S, 'H5 the mismatch is recorded', sum && sum.checks.treeUnchanged, false)
+      check(S, 'H5 the head check still passed, which is exactly the gap this closes',
+        sum && sum.checks.reviewedHeadMatches === true, JSON.stringify(sum && sum.checks))
+      check(S, 'H5 the reason says the verdict describes a tree that is gone',
+        sum && /tree that no longer exists/.test(sum.notes), sum && sum.notes)
+    } finally { cleanup(root) }
+  }
+  {
+    const { root, repo } = makeRepo()
+    try {
+      const { sum } = deliver(repo, ['--id', 'T-01', '--branch', 'ticket/T-01', '--issue', '7'],
+        { FAKE_GH_CLOSED_STATE: join(root, 'c.txt'), FAKE_GH_CHECKS: 'green' })
+      eq(S, 'H6 an unsupplied fingerprint reads as not-checked, never as unchanged',
+        sum && sum.checks.treeUnchanged, null)
+      eq(S, 'H6 and delivery still proceeds, so an older builder.md is not an outage',
+        sum && sum.merged, true)
+    } finally { cleanup(root) }
+  }
+
   // ---- CI gate on GitHub (catalog issue #205) -----------------------------------------
   // The reported defect: with no branch protection, `gh pr merge` succeeds over red CI and
   // there is no error to notice. 32 PRs merged that way, CI red on every one, every ticket

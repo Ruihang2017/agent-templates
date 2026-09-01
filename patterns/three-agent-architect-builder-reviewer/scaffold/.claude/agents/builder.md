@@ -38,7 +38,15 @@ Do:
 
    Why you, and why last: checking out this ticket's branch reverts any `.claude` change whose commit postdates the branch base, and at `concurrency = 1` that happens in the **main working tree**. Scripts and hooks are re-read from disk on every invocation, so a rollback takes effect *during* your own run. The check only looks — it never restores anything, because repairing the branch would alter the diff the Reviewer is about to judge (catalog issue #200).
 
-4. Finish with: a diff summary, the actual test output (never "should pass"), the Deviations note, and `configIntact`.
+4. **Also as your last action, after everything is committed, fingerprint the working tree:**
+
+   ```
+   node .claude/scripts/tree-fingerprint.mjs
+   ```
+
+   Return its `TREE-FINGERPRINT-JSON` `sha` as `treeSha`. Delivery re-computes it and **refuses to merge if it changed**, so anything that wrote to the tree between your build and the merge is caught by a hash rather than by anyone's account of themselves (catalog issue #233). Run it last, with your work committed and the tree clean — a fingerprint taken mid-edit pins the wrong state and every delivery after it is refused for no reason.
+
+5. Finish with: a diff summary, the actual test output (never "should pass"), the Deviations note, `configIntact`, and `treeSha`.
 
 Never:
 

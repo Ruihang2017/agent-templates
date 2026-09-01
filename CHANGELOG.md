@@ -6,6 +6,38 @@ What changed for someone **using** this catalog. The full decision record — wh
 
 **Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .`
 
+### Fixed — the write guard was a blocklist, and the blocklist leaked (#233)
+
+Two Reviewers, **same machine, same guard, same instruction, sibling tickets in one session**. One was refused `cp` and fell back to reading the code. The other applied three mutations through `patch` and was not stopped. `patch` was simply not in `BASH_WRITE_PATTERNS`.
+
+Probing the shipped guard for the same shape found five more:
+
+| Idiom | Was |
+|---|---|
+| `printf … \| patch -p1`, `patch -p1 -d .` | **allowed — and `-d .` writes inside the repo** |
+| `ed -s src/app.ts`, `ex -sc wq src/app.ts` | allowed |
+| `curl -o src/app.ts`, `wget -O src/app.ts` | allowed |
+| `tar -xf pkg.tar -C src/`, `unzip -o pkg.zip -d src/` | allowed |
+| `python -m pip install …` | allowed |
+
+All closed, with their read-only forms (`curl -s`, `tar -t`, `python -m pytest`) still allowed — a guard that stops a Reviewer reviewing is an outage, not a control.
+
+#### Closing them is not the fix
+
+A shell is a general-purpose machine and the next tool nobody listed is always available. So there is now a check that does not depend on the list at all.
+
+`tree-fingerprint.mjs` hashes HEAD + `git status --porcelain -uall` + `git diff HEAD`. The Builder runs it as its last action and returns `treeSha`; delivery re-computes it under `--expect-tree` and **refuses the merge if it changed**. Whatever the tool, whatever the idiom, a modification changes the hash.
+
+**`--expect-head` could not reach this.** It compares a *commit*. A Reviewer that patches a tracked file and never commits leaves the branch head exactly where the Builder left it, so that check passes — and the verdict was formed against code the Reviewer itself changed, which is #218's actual harm. `deliver-ticket`'s clean-tree check does refuse a dirty tree, but only at delivery, by which point the review has already run its tests on the mutated code and returned CLEAR.
+
+`treeSha` is **not** required by the BUILD schema. An adopter whose `builder.md` predates this returns nothing for it, and delivery then reports `treeUnchanged: null` — "not checked", which is not "unchanged" and is never read as it. Failing every build on a stale agent file would be a worse outage than the hole it closes.
+
+Exempted, matching `deliver-ticket`'s own clean-tree list: `.claude/tmp/`, `.claude/worktrees/`, `docs/plans/`, `docs/prd/dag.html` — the paths the pipeline itself writes between the build and the merge.
+
+Path-based parsing of the command string was rejected again, as in #229: `cd`, variables and command substitution make it unreliable. The difference now is that a content hash makes it unnecessary rather than merely risky.
+
+Ported to the Codex sibling, including its `builder.toml` — that pattern has no write guard of its own, but the fingerprint is the half that does not need one.
+
 ### Fixed — six stage calls were never wrapped, and the test that should have caught it asked the wrong question (#223)
 
 0.16.0 wrapped every stage call in `safely()` so a dropped connection could not unwind a run (#217). The test that enforced it was:
