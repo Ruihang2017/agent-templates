@@ -104,7 +104,12 @@ const BUILD = {
     // change whose commit postdates the branch base. One observed bounce-fix round reverted
     // agents/builder.md to an archived variant, so the run used a different Builder
     // definition than the one it was configured with, and nothing reported it.
-    configIntact: { type: 'boolean' } },
+    configIntact: { type: 'boolean' },
+    // catalog issue #233. Optional on purpose: an adopter whose builder.md predates this
+    // returns nothing for it, and failing every build on that would be a worse outage than
+    // the hole it closes. Delivery then reports treeUnchanged: null -- "not checked", which
+    // is not the same as "unchanged" and must never be read as it.
+    treeSha: { type: 'string' } },
   required: ['branch', 'testsPassed', 'testOutput', 'configIntact'],
 }
 const VERDICT = {
@@ -230,6 +235,7 @@ async function runTicket(t, opts) {
     'AS YOUR LAST ACTION run `node .claude/scripts/check-pipeline-config.mjs --default-branch ' + cfg.defaultBranch + '` and return configIntact = its CONFIG-CHECK-JSON `intact` field. ' +
     'It only looks; it changes nothing. Report what it says even if it says the tree drifted -- especially then. ' +
     'headSha = the full SHA of your final commit on that branch (`git rev-parse HEAD`), ' +
+    'treeSha = the `sha` from `node .claude/scripts/tree-fingerprint.mjs`, run LAST with your work committed and the tree clean -- delivery re-computes it and refuses to merge if the tree changed after your build (catalog issue #233). ' +
     'and summary = one paragraph on WHAT you changed and why, written for a human reviewer and describing only what you actually did — it is quoted into the pull request body.',
     Object.assign({ agentType: 'builder', label: 'build:' + t.id, phase: P, schema: BUILD }, buildIsolation)
   ))
@@ -325,7 +331,7 @@ async function runTicket(t, opts) {
   const recordPath = '.claude/tmp/' + t.id + '-verdict.md'
   const bodyFile = '.claude/tmp/' + t.id + '-mrbody.md'
   const deliverCmd = 'node .claude/scripts/deliver-ticket.mjs --id ' + t.id + ' --branch ' + branch +
-    ' --default-branch ' + cfg.defaultBranch + ((build && build.headSha) ? ' --expect-head ' + String(build.headSha).trim() : '') + ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '') +
+    ' --default-branch ' + cfg.defaultBranch + ((build && build.headSha) ? ' --expect-head ' + String(build.headSha).trim() : '') + ((build && build.treeSha) ? ' --expect-tree ' + String(build.treeSha).trim() : '') + ' --platform ' + cfg.platform + (t.issue ? ' --issue ' + t.issue : '') +
     (cfg.testCmd ? ' --test-cmd "' + cfg.testCmd + '"' : ' --no-tests') + ' --verdict-file ' + recordPath + ' --body-file ' + bodyFile +
     // supervised already stops for a human merge, so the fallback is autonomous-only
     (cfg.mode !== 'supervised' && cfg.integrationBranch ? ' --integration-branch ' + cfg.integrationBranch : '') +

@@ -88,7 +88,22 @@ const BASH_WRITE_PATTERNS = [
   { re: /\b(python3?|node|ruby|deno|bun)\b[^|;]*(?:^|\s)--?[ce]\b/, why: "an inline interpreter script, which can open a file for writing" },
   { re: /\bgit\s+(commit|apply|checkout|restore|stash|reset|revert|rm|mv|add)\b/, why: "a git command that alters the working tree or history" },
   { re: /\b(cp|mv|rm|install|truncate|dd|chmod|chown)\b/, why: "a filesystem-mutating command" },
-  { re: /\bnpm\s+(install|i|ci|update|link)\b|\b(pip|pip3)\s+install\b/, why: "a package install, which rewrites lockfiles and node_modules" },
+  { re: /\bnpm\s+(install|i|ci|update|link)\b|\b(pip|pip3)\s+install\b|\bpython3?\s+-m\s+pip\s+install\b/, why: "a package install, which rewrites lockfiles and node_modules" },
+  // Added after a field report (catalog issue #233): two Reviewers on the same machine, under
+  // the same guard, given the same instruction, got opposite answers — one was refused `cp`,
+  // the other applied three mutations through `patch` and was not. `patch` was simply absent
+  // from this list, and it writes wherever `-d` points, INCLUDING inside the repo.
+  //
+  // A guard that permits a technique through one tool and refuses it through another is not
+  // enforcing a boundary, it is sampling one. These close the gaps found by probing rather
+  // than by reading; the list is still a blocklist, which is why the tree fingerprint below
+  // exists as the check that does not depend on this list being complete.
+  { re: /\bpatch\b/, why: "patch applies a diff to files, wherever -d points" },
+  { re: /\b(ed|ex)\b\s+-/, why: "a line editor, which writes the file it opens" },
+  { re: /\bcurl\b[^|;]*(?:^|\s)(?:-o|-O|--output)\b/, why: "curl writing its response to a file" },
+  { re: /\bwget\b[^|;]*(?:^|\s)(?:-O|--output-document)\b/, why: "wget writing its response to a file" },
+  { re: /\btar\b[^|;]*(?:^|\s)-[A-Za-z]*x/, why: "tar extracting an archive over the tree" },
+  { re: /\b(unzip|bsdtar)\b/, why: "an archive extractor, which writes files" },
 ];
 
 // The ONE write these roles must make: the Reviewer authors its own review record under

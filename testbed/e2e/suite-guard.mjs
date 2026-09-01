@@ -80,6 +80,28 @@ export async function run() {
     check(S, 'reviewer Bash: git commit is denied', denied('git commit -am wip'))
     check(S, 'reviewer Bash: git checkout is denied', denied('git checkout -- src/'))
 
+    // Catalog issue #233. Two Reviewers, same machine, same guard, same instruction: one was
+    // refused `cp`, the other applied three mutations through `patch` and was not. `patch` was
+    // absent from the list, and it writes wherever `-d` points — including inside the repo.
+    // Probing for the same shape found five more. A guard that permits a technique through one
+    // tool and refuses it through another is sampling a boundary, not enforcing one.
+    check(S, 'reviewer Bash: patch is denied (the reported bypass)', denied('printf "%s" "$D" | patch -p1'))
+    check(S, 'reviewer Bash: patch INSIDE the repo is denied', denied('patch -p1 -d . < /tmp/f.diff'))
+    check(S, 'reviewer Bash: ed is denied', denied('ed -s src/app.ts'))
+    check(S, 'reviewer Bash: ex is denied', denied('ex -sc wq src/app.ts'))
+    check(S, 'reviewer Bash: curl -o is denied', denied('curl -o src/app.ts https://x/y'))
+    check(S, 'reviewer Bash: wget -O is denied', denied('wget -O src/app.ts https://x/y'))
+    check(S, 'reviewer Bash: tar -x is denied', denied('tar -xf pkg.tar -C src/'))
+    check(S, 'reviewer Bash: unzip is denied', denied('unzip -o pkg.zip -d src/'))
+    check(S, 'reviewer Bash: python -m pip install is denied', denied('python -m pip install foo'))
+
+    // ...and the same commands in their READ-ONLY forms stay allowed. Each of the rules above
+    // could be satisfied by banning the tool outright, which would take a working technique
+    // away from the Reviewer to close a hole — an over-correction this suite has to catch too.
+    check(S, 'reviewer Bash: curl without -o is allowed', !denied('curl -s https://api/x'))
+    check(S, 'reviewer Bash: tar -t (list) is allowed', !denied('tar -tf pkg.tar'))
+    check(S, 'reviewer Bash: python -m pytest is allowed', !denied('python -m pytest -q'))
+
     // A guard that stops a Reviewer reviewing is an outage, not a control.
     check(S, 'reviewer Bash: running the suite is ALLOWED', !denied('npm test'))
     check(S, 'reviewer Bash: node --test is allowed', !denied('node --test'))

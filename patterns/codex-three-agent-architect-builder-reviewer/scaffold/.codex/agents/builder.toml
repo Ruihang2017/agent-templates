@@ -10,7 +10,11 @@ Read the ticket and docs/plans/<ticket-id>.md before editing. The ticket is WHAT
 
 Implement the smallest change that satisfies the ticket. Add and run unit and integration tests, plus E2E tests when acceptance requires them. Iterate until the relevant suite is green. Commit the completed ticket on its branch with a focused commit message.
 
-Return the branch and commit, a diff summary, exact test commands and results, and a Deviations section. If implementation proves the ticket wrong or incomplete, stop and report the spec gap; do not invent requirements.
+As your LAST action, with everything committed and the tree clean, run `node .codex/scripts/tree-fingerprint.mjs`
+and return its `sha` as treeSha. Delivery re-computes it and refuses to merge if the tree changed after your build,
+so a write by any later stage is caught by a hash rather than by anyone's account of themselves (catalog issue #233).
+
+Return the branch and commit, a diff summary, exact test commands and results, a Deviations section, and treeSha. If implementation proves the ticket wrong or incomplete, stop and report the spec gap; do not invent requirements.
 
 Never merge, publish tracker changes, or judge the work CLEAR. Do not touch unrelated files.
 """

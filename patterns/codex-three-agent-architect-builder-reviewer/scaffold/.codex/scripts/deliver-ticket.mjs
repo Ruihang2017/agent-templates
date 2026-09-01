@@ -39,7 +39,7 @@
 //
 // PR/MR body (issue #58): a pre-composed --body-file (the deliver agent fills the repo's
 // .gitlab/merge_request_templates or .github/pull_request_template sections from the ticket,
-// diff, verdict, and CLAUDE.md constraints) is used verbatim; else the repo template is the
+// diff, verdict, and AGENTS.md constraints) is used verbatim; else the repo template is the
 // skeleton (Closes #N ensured); else a hardcoded fallback. The script only assembles/selects.
 //
 // Asana mirror (catalog issue #126, optional): when `.codex/asana.json` exists, the
@@ -74,6 +74,11 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// This script lives beside its siblings; resolve them from HERE rather than from the caller
+// cwd, which is the repo root during a run but not in every test harness.
+const HERE = dirname(fileURLToPath(import.meta.url))
 
 const argv = process.argv.slice(2)
 const has = (name) => argv.includes('--' + name)
@@ -113,6 +118,14 @@ const NO_TESTS = process.argv.includes('--no-tests')
 // on, something wrote to the branch after the build, and the CLEAR verdict no longer
 // describes what would be merged — whatever any hand-back says about it.
 const EXPECT_HEAD = opt('expect-head')
+
+// The fingerprint the Builder took of the working tree, with its work committed (catalog
+// issue #233). --expect-head compares a COMMIT, so a write that is never committed leaves
+// the branch head untouched and passes it: a Reviewer that patched a tracked file formed
+// its verdict against code it had changed, and nothing downstream could tell. This compares
+// CONTENT, so it does not care which tool did the writing -- which is the point, after a
+// blocklist of shell idioms was found to permit `patch` while refusing `cp`.
+const EXPECT_TREE = opt('expect-tree')
 const TEST_CMD = opt('test-cmd')
 
 // Run-end handoff (issue #139): open ONE integration -> default MR/PR and stop. Never
@@ -273,6 +286,9 @@ const checks = {
   ciChecked: false, ciStatus: null,
   // null = no expected commit supplied, so NOT CHECKED — never reported as checked-and-passed
   reviewedHeadMatches: null,
+  // null = no fingerprint supplied (an older builder.md), so NOT CHECKED. Never reported
+  // as unchanged -- "we did not look" and "nothing moved" are different facts (#233).
+  treeUnchanged: null,
   // null = not reached; false = checked and the remote fast-forwards; true = DIVERGED
   // (catalog issues #198, #216)
   branchDiverged: null,
@@ -303,7 +319,7 @@ const recordTestPolicy = () => {
     checks.testsWaived = true
     note('--no-tests: this repository declares no test suite, so the Definition of Done cannot certify tests. Recorded as a waiver, not as a pass.')
   } else if (!TEST_CMD) {
-    note('no --test-cmd supplied, so the "tests green" Definition-of-Done item was NOT evaluated — dodPassed is false. Declare a test command in CLAUDE.md, or pass --no-tests to state deliberately that this repository has none.')
+    note('no --test-cmd supplied, so the "tests green" Definition-of-Done item was NOT evaluated — dodPassed is false. Declare a test command in AGENTS.md, or pass --no-tests to state deliberately that this repository has none.')
   }
 }
 
@@ -354,8 +370,8 @@ const finish = (code) => {
 // Complete the ticket's Asana subtask (issue #126). No-op with no config — and it is a
 // true no-op: no child process, so a repo that never connected Asana pays nothing and
 // sees no notes. Everything here is advisory; nothing can change the DoD.
-const ASANA_CONFIG = join('.claude', 'asana.json')
-const ASANA_SCRIPT = join('.claude', 'scripts', 'asana-sync.mjs')
+const ASANA_CONFIG = join('.codex', 'asana.json')
+const ASANA_SCRIPT = join('.codex', 'scripts', 'asana-sync.mjs')
 const completeAsana = () => {
   if (!existsSync(ASANA_CONFIG)) return
   if (!existsSync(ASANA_SCRIPT)) {
@@ -1021,7 +1037,7 @@ try {
   // only because the diff happened to be empty.
   const dirty = git(['status', '--porcelain', '-uall'])
     .split('\n')
-    .filter((l) => l.trim() && !/\.claude\/tmp\/|\.claude\/worktrees\/|docs\/plans\/|docs\/prd\/dag\.html/.test(l))
+    .filter((l) => l.trim() && !/\.codex\/tmp\/|\.codex\/worktrees\/|docs\/plans\/|docs\/prd\/dag\.html/.test(l))
   if (dirty.length) { note('working tree not clean — refusing to merge'); finish(0) }
 
   // 2. refs must exist locally
@@ -1224,6 +1240,28 @@ try {
           `refusing to deliver: ${BRANCH} is at ${actual.slice(0, 12) || '(unknown)'} but the reviewed commit was ` +
           `${EXPECT_HEAD.trim().slice(0, 12)}. Something wrote to the branch after the build, so the CLEAR ` +
           `verdict does not describe what would be merged. Re-run the review against the current commit.`
+        )
+        finish(0)
+      }
+    }
+
+    // Refuse a tree that changed after the build (catalog issue #233). Same placement and
+    // same reasoning as the head check above -- before the PR exists, so nothing is ever
+    // published against a state nobody reviewed. This one catches what that one cannot: an
+    // uncommitted write leaves the head alone, and the review then ran its tests against
+    // code the Reviewer itself had modified.
+    if (EXPECT_TREE) {
+      const fp = tryGit(['rev-parse', '--show-toplevel'])
+      const r = spawnSync(process.execPath, [join(HERE, 'tree-fingerprint.mjs'), '--expect', EXPECT_TREE.trim()], {
+        encoding: 'utf8', cwd: fp.ok ? fp.out.trim() : process.cwd(),
+      })
+      checks.treeUnchanged = r.status === 0
+      if (!checks.treeUnchanged) {
+        note(
+          `refusing to deliver: the working tree changed after the build. ` +
+          ((r.stderr || '').split(String.fromCharCode(10))[0] || '') +
+          ` The verdict describes a tree that no longer exists, so it does not describe what would be merged. ` +
+          `Inspect with: git status --porcelain -uall && git diff HEAD`
         )
         finish(0)
       }
