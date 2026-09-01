@@ -350,7 +350,7 @@ async function runTicket(t, opts) {
 
   if (cfg.mode === 'supervised') {
     log('[' + t.id + '] CLEAR — supervised: opening a PR/MR for human review (deterministic deliver, --no-merge)')
-    const delivery = await agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY })
+    const delivery = await safely(agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY }))
     if (delivery && delivery.awaitingMerge) {
       log('[' + t.id + '] PR/MR open for review: ' + (delivery.prUrl || '(url not reported)') + ' — merge it, then re-run to continue (closed issues are filtered out).')
       return { id: t.id, status: 'awaiting-human-merge', branch: branch, prUrl: delivery.prUrl || '', bounces: bounces, note: verdict.checkedNote || '' }
@@ -360,7 +360,7 @@ async function runTicket(t, opts) {
 
   log('[' + t.id + '] deliver: PR/MR + forge-merge + close + DoD (deterministic script, serialized)')
   // deliver mutates the MAIN working tree (merge) — serialize it across concurrent lanes.
-  const delivery = await deliverLock(function () { return agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY }) })
+  const delivery = await safely(deliverLock(function () { return agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY }) }))
   if (!delivery || !(delivery.merged && delivery.issueClosed && delivery.dodPassed)) {
     const missing = !delivery ? 'delivery agent returned nothing' : ['merged', 'issueClosed', 'dodPassed'].filter(function (k) { return !delivery[k] }).join(', ') + ' = false'
     return { id: t.id, status: 'delivery-incomplete', detail: missing + (delivery && delivery.notes ? ' — ' + delivery.notes : '') }

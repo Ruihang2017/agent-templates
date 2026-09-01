@@ -363,7 +363,7 @@ async function runTicket(t, opts) {
 
   if (cfg.mode === 'supervised') {
     log('[' + t.id + '] CLEAR -- supervised: opening a PR/MR for human review (deterministic deliver, --no-merge)')
-    const delivery = await agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY })
+    const delivery = await safely(agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY }))
     if (delivery && delivery.awaitingMerge) {
       log('[' + t.id + '] PR/MR open for review: ' + (delivery.prUrl || '(url not reported)') + ' -- merge it, then re-run to continue (closed issues are filtered out).')
       return { id: t.id, status: 'awaiting-human-merge', branch: branch, prUrl: delivery.prUrl || '', bounces: bounces, note: verdict.checkedNote || '' }
@@ -372,7 +372,7 @@ async function runTicket(t, opts) {
   }
 
   log('[' + t.id + '] deliver: PR/MR + forge-merge + close + DoD (deterministic script, serialized)')
-  const delivery = await deliverLock(function () { return agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY }) })
+  const delivery = await safely(deliverLock(function () { return agent(deliverPrompt, { label: 'deliver:' + t.id, phase: P, schema: DELIVERY }) }))
   // Trust deliver-ticket.mjs's own verdict rather than re-deriving one. `dodPassed`
   // already encodes the mode (local delivery swaps the closed issue for a ledger write),
   // and requiring `issueClosed` here reported every correct LOCAL delivery as incomplete
@@ -540,7 +540,7 @@ const rescan = async function (reason) {
   }
   scans += 1
   const known = Array.from(tickets.keys()).join(', ')
-  const scanned = await agent(
+  const scanned = await safely(agent(
     'DAG reload step for the running /start-all scheduler (reason: ' + reason + '). You are NOT implementing anything. ' +
     'Run these commands from the repo root and report what they print -- do not invent, infer, or edit any ticket:\n' +
     '1. `node .claude/scripts/dag-scan.mjs ' + cfg.prdRoot + '` -- parse its final SCAN-JSON line. If it exits non-zero, ' +
@@ -565,7 +565,7 @@ const rescan = async function (reason) {
     'Return ok=true and `tickets` = the SCAN-JSON ticket list, each with id, module, path and blockedBy exactly as scanned, ' +
     'plus `issue` (a number) for any ticket whose issue number you saw in a PUBLISH-SUMMARY-JSON line.',
     { label: 'rescan#' + scans + ':' + reason, phase: 'Schedule', effort: 'low', schema: SCAN }
-  )
+  ))
   if (!scanned || !scanned.ok || !Array.isArray(scanned.tickets) || scanned.tickets.length === 0) {
     // Keeping the previous graph is the point: a transient bad edit must not kill work.
     const why = scanned && scanned.detail ? scanned.detail : 'rescan agent returned nothing usable'
@@ -715,7 +715,7 @@ const cleanupReport = { branchesDeleted: [], branchesKept: [], worktreesPruned: 
     // left — and an agent asked to 'delete only the DELIVERED ones' is one summarisation
     // away from deleting the only copy of work a human still has to look at. This stage is
     // an executor: it runs one command because a workflow script cannot, and relays JSON.
-    const clean = await agent(
+    const clean = await safely(agent(
       'Post-run cleanup. You are NOT implementing anything and must NOT touch any ticket, plan, or source file. ' +
       'Run EXACTLY this command from the repo root and nothing else:\n' +
       'node .claude/scripts/cleanup-run.mjs --delivered ' + (deliveredIds.join(',') || '') + ' --default-branch ' + cfg.defaultBranch +
@@ -724,7 +724,7 @@ const cleanupReport = { branchesDeleted: [], branchesKept: [], worktreesPruned: 
       'plus detail = its escalations joined. Do NOT delete anything yourself, do NOT touch remote branches, and if the command ' +
       'cannot run return ok=false with the output tail in detail.',
       { label: 'cleanup', phase: 'Deliver', effort: 'low', schema: CLEANUP }
-    )
+    ))
     if (clean && clean.ok) {
       cleanupReport.branchesDeleted = clean.branchesDeleted || []
       cleanupReport.branchesKept = clean.branchesKept || []

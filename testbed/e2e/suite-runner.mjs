@@ -208,8 +208,52 @@ export async function run() {
       check(S, 'S2d it is told to VERIFY the record, not to write one',
         !!d && /verify .*-verdict\.md exists and is NOT empty/i.test(d.prompt))
     }
-    check(S, 'S2d stage calls are wrapped so a rejection cannot escape', /safely\(agent\(/.test(src))
+    // EVERY stage call is wrapped, not merely one of them (catalog issue #223).
+    //
+    // This check used to be `/safely\(agent\(/.test(src)` — satisfied by a single wrapped
+    // call anywhere in the file. Six unguarded `agent(` calls lived behind it across the two
+    // schedulers, including both delivery calls, while the PR that introduced the guard said
+    // "every stage call now goes through safely()". An existence test cannot express "every".
+    //
+    // Derived from the source rather than a list, so a NEW unguarded call fails here without
+    // anyone remembering to add it.
+    {
+      const unguarded = src
+        .split(/\r?\n/)
+        .map((l, i) => [l, i + 1])
+        .filter(([l]) => /\bagent\(/.test(l) && !/^\s*\/\//.test(l) && !/safely\(/.test(l))
+      check(S, 'S2d EVERY stage call is wrapped, not just one',
+        unguarded.length === 0,
+        unguarded.map(([l, n]) => n + ': ' + l.trim().slice(0, 70)).join(' | '))
+    }
     check(S, 'S2d and the sequential lane cannot take the run down', /runTicket\(t, \{ isolate: false \}\)\.catch\(/.test(src))
+  }
+
+  // S2i (catalog issue #223): a throwing DELIVERY stage. The static check above says the call
+  // is wrapped; this says what the wrapping buys, and the two are not the same claim.
+  //
+  // Both lanes already catch, so an unwrapped throw here never took the run down — it became
+  // `failed / lane`, a generic "something threw somewhere in this ticket". That loses the one
+  // fact a human needs from a delivery failure: the ticket got as far as delivery, so a branch
+  // and possibly a PR exist and the tracker may be half-updated. Every other stage degrades to
+  // a status that says where it stopped; delivery was the exception, and it is the stage whose
+  // failure is most expensive because it is the one that mutates the main tree and the tracker.
+  {
+    const { result, error } = await runWorkflow({ ...baseArgs, tickets: [tickets2[0]] }, ({ label }) => {
+      if (kind(label) === 'plan') return plan(tid(label))
+      if (kind(label) === 'build') return goodBuild(tid(label))
+      if (kind(label) === 'review') return CLEAR
+      if (kind(label) === 'deliver') throw new Error('API Error: Connection lost mid-response')
+      return null
+    })
+    check(S, 'S2i a throwing delivery does not unwind the run', !error, error && error.message)
+    const r0 = result && result.results[0]
+    check(S, 'S2i and it stops AT DELIVERY, not as an anonymous lane failure',
+      r0 && r0.status === 'delivery-incomplete', JSON.stringify(r0))
+    check(S, 'S2i the report says the delivery agent returned nothing',
+      r0 && /returned nothing/.test(r0.detail || ''), r0 && r0.detail)
+    check(S, 'S2i and NOTHING is reported as delivered',
+      !(result.results || []).some((r) => r.status === 'delivered'), JSON.stringify(result.results))
   }
 
   // S2e: a build produced against a DRIFTED pipeline config escalates (catalog issue #200).
