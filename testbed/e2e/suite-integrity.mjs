@@ -544,9 +544,23 @@ export async function run() {
       check(S, 'LF-only (no \\r): integrations/asana/.claude/scripts/asana-sync.mjs', !/\r/.test(text))
       // The fail-soft contract is the whole safety story: Asana must never gate delivery.
       // A stray unconditional non-zero exit would silently turn the mirror into a gate.
-      const badExits = (text.match(/process\.exit\((?!0\)|1\)\n?$)/g) || []).length
+      // Comments stripped first. Prose ABOUT an exit is not an exit — the line explaining
+      // why this script no longer calls `process.exit()` tripped this check on its own text,
+      // which is a gate reporting on documentation instead of on code.
+      const exec = text.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n')
+      const badExits = (exec.match(/process\.exit\((?!0\)|1\)\n?$)/g) || []).length
       check(S, 'asana-sync exits only 0 or 1 (fail-soft contract)',
-        /process\.exit\(0\)/.test(text) && !/process\.exit\([^01]/.test(text), `suspicious exits: ${badExits}`)
+        !/process\.exit\([^01]/.test(exec), `suspicious exits: ${badExits}`)
+
+      // The success path sets 0 WITHOUT calling process.exit(). This check used to require a
+      // literal `process.exit(0)` as its proxy for "succeeds with 0" — and that proxy was
+      // wrong in a way that hid a real bug: on Node 24 + Windows, exiting explicitly while
+      // undici still had handles in teardown aborted the process with 0xC0000409, AFTER the
+      // work had succeeded and `ok: true` was printed. Reproduced 8/8; CI's matrix stopped at
+      // Node 20 and never saw it. So the contract is the exit CODE, not the call that sets it.
+      check(S, 'asana-sync sets its exit code without process.exit(0)',
+        /process\.exitCode\s*=\s*0/.test(text) && !/process\.exit\(0\)/.test(text),
+        /process\.exit\(0\)/.test(text) ? 'still calls process.exit(0)' : 'never sets exitCode = 0')
       // The token must never be readable from anywhere but the environment.
       check(S, 'asana-sync reads the token ONLY from ASANA_TOKEN env',
         /process\.env\.ASANA_TOKEN/.test(text) && !/--token/.test(text))

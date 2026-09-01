@@ -586,6 +586,47 @@ export async function run() {
     } finally { await fake.stop(); rmSync(root, { recursive: true, force: true }) }
   }
 
+  // ---- A0: the script must not call process.exit(), and must report exactly once --------
+  //
+  // asana-sync.mjs used to end with process.exit(0). On Node 24 + Windows that aborts the
+  // process while undici is still tearing handles down:
+  //
+  //   Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c, line 94
+  //   exit code 3221226505 (0xC0000409)
+  //
+  // AFTER the work succeeded and `ok: true` had been printed. Reproduced 8/8 locally; CI
+  // never saw it, because the matrix was Node 18/20. Every other assertion in this suite
+  // read the OUTPUT and passed while `exits 0` failed — the work was right, the ending
+  // was not.
+  //
+  // These two checks fail on ANY Node version, so the fix does not depend on the matrix
+  // reaching 24 (it now does, but a guard that only one platform can enforce is thin).
+  {
+    const src = readFileSync(SCRIPT, 'utf8')
+    const code = src.split(/\r?\n/).filter((l) => !l.trim().startsWith('//'))
+    const exits = code.map((l, i) => [l, i + 1]).filter(([l]) => /process\.exit\s*\(\s*0\s*\)/.test(l))
+    check(S, 'A0 the success path never calls process.exit(0)',
+      exits.length === 0, exits.map(([l, n]) => n + ': ' + l.trim()).join(' | '))
+  }
+  {
+    // The fall-through this created when the exit was removed: `if (!pre) finish()` stopped
+    // halting, so a bad config ran on into `pre.cfg`, threw, and the catch reported an
+    // invented `asana-unavailable` — TWO summary lines, the second blaming Asana for a local
+    // config problem. A caller parsing the last line would act on the wrong one.
+    const root = mkdtempSync(join(tmpdir(), 'e2e-asana-badcfg-'))
+    try {
+      mkdirSync(join(root, '.claude'), { recursive: true })
+      writeFileSync(join(root, '.claude', 'asana.json'), '{}\n')
+      const r = await sync(root, ['status'])
+      eq(S, 'A0 a bad config still exits 0 (fail-soft contract)', r.status, 0)
+      eq(S, 'A0 and reports EXACTLY ONE summary line',
+        (r.stdout.match(/ASANA-SYNC-JSON: /g) || []).length, 1)
+      check(S, 'A0 it blames the config, not Asana',
+        r.codes.includes('bad-config') && !r.codes.includes('asana-unavailable'),
+        JSON.stringify(r.codes))
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  }
+
   // ---- check / status --------------------------------------------------
   {
     const fake = await startFake()

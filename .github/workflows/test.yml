@@ -18,7 +18,13 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-        node: [18, 20]
+        # 24 is here because its absence hid a real bug. asana-sync.mjs called process.exit()
+        # while undici still had handles in teardown; on Node 24 + Windows that aborts the
+        # process (0xC0000409) AFTER the work succeeded and `ok: true` was printed, so any
+        # caller reading an exit code saw a failure for a sync that worked. It reproduced 8/8
+        # on a maintainer's machine and 0/4 in CI, for months, because the matrix stopped at
+        # 20 — and "it only fails locally" is the shape of an unowned bug.
+        node: [18, 20, 24]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
