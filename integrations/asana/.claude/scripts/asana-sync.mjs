@@ -123,10 +123,27 @@ const fail = (code, message, extra = {}) => {
   console.error(`x ${code}: ${message}`)
 }
 // Every exit goes through here so the JSON line is never missed on an error path.
+//
+// `process.exitCode`, NOT `process.exit()`. On Node 24 + Windows, exiting explicitly while
+// undici still has handles in teardown aborts the process:
+//
+//   Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 94
+//   exit code 3221226505 (0xC0000409)
+//
+// — AFTER the work has succeeded and this very line has printed `ok: true`. Any caller that
+// reads an exit code then sees a failure for a sync that worked, which is this repo's
+// recurring failure class from the other side: a report that disagrees with what happened.
+// Reproduced 8/8 locally on Node 24.18.0; CI never saw it because the matrix is Node 18/20.
+//
+// `process.exit()` can also truncate a piped stdout, so the JSON line this function exists
+// to guarantee was itself at risk.
+//
+// Setting exitCode does NOT halt, so this must be the last thing that runs on every path —
+// see `main` at the bottom, which is structured so it is.
 const finish = () => {
   summary.ok = summary.errors.length === 0
   console.log('ASANA-SYNC-JSON: ' + JSON.stringify(summary))
-  process.exit(0)
+  process.exitCode = 0
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +202,11 @@ const api = async (method, path, body, opts = {}) => {
     if (res.status === 429 || res.status >= 500) {
       const retryAfter = Number(res.headers.get('retry-after'))
       lastErr = `http ${res.status}`
+      // Drain the body before looping. An unread response body holds its socket open, so a
+      // retry storm leaked one connection per attempt — and those are exactly the handles
+      // that were still in teardown when this script used to call process.exit() (see
+      // finish()). Retries are the path where that is most likely, and least visible.
+      await res.arrayBuffer().catch(() => {})
       if (attempt < MAX_ATTEMPTS) {
         const waitMs = Number.isFinite(retryAfter) && retryAfter >= 0 ? retryAfter * 1000 : 250 * attempt
         await sleep(Math.min(waitMs, MAX_SLEEP_MS))
@@ -672,21 +694,31 @@ const doStatus = async (cfg) => {
 // main
 // ---------------------------------------------------------------------------
 
+// ONE finish() at the end, on every path.
+//
+// This used to read `if (!pre) finish()` and then run the block below regardless, which was
+// correct only because finish() called process.exit(). When that became process.exitCode
+// (see above), a failed preflight fell straight through into `pre.cfg`, threw a TypeError,
+// and the catch turned it into an invented `asana-unavailable` error — so a bad config
+// printed TWO ASANA-SYNC-JSON lines, the second one blaming Asana for a local config
+// problem. Caught by re-running the repro after the change rather than by reading it.
 const pre = preflight()
-if (!pre) finish()
 
-try {
-  if (VERB === 'check') await doCheck(pre.cfg)
-  else if (VERB === 'resolve') await doResolve()
-  else if (VERB === 'configure') await doConfigure(pre.cfg)
-  else if (VERB === 'sync') await doSync(pre.cfg)
-  else if (VERB === 'complete') await doComplete(pre.cfg)
-  else if (VERB === 'status') await doStatus(pre.cfg)
-} catch (e) {
-  // Any unhandled Asana/HTTP failure lands here and STILL exits 0 — see the exit-code
-  // contract in the header. The caller escalates from `errors`.
-  fail('asana-unavailable', String(e && e.message ? e.message : e).split('\n')[0])
+if (pre) {
+  try {
+    if (VERB === 'check') await doCheck(pre.cfg)
+    else if (VERB === 'resolve') await doResolve()
+    else if (VERB === 'configure') await doConfigure(pre.cfg)
+    else if (VERB === 'sync') await doSync(pre.cfg)
+    else if (VERB === 'complete') await doComplete(pre.cfg)
+    else if (VERB === 'status') await doStatus(pre.cfg)
+  } catch (e) {
+    // Any unhandled Asana/HTTP failure lands here and STILL exits 0 — see the exit-code
+    // contract in the header. The caller escalates from `errors`.
+    fail('asana-unavailable', String(e && e.message ? e.message : e).split('\n')[0])
+  }
+
+  if (process.env.ASANA_DEBUG) console.log(`(debug) api requests: ${requestCount}`)
 }
 
-if (process.env.ASANA_DEBUG) console.log(`(debug) api requests: ${requestCount}`)
 finish()

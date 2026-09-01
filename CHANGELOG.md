@@ -6,6 +6,27 @@ What changed for someone **using** this catalog. The full decision record — wh
 
 **Scaffold change — re-adopt to get it.** `npx agent-templates@latest adopt three-agent-architect-builder-reviewer .`
 
+### Fixed — the Asana sync aborted *after* succeeding, on Node 24 + Windows
+
+`asana-sync.mjs` ended with `process.exit(0)`. On Node 24 + Windows that aborts the process while undici still has handles in teardown:
+
+```
+ASANA-SYNC-JSON: {"verb":"sync","ok":true, …}          ← the work succeeded
+Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\win\async.c, line 94
+exit code 3221226505 (0xC0000409)
+```
+
+The sync was **correct**. Only the ending was wrong — and any caller reading an exit code saw a failure for work that had already succeeded and said so. `process.exit()` can also truncate a piped stdout, so the `ASANA-SYNC-JSON` line that `finish()` exists to guarantee was itself at risk.
+
+`finish()` now sets `process.exitCode` and lets the event loop drain.
+
+**Node 24 is now in the CI matrix.** It was Node 18/20, so CI passed 4/4 for months while this reproduced 8/8 on a maintainer's machine — and "it only fails locally" is the shape of an unowned bug. The regression tests added here fail on *any* Node version, so the fix does not depend on the matrix alone.
+
+Two things fell out of it:
+
+- **Removing the exit exposed a fall-through.** `if (!pre) finish()` only halted because `finish()` used to exit. Without that, a bad config ran on into `pre.cfg`, threw, and the catch reported an invented `asana-unavailable` — **two** `ASANA-SYNC-JSON` lines, the second blaming Asana for a local config problem. `main` now has one `finish()` on every path.
+- **Retries leaked a connection each.** The `429`/`5xx` path looped without draining the response body, holding its socket open — and those are exactly the handles that were still in teardown when the process exited.
+
 ### Fixed — the write guard was a blocklist, and the blocklist leaked (#233)
 
 Two Reviewers, **same machine, same guard, same instruction, sibling tickets in one session**. One was refused `cp` and fell back to reading the code. The other applied three mutations through `patch` and was not stopped. `patch` was simply not in `BASH_WRITE_PATTERNS`.

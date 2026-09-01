@@ -134,6 +134,13 @@ Once `/connect-asana` has run, nothing else is manual (issue #126):
 
 The deliver step uses the **same landed-merge precondition** as the tracker close: an unlanded merge completes nothing, because a completed subtask would report delivery that did not happen. Every trigger is a true no-op without `.claude/asana.json` — the deliver step does not even spawn a process, so an unconnected repo pays nothing.
 
+## Known failure modes
+
+| Symptom | Cause | Status |
+|---|---|---|
+| The script prints `ASANA-SYNC-JSON: … "ok":true` and **then** the process aborts with exit code `3221226505` (`0xC0000409`), stderr showing `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c` | `finish()` called `process.exit(0)` while undici still had handles in teardown. Node 24 + Windows aborts on that; Node 18/20 does not. The work had already succeeded — only the *ending* was wrong, so any caller reading an exit code saw a failure for a sync that worked | **Fixed 2026-08-31.** `finish()` sets `process.exitCode` and lets the loop drain. `[internal]` reproduced 8/8 on Node 24.18.0 / Windows 11; CI never saw it because the matrix was Node 18/20, which is why **24 is now in it** |
+| A retry storm (`429`/`5xx`) leaves connections open | the retry path looped without draining the response body, holding its socket | **Fixed 2026-08-31.** The body is drained before retrying — and those were exactly the handles still in teardown above |
+
 ## Not implemented
 
 - **No `mode: "project"`** hierarchy (see above).
